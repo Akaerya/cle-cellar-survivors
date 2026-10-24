@@ -34,6 +34,16 @@ export class Fx {
 
   damageNumber(x: number, y: number, value: number, big = false): void {
     this.relay?.(['n', Math.round(x), Math.round(y), Math.round(value), big ? 1 : 0]);
+    this.number(x, y, String(Math.max(1, Math.round(value))), big ? 0xffd24a : 0xffffff);
+  }
+
+  /** Green "+N" over a monkey that healed. */
+  healNumber(x: number, y: number, value: number): void {
+    this.relay?.(['g', Math.round(x), Math.round(y), Math.round(value)]);
+    this.number(x, y, `+${Math.max(1, Math.round(value))}`, 0x7be38a);
+  }
+
+  private number(x: number, y: number, label: string, tint: number): void {
     // Reuse the oldest slot when the pool is full.
     let n: DamageNumber | null = null;
     for (let i = 0; i < MAX_NUMBERS; i++) {
@@ -51,9 +61,9 @@ export class Fx {
     n.life = NUMBER_LIFE;
     n.vy = -38 - Math.random() * 10;
     n.text
-      .setText(String(Math.max(1, Math.round(value))))
+      .setText(label)
       .setPosition(Math.round(x + (Math.random() * 6 - 3)), Math.round(y - 6))
-      .setTint(big ? 0xffd24a : 0xffffff)
+      .setTint(tint)
       .setAlpha(1)
       .setVisible(true);
   }

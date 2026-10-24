@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
+import { COLOR, DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
 import type { OwnedItem } from '../core/progression';
 import { BASE_STATS, PLAYER_RADIUS } from '../data/player';
 import type { PlayerStats } from '../data/types';
@@ -17,6 +17,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   readonly facing = new Phaser.Math.Vector2(1, 0);
   moving = false;
   invuln = 0;
+  /** Length of the current invulnerability, for the flash timing. */
+  private invulnTotal = INVULN_SECONDS;
   hurtAnim = 0;
   god = false;
   dead = false;
@@ -24,12 +26,16 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   gone = false;
   weapons!: Weapons;
   items: OwnedItem[] = [];
-  /** Level-up picks this player still has to make. */
+  /** Level-up picks this player still has to make (fallen monkeys keep collecting them). */
   pendingLevelUps = 0;
+  /** Co-op, while fallen: revive progress 0..1, and the HP fraction a revive restores. */
+  revive = 0;
+  reviveHp = 0;
   /** Co-op: where the network says this monkey is (remote players are eased toward it). */
   netX = 0;
   netY = 0;
   private tag: Phaser.GameObjects.BitmapText | null = null;
+  private reviveTag: Phaser.GameObjects.BitmapText | null = null;
   private readonly baseTint: number;
 
   constructor(scene: Phaser.Scene, x: number, y: number, slot = 0, coop = false) {
@@ -48,6 +54,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.play('monkey-idle');
     if (coop) {
       this.tag = text(scene, x, y - 14, `P${slot + 1}`, { origin: [0.5, 1], color: PLAYER_COLORS[slot], depth: DEPTH.hpBar });
+      this.reviveTag = text(scene, x, y + 16, '', { origin: [0.5, 0], color: COLOR.good, depth: DEPTH.hpBar }).setVisible(false);
     }
   }
 
@@ -131,7 +138,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     // Invulnerability flash: white on impact, then blinking.
     if (this.invuln > 0 && !this.dead) {
       this.invuln -= dt;
-      const t = INVULN_SECONDS - this.invuln;
+      const t = this.invulnTotal - this.invuln;
       if (t < 0.08) {
         this.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
       } else {
@@ -155,6 +162,16 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       this.tag.setPosition(Math.round(this.x), Math.round(this.y - 11));
       this.tag.setVisible(!this.gone);
     }
+    if (this.reviveTag) {
+      const show = this.dead && !this.gone;
+      this.reviveTag.setVisible(show);
+      if (show) {
+        this.reviveTag
+          .setText(`REVIVE ${Math.round(this.reviveHp * 100)}%`)
+          .setPosition(Math.round(this.x), Math.round(this.y + 15))
+          .setAlpha(this.revive > 0 ? 1 : 0.7);
+      }
+    }
   }
 
   /** Returns the damage actually taken (0 while invulnerable). */
@@ -167,7 +184,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   showHurt(): void {
-    this.invuln = INVULN_SECONDS;
+    this.invuln = this.invulnTotal = INVULN_SECONDS;
     this.hurtAnim = 0.2;
     this.play('monkey-hurt', true);
   }
@@ -183,10 +200,24 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.tag?.setAlpha(0.4);
   }
 
+  /** Co-op: revived by a teammate with `hpFraction` of max HP. */
+  standUp(hpFraction: number, invulnSeconds: number): void {
+    this.scene.tweens.killTweensOf(this);
+    this.dead = false;
+    this.revive = 0;
+    this.setAngle(0).setAlpha(1);
+    this.hp = Math.max(1, Math.round(this.stats.maxHp * hpFraction));
+    this.invuln = this.invulnTotal = invulnSeconds;
+    this.hurtAnim = 0;
+    this.play('monkey-idle', true);
+    this.tag?.setAlpha(1);
+  }
+
   /** Co-op: the player left. */
   leave(): void {
     this.gone = true;
     this.disableBody(true, true);
     this.tag?.setVisible(false);
+    this.reviveTag?.setVisible(false);
   }
 }

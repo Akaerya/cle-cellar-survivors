@@ -43,4 +43,6 @@ export interface RunSummary {
   seed: string;
   /** Co-op: how many players started the run. */
   coopPlayers?: number;
+  /** Co-op: how many times a monkey fell. */
+  teamDeaths?: number;
 }

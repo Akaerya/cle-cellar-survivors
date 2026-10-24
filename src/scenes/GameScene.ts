@@ -17,7 +17,7 @@ import { DEBUG_EV, EV, type BuildEntry, type RunSummary } from '../core/events';
 import { computeStats, expToNext } from '../core/progression';
 import { Rng, seedFromUrl } from '../core/rng';
 import { sfx, type SfxName } from '../core/sfx';
-import { ENEMIES, ITEMS, STARTING_WEAPON, WEAPONS, itemDef } from '../data';
+import { ENEMIES, ITEMS, REVIVE, STARTING_WEAPON, WEAPONS, itemDef, reviveHpPercent, speedScaleForMinute } from '../data';
 import type { Enemy } from '../entities/Enemy';
 import type { Gem } from '../entities/Gem';
 import { Player } from '../entities/Player';
@@ -44,6 +44,8 @@ import { buildArena } from '../systems/Arena';
 import { Enemies } from '../systems/Enemies';
 import { Fx } from '../systems/Fx';
 import { Gems } from '../systems/Gems';
+import { Potions } from '../systems/Potions';
+import type { Potion } from '../entities/Potion';
 import { Spawner } from '../systems/Spawner';
 import { Weapons } from '../systems/Weapons';
 import { onKey } from '../ui/widgets';
@@ -107,6 +109,7 @@ export class GameScene extends Phaser.Scene {
   fx!: Fx;
   enemies!: Enemies;
   gems!: Gems;
+  potions!: Potions;
   projectiles!: Phaser.Physics.Arcade.Group;
   spawner!: Spawner;
   mirror: Mirror | null = null;
@@ -114,6 +117,8 @@ export class GameScene extends Phaser.Scene {
   state: RunState = 'playing';
   runTime = 0;
   kills = 0;
+  /** Co-op: monkeys that have fallen this run (each later one is revived with less HP). */
+  teamDeaths = 0;
   level = 1;
   exp = 0;
   expNeed = expToNext(1);
@@ -139,6 +144,8 @@ export class GameScene extends Phaser.Scene {
   };
   private hpBar!: Phaser.GameObjects.Graphics;
   private lastSecond = -1;
+  private camTarget: Player | null = null;
+  private diedAt = 0;
   private debugTimer = 0;
 
   constructor() {
@@ -169,6 +176,9 @@ export class GameScene extends Phaser.Scene {
     this.exp = 0;
     this.expNeed = expToNext(1);
     this.lastSecond = -1;
+    this.teamDeaths = 0;
+    this.camTarget = null;
+    this.diedAt = 0;
     this.debugTimer = 0;
     this.frozen = false;
     this.offer = null;
@@ -202,11 +212,12 @@ export class GameScene extends Phaser.Scene {
     this.fx = new Fx(this);
     this.enemies = new Enemies(this);
     this.gems = new Gems(this);
+    this.potions = new Potions(this);
     this.spawner = new Spawner(this);
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, ARENA_SIZE, ARENA_SIZE);
-    cam.startFollow(this.player, true, 0.2, 0.2);
+    this.followCamera(this.player);
     cam.setRoundPixels(true);
     cam.setBackgroundColor(0x120d18);
 
@@ -287,7 +298,7 @@ export class GameScene extends Phaser.Scene {
     (window as any).__bananaNocturne = this;
 
     // A fresh run never inherits an overlay from the previous one.
-    for (const key of [SCENES.levelUp, SCENES.pause, SCENES.gameOver]) {
+    for (const key of [SCENES.levelUp, SCENES.pause, SCENES.gameOver, SCENES.wiki]) {
       if (this.scene.isActive(key) || this.scene.isPaused(key)) this.scene.stop(key);
     }
     this.scene.stop(SCENES.ui);
@@ -301,7 +312,7 @@ export class GameScene extends Phaser.Scene {
     // Input. In co-op the pause menu does not stop the run, so it just lets go of the controls.
     const k = this.keys;
     const down = (list: Phaser.Input.Keyboard.Key[]) => list.some((key) => key.isDown);
-    const held = !this.frozen && !this.scene.isActive(SCENES.pause);
+    const held = !this.frozen && !this.menuOpen;
     const ix = held ? (down(k.right) ? 1 : 0) - (down(k.left) ? 1 : 0) : 0;
     const iy = held ? (down(k.down) ? 1 : 0) - (down(k.up) ? 1 : 0) : 0;
     this.player.steer(ix, iy, dt);
@@ -325,12 +336,16 @@ export class GameScene extends Phaser.Scene {
         if (this.runTime >= RUN_SECONDS) this.victory();
       }
 
-      this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying');
+      const speedScale = speedScaleForMinute(this.runTime / 60);
+      this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying', speedScale);
       for (const p of this.players) if (p?.alive) p.weapons.update(dt, this.state === 'playing');
       Weapons.updateProjectiles(this.projectiles, dt);
       this.gems.update(dt);
+      this.potions.update(dt);
+      if (this.state === 'playing') this.updateRevives(dt);
     }
     this.fx.update(dt);
+    this.updateCamera();
     this.drawHpBars();
     this.emitTime();
     this.updateDebug(dt);
@@ -347,6 +362,17 @@ export class GameScene extends Phaser.Scene {
     if (!this.inLevelUp && this.state === 'playing' && this.livePlayers().some((p) => p.pendingLevelUps > 0)) {
       this.beginLevelUp();
     }
+  }
+
+  /** Pause menu or wiki over the run (co-op keeps running underneath). */
+  private get menuOpen(): boolean {
+    const open = (k: string) => this.scene.isActive(k) || this.scene.isPaused(k);
+    return open(SCENES.pause) || open(SCENES.wiki);
+  }
+
+  /** Co-op: closes the menu and wiki when the run needs the screen (level-up, end). */
+  private closeMenus(): void {
+    for (const k of [SCENES.wiki, SCENES.pause]) if (this.scene.isActive(k) || this.scene.isPaused(k)) this.scene.stop(k);
   }
 
   private emitTime(): void {
@@ -436,7 +462,8 @@ export class GameScene extends Phaser.Scene {
     while (this.exp >= this.expNeed) {
       this.exp -= this.expNeed;
       this.level++;
-      for (const p of this.livePlayers()) p.pendingLevelUps++;
+      // Fallen monkeys collect their picks too and make them once revived.
+      for (const p of this.players) if (p && !p.gone) p.pendingLevelUps++;
       this.expNeed = expToNext(this.level);
       leveled = true;
     }
@@ -453,7 +480,7 @@ export class GameScene extends Phaser.Scene {
     if (this.mode === 'solo') {
       this.scene.pause();
     } else {
-      if (this.scene.isActive(SCENES.pause)) this.scene.stop(SCENES.pause);
+      this.closeMenus();
       this.setFrozen(true);
       for (const p of this.livePlayers()) if (p !== this.player && p.pendingLevelUps > 0) this.offerTo(p);
     }
@@ -614,7 +641,7 @@ export class GameScene extends Phaser.Scene {
 
   openPause(): void {
     if (this.state !== 'playing' || !this.scene.isActive() || this.scene.isActive(SCENES.levelUp)) return;
-    if (this.scene.isActive(SCENES.pause)) return;
+    if (this.menuOpen) return;
     sfx.play('pause');
     if (!this.coop) this.scene.pause();
     this.scene.launch(SCENES.pause);
@@ -624,9 +651,18 @@ export class GameScene extends Phaser.Scene {
     p.fallOver();
     p.weapons.clearVisuals();
     this.playSfx('death', p.x, p.y);
+    if (this.coop) {
+      this.teamDeaths++;
+      p.revive = 0;
+      p.reviveHp = reviveHpPercent(this.teamDeaths);
+      // Cards still on offer wait until the monkey is revived.
+      this.remoteOffers.delete(p.slot);
+      if (p === this.player) this.offer = null;
+      this.checkLevelUpOver();
+    }
     if (p === this.player) this.onLocalDeath();
     if (this.livePlayers().length > 0) {
-      if (this.coop) this.banner(`P${p.slot + 1} IS DOWN`, COLOR.bad);
+      if (this.coop) this.banner(`P${p.slot + 1} IS DOWN · STAND ON THEM TO REVIVE`, COLOR.bad);
       return;
     }
     this.state = 'dying';
@@ -635,10 +671,55 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onLocalDeath(): void {
+    if (this.coop && this.scene.isActive(SCENES.levelUp)) this.scene.stop(SCENES.levelUp);
     this.cameras.main.shake(300, 0.012);
+    this.diedAt = this.time.now;
     this.events.emit(EV.hpChanged, 0, this.player.stats.maxHp);
-    const mate = this.viewTarget(this.player);
-    if (mate !== this.player) this.time.delayedCall(1200, () => this.cameras.main.startFollow(this.viewTarget(this.player), true, 0.1, 0.1));
+  }
+
+  /** Co-op host: a living monkey standing on a fallen one fills its revive bar. */
+  private updateRevives(dt: number): void {
+    if (!this.coop) return;
+    const live = this.livePlayers();
+    const R2 = REVIVE.radius * REVIVE.radius;
+    for (const p of this.players) {
+      if (!p || !p.dead || p.gone) continue;
+      const helped = live.some((q) => (q.x - p.x) ** 2 + (q.y - p.y) ** 2 <= R2);
+      const rate = dt / REVIVE.seconds;
+      p.revive = Phaser.Math.Clamp(p.revive + (helped ? rate : -rate * REVIVE.drainRate), 0, 1);
+      if (p.revive >= 1) this.revivePlayer(p);
+    }
+  }
+
+  private revivePlayer(p: Player): void {
+    p.standUp(p.reviveHp, REVIVE.invulnSeconds);
+    this.onRevived(p);
+    this.playSfx('revive', p.x, p.y);
+    this.fx.ring(p.x, p.y, COLOR.good, 60, 500);
+    this.banner(`P${p.slot + 1} IS BACK (${Math.round(p.reviveHp * 100)}% HP)`, COLOR.good);
+  }
+
+  /** Shared by host and joiners once a monkey stands up again. */
+  private onRevived(p: Player): void {
+    p.weapons.showVisuals();
+    if (p === this.player) this.events.emit(EV.hpChanged, p.hp, p.stats.maxHp);
+  }
+
+  private followCamera(t: Player): void {
+    this.camTarget = t;
+    const lerp = t === this.player ? 0.2 : 0.1;
+    this.cameras.main.startFollow(t, true, lerp, lerp);
+  }
+
+  /** Own monkey, or a living teammate's a moment after falling in co-op. */
+  private updateCamera(): void {
+    let t = this.player;
+    if (this.player.dead && this.coop && this.time.now - this.diedAt > 1200) t = this.viewTarget(this.player);
+    if (t !== this.camTarget) this.followCamera(t);
+  }
+
+  onPlayerHealed(p: Player): void {
+    if (p === this.player) this.events.emit(EV.hpChanged, p.hp, p.stats.maxHp);
   }
 
   private victory(): void {
@@ -668,6 +749,7 @@ export class GameScene extends Phaser.Scene {
       items: this.buildItems(p),
       seed: this.rng.seed,
       coopPlayers: this.coop ? this.startCount : undefined,
+      teamDeaths: this.coop ? this.teamDeaths : undefined,
     };
   }
 
@@ -684,7 +766,7 @@ export class GameScene extends Phaser.Scene {
     this.events.emit(EV.runEnded);
     this.scene.stop(SCENES.ui);
     if (this.scene.isActive(SCENES.levelUp)) this.scene.stop(SCENES.levelUp);
-    if (this.scene.isActive(SCENES.pause)) this.scene.stop(SCENES.pause);
+    this.closeMenus();
     this.scene.pause();
     this.scene.launch(SCENES.gameOver, summary ?? this.summaryFor(this.player, victory));
   }
@@ -749,6 +831,8 @@ export class GameScene extends Phaser.Scene {
         maxHp: p.stats.maxHp,
         invuln: Math.max(0, p.invuln),
         phases: p.weapons.phases(),
+        revive: p.revive,
+        reviveHp: p.reviveHp,
       });
     }
     const header = {
@@ -759,6 +843,7 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       exp: this.exp,
       need: this.expNeed,
+      teamDeaths: this.teamDeaths,
     };
     const now = this.time.now;
     const enemyKind = new Map(ENEMIES.map((d, i) => [d, i]));
@@ -801,11 +886,22 @@ export class GameScene extends Phaser.Scene {
       }
       w.patchU16(at, n);
 
+      at = w.o;
+      n = 0;
+      w.u16(0);
+      for (const po of this.potions.group.getChildren() as Potion[]) {
+        if (!po.active || !this.nearView(p, po.x, po.y)) continue;
+        writeEntity(w, po.netId, 0, po.blinking ? 1 : 0, po.x, po.y);
+        n++;
+      }
+      w.patchU16(at, n);
+
       // Effects: only those near this player, and each sound at most once per snapshot.
       const sounds = new Set<string>();
       const mine = events.filter((ev) => {
         switch (ev[0]) {
           case 'n':
+          case 'g':
           case 'p':
           case 'r':
             return this.nearView(p, ev[1], ev[2]);
@@ -895,6 +991,13 @@ export class GameScene extends Phaser.Scene {
         p.moving = (sp.flags & PF.moving) !== 0;
       }
       p.weapons.setPhases(sp.phases);
+      p.revive = sp.revive;
+      p.reviveHp = sp.reviveHp;
+      if (!(sp.flags & PF.dead) && p.dead) {
+        p.standUp(sp.hp / Math.max(1, sp.maxHp), REVIVE.invulnSeconds);
+        p.hp = sp.hp;
+        this.onRevived(p);
+      }
       if (sp.flags & PF.dead && !p.dead) {
         p.fallOver();
         p.weapons.clearVisuals();
@@ -907,6 +1010,8 @@ export class GameScene extends Phaser.Scene {
     m.enemies.apply(s.enemies);
     m.gems.apply(s.gems);
     m.projectiles.apply(s.projectiles);
+    m.potions.apply(s.potions);
+    this.teamDeaths = s.teamDeaths;
 
     for (const ev of s.events) this.replay(ev);
   }
@@ -915,6 +1020,9 @@ export class GameScene extends Phaser.Scene {
     switch (ev[0]) {
       case 'n':
         this.fx.damageNumber(ev[1], ev[2], ev[3], ev[4] === 1);
+        break;
+      case 'g':
+        this.fx.healNumber(ev[1], ev[2], ev[3]);
         break;
       case 'p':
         this.fx.puff(ev[1], ev[2], ev[3], ev[4]);
@@ -964,7 +1072,7 @@ export class GameScene extends Phaser.Scene {
         this.offer = { choices: msg.choices, pending: msg.pending };
         this.inLevelUp = true;
         if (!this.scene.isActive(SCENES.levelUp)) {
-          if (this.scene.isActive(SCENES.pause)) this.scene.stop(SCENES.pause);
+          this.closeMenus();
           sfx.play('levelup');
           this.scene.launch(SCENES.levelUp);
         } else this.events.emit(EV.levelUpOffer);
@@ -989,7 +1097,20 @@ export class GameScene extends Phaser.Scene {
     const g = this.hpBar;
     g.clear();
     for (const p of this.players) {
-      if (!p || !p.alive) continue;
+      if (!p || p.gone) continue;
+      if (p.dead) {
+        if (!this.coop) continue;
+        // Revive circle: the area to stand in, filling up as the revive progresses.
+        g.lineStyle(1, COLOR.good, 0.35);
+        g.strokeCircle(p.x, p.y, REVIVE.radius);
+        if (p.revive > 0) {
+          g.lineStyle(2, COLOR.good, 1);
+          g.beginPath();
+          g.arc(p.x, p.y, REVIVE.radius, -Math.PI / 2, -Math.PI / 2 + p.revive * Math.PI * 2);
+          g.strokePath();
+        }
+        continue;
+      }
       const w = 18;
       const x = Math.round(p.x - w / 2);
       const y = Math.round(p.y + 12);

@@ -22,6 +22,7 @@ export class UIScene extends Phaser.Scene {
   private expFlash = 0;
   private team!: Phaser.GameObjects.Graphics;
   private teamLabels = new Map<number, Phaser.GameObjects.BitmapText>();
+  private deathsText: Phaser.GameObjects.BitmapText | null = null;
   private exp = { exp: 0, need: 5, level: 1 };
 
   constructor() {
@@ -53,7 +54,9 @@ export class UIScene extends Phaser.Scene {
     // Co-op: teammates' HP under the build, and arrows at the screen edge pointing at them.
     this.team = this.add.graphics();
     this.teamLabels.clear();
+    this.deathsText = null;
     if (this.run.coop) {
+      this.deathsText = text(this, VIEW_W - 4, 26, '', { origin: [1, 0], color: COLOR.textDim });
       for (const p of this.run.players) {
         if (!p || p === this.run.player) continue;
         this.teamLabels.set(p.slot, text(this, 4, 0, '', { color: PLAYER_COLORS[p.slot] }));
@@ -101,6 +104,7 @@ export class UIScene extends Phaser.Scene {
     g.clear();
     let y = 56;
     const view = this.run.cameras.main.worldView;
+    this.deathsText?.setText(`TEAM DEATHS ${this.run.teamDeaths}`).setTint(this.run.teamDeaths > 0 ? COLOR.bad : COLOR.textDim);
     for (const p of this.run.players) {
       if (!p || p === this.run.player) continue;
       const label = this.teamLabels.get(p.slot);

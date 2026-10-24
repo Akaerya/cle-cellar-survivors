@@ -38,25 +38,31 @@ export class PauseScene extends Phaser.Scene {
       if (!run.coop) this.scene.resume(SCENES.game);
     };
     const bx = px + 20;
+    const openWiki = () => {
+      this.scene.pause();
+      this.scene.launch(SCENES.wiki, { from: 'pause' });
+    };
     const buttons = run.coop
       ? [
           new Button(this, bx, py + 70, 150, 24, 'RESUME', resume),
-          new Button(this, bx, py + 102, 150, 24, run.mode === 'host' ? 'END GAME' : 'LEAVE GAME', () =>
+          new Button(this, bx, py + 102, 150, 24, 'WIKI', openWiki),
+          new Button(this, bx, py + 134, 150, 24, run.mode === 'host' ? 'END GAME' : 'LEAVE GAME', () =>
             leaveSession(this.game, run.net),
           ),
         ]
       : [
           new Button(this, bx, py + 70, 150, 24, 'RESUME', resume),
           new Button(this, bx, py + 102, 150, 24, 'RESTART', () => this.scene.start(SCENES.game, {})),
-          new Button(this, bx, py + 134, 150, 24, 'QUIT TO TITLE', () => {
+          new Button(this, bx, py + 134, 150, 24, 'WIKI', openWiki),
+          new Button(this, bx, py + 166, 150, 24, 'QUIT TO TITLE', () => {
             this.scene.stop(SCENES.ui);
             this.scene.stop(SCENES.game);
             this.scene.start(SCENES.title);
           }),
         ];
     if (run.coop) {
-      text(this, bx, py + 136, 'THE RUN KEEPS GOING', { color: COLOR.textDim });
-      text(this, bx, py + 148, 'WHILE THIS MENU IS OPEN', { color: COLOR.textDim });
+      text(this, bx, py + 168, 'THE RUN KEEPS GOING', { color: COLOR.textDim });
+      text(this, bx, py + 180, 'WHILE THIS MENU IS OPEN', { color: COLOR.textDim });
     }
     new Menu(this, buttons);
     onKey(this, 'keydown-ESC', resume);
@@ -64,7 +70,7 @@ export class PauseScene extends Phaser.Scene {
 
     // Build: weapons and items with levels.
     const listX = px + 20;
-    let ly = py + 172;
+    let ly = py + 200;
     text(this, listX, ly, 'BUILD', { color: COLOR.textDim });
     ly += 12;
     const all = [...run.buildWeapons(), ...run.buildItems()];

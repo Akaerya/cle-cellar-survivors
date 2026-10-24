@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { DEPTH } from '../constants';
+import { GEM_TIERS } from '../data/drops';
 import { nextNetId } from '../net/ids';
 import type { Player } from './Player';
 
 export function gemColor(value: number): 'blue' | 'green' | 'red' {
-  if (value >= 20) return 'red';
-  if (value >= 5) return 'green';
-  return 'blue';
+  let c: 'blue' | 'green' | 'red' = 'blue';
+  for (const t of GEM_TIERS) if (value >= t.from) c = t.color;
+  return c;
 }
 
 /** Pooled EXP gem. Sits on the ground until it enters a pickup radius, then flies at that monkey. */

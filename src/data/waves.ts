@@ -16,6 +16,18 @@ export const WAVES: WaveRow[] = [
 export const HP_SCALE_PER_MINUTE = 0.1;
 
 /**
+ * Enemies start slower and reach full speed over the first minutes:
+ * speed multiplier = min(1, START + PER_MINUTE x minute), so 70% at 0:00, 85% at 2:00, 100% from 4:00.
+ * Applies to every enemy on the field, so early enemies speed up as the clock runs.
+ */
+export const SPEED_SCALE_START = 0.7;
+export const SPEED_SCALE_PER_MINUTE = 0.075;
+
+export function speedScaleForMinute(minute: number): number {
+  return Math.min(1, SPEED_SCALE_START + SPEED_SCALE_PER_MINUTE * Math.max(0, minute));
+}
+
+/**
  * Co-op: enemy HP is multiplied by 1 + this x (players - 1), so 2 players face 1.75x HP,
  * 3 players 2.5x and 4 players 3.25x.
  */

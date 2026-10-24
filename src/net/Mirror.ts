@@ -105,6 +105,7 @@ export class Mirror {
   readonly enemies: Layer;
   readonly gems: Layer;
   readonly projectiles: Layer;
+  readonly potions: Layer;
 
   constructor(scene: Phaser.Scene) {
     const shadows = scene.add.blitter(0, 0, ATLAS).setDepth(DEPTH.shadows);
@@ -158,9 +159,22 @@ export class Mirror {
       },
       () => {},
     );
+    this.potions = new Layer(
+      scene,
+      (o, e, fresh) => {
+        if (fresh) {
+          o.kind = 0;
+          o.s.anims.stop();
+          o.s.setTexture(ATLAS, 'potion').setDepth(DEPTH.gems).setScale(1).clearTint();
+        }
+        o.s.setAlpha(e.extra ? 0.3 : 1);
+      },
+      () => {},
+    );
   }
 
   update(dt: number): void {
+    this.potions.update(dt);
     this.enemies.update(dt);
     this.gems.update(dt);
     this.projectiles.update(dt);

@@ -40,11 +40,15 @@ Title screen > **HOST CO-OP** gives a 5-character invite code and a **COPY LINK*
 - **Host-authoritative**: the host's browser simulates enemies, weapons, damage and gems and sends each joiner a binary snapshot 20 times a second (only what is near their screen), plus effects and sounds. Joiners move their own monkey locally and report its position, so movement has no input lag.
 - **Shared EXP**: one EXP bar and level for the team. Each level gives every living monkey its own card pick; the run is held until everyone has chosen. A gem goes to whichever monkey's pickup radius it enters, using that monkey's EXP Gain.
 - **Enemy HP** is multiplied by `1 + 0.75 x (players - 1)` (`HP_SCALE_PER_EXTRA_PLAYER` in `data/waves.ts`). Enemies chase the nearest living monkey and spawn around a random one.
-- A fallen monkey spectates a teammate; the run ends when all are down. Players who disconnect are removed; if the host leaves, the run ends for everyone.
+- A fallen monkey spectates a teammate. Standing on the body for 5 seconds revives it at 80% HP; the team's deaths are counted for the run and each later death revives with less (80, 75, 65, 50, 30%, floor 10%; `data/coop.ts`). Fallen monkeys keep their level-up picks for when they are back. The run ends when all are down. Players who disconnect are removed; if the host leaves, the run ends for everyone.
 - The co-op menu (Esc) does not pause the run, and the game does not auto-pause on blur. Browsers stop animating hidden tabs, so the host should keep the game tab visible.
 - After a run the host can play again with the same group or go back to the lobby so others can join.
 
 Code lives in `src/net/` (session, message and snapshot format, the joiner-side renderer) and `scenes/LobbyScene.ts`.
+
+## Wiki
+
+Title screen > **WIKI** (also in the pause menu) lists every weapon, item, monster, wave, drop and co-op rule with its numbers, read straight from `src/data`. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
 
 ## Controls
 
@@ -57,7 +61,8 @@ src/
   main.ts              game config: 640x360, pixelArt, FIT scaling, Arcade at a fixed 60 Hz
   constants.ts         engine constants (arena size, caps, depths, colours, scene keys)
   data/                everything a designer tunes
-    weapons.ts items.ts enemies.ts waves.ts player.ts types.ts
+    weapons.ts items.ts enemies.ts waves.ts drops.ts coop.ts player.ts types.ts
+  wiki/pages.ts        in-game wiki pages, built from data/
   core/
     progression.ts     level curve, weapon stats per level, player stat calculation
     rng.ts             seeded RNG (one per run)
@@ -107,7 +112,9 @@ Every weapon, item, enemy and wave is a data entry. Engine code reads them gener
 
 **An enemy** goes in `data/enemies.ts`, then gets a weight in a `data/waves.ts` row. New art needs a grid in `art/spriteData.ts` and an animation line in `art/textures.ts`.
 
-**Waves** are rows keyed by minute (`from` inclusive, `to` exclusive) with a target count and spawn weights. HP scales by `HP_SCALE_PER_MINUTE`. Timed events (the 5:00 and 10:00 bat swarms) are in `WAVE_EVENTS`.
+**Waves** are rows keyed by minute (`from` inclusive, `to` exclusive) with a target count and spawn weights. HP scales by `HP_SCALE_PER_MINUTE`; speed starts at `SPEED_SCALE_START` (70%) and reaches full speed by 4:00.
+
+**Drops**: every enemy has a `potionChance` for a health potion that heals 30% of max HP (`data/drops.ts`). A monkey at full HP leaves potions on the ground. Timed events (the 5:00 and 10:00 bat swarms) are in `WAVE_EVENTS`.
 
 ## Art
 

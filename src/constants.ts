@@ -80,4 +80,5 @@ export const SCENES = {
   pause: 'Pause',
   gameOver: 'GameOver',
   lobby: 'Lobby',
+  wiki: 'Wiki',
 } as const;

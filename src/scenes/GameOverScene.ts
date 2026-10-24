@@ -49,8 +49,10 @@ export class GameOverScene extends Phaser.Scene {
       ['LEVEL', String(summary.level)],
       ['KILLS', String(summary.kills)],
     ];
+    if (summary.teamDeaths !== undefined) stats.push(['DEATHS', String(summary.teamDeaths)]);
+    const colW = pw / stats.length;
     stats.forEach(([k, v], i) => {
-      const cx = px + 60 + i * 120;
+      const cx = px + colW * (i + 0.5);
       text(this, cx, py + 64, k, { origin: [0.5, 0], color: COLOR.textDim });
       text(this, cx, py + 76, v, { scale: 2, origin: [0.5, 0], color: COLOR.text });
     });

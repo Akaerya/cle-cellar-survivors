@@ -43,7 +43,7 @@ export class Enemies {
   }
 
   /** Every enemy walks at the nearest monkey in `targets`. */
-  update(dt: number, now: number, targets: Player[], frozen: boolean): void {
+  update(dt: number, now: number, targets: Player[], frozen: boolean, speedScale = 1): void {
     const active = this.active;
     active.length = 0;
     this.grid.clear();
@@ -107,9 +107,10 @@ export class Enemies {
         e.kby *= decay;
         const sl = Math.hypot(e.sepX, e.sepY);
         const sk = sl > SEP_MAX ? SEP_MAX / sl : 1;
+        const sp = e.def.speed * speedScale;
         body.setVelocity(
-          (dx / d) * e.def.speed + e.kbx + e.sepX * sk,
-          (dy / d) * e.def.speed + e.kby + e.sepY * sk,
+          (dx / d) * sp + e.kbx + e.sepX * sk,
+          (dy / d) * sp + e.kby + e.sepY * sk,
         );
         if (Math.abs(dx) > 2) e.setFlipX(dx < 0);
       }
@@ -143,7 +144,10 @@ export class Enemies {
   kill(e: Enemy, dropGem: boolean): void {
     if (!e.active) return;
     this.game.fx.puff(e.x, e.y, e.def.puffColor, e.def.id === 'brute' ? 18 : 8);
-    if (dropGem) this.game.gems.drop(e.x, e.y + 2, e.def.exp);
+    if (dropGem) {
+      this.game.gems.drop(e.x, e.y + 2, e.def.exp);
+      this.game.potions.roll(e.x, e.y - 2, e.def.potionChance);
+    }
     e.disableBody(true, true);
     e.anims.stop();
     if (e.shadow) e.shadow.visible = false;

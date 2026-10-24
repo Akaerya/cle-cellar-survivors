@@ -400,6 +400,11 @@ export class Weapons {
     this.list.length = 0;
   }
 
+  /** Shows orbiters again (revived). */
+  showVisuals(): void {
+    for (const w of this.list) for (const s of w.orbiters) s.setVisible(true);
+  }
+
   /** Hides orbiters and effects (end of run). */
   clearVisuals(): void {
     for (const w of this.list) {

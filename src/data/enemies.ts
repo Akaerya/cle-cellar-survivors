@@ -16,6 +16,7 @@ export const ENEMIES: EnemyDef[] = [
     puffColor: 0x8a68b8,
     shadow: 'shadow_s',
     hover: 6,
+    potionChance: 0.005,
   },
   {
     id: 'zombie',
@@ -32,6 +33,7 @@ export const ENEMIES: EnemyDef[] = [
     puffColor: 0x73a05a,
     shadow: 'shadow_s',
     hover: 0,
+    potionChance: 0.01,
   },
   {
     id: 'ghoul',
@@ -48,6 +50,7 @@ export const ENEMIES: EnemyDef[] = [
     puffColor: 0xb9b6a2,
     shadow: 'shadow_s',
     hover: 0,
+    potionChance: 0.01,
   },
   {
     id: 'brute',
@@ -64,5 +67,6 @@ export const ENEMIES: EnemyDef[] = [
     puffColor: 0x8f7aa3,
     shadow: 'shadow_l',
     hover: 0,
+    potionChance: 0.05,
   },
 ];

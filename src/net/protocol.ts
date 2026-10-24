@@ -1,3 +1,4 @@
+import Phaser from 'phaser';
 import type { RunSummary } from '../core/events';
 import type { SfxName } from '../core/sfx';
 import type { Choice } from '../scenes/GameScene';
@@ -33,6 +34,8 @@ export type ClientMsg =
 export type FxEvent =
   /** damage number */
   | ['n', number, number, number, 0 | 1]
+  /** heal number: x, y, amount */
+  | ['g', number, number, number]
   /** puff: x, y, colour, count */
   | ['p', number, number, number, number]
   /** ring: x, y, colour, radius, duration */
@@ -69,13 +72,16 @@ export interface SnapPlayer {
   invuln: number;
   /** One value per weapon: the orbit angle for orbit weapons, 0 otherwise. */
   phases: number[];
+  /** Fallen monkey: revive progress 0..1 and the HP fraction a revive restores. */
+  revive: number;
+  reviveHp: number;
 }
 
 export interface SnapEntity {
   id: number;
   /** Enemy: index into ENEMIES. Gem: 0 blue, 1 green, 2 red. Projectile: index into WEAPONS. */
   kind: number;
-  /** Enemy: EF flags. Projectile: scale x 32. Gem: unused. */
+  /** Enemy: EF flags. Projectile: scale x 32. Gem: unused. Potion: 1 while blinking. */
   extra: number;
   x: number;
   y: number;
@@ -89,10 +95,12 @@ export interface Snapshot {
   level: number;
   exp: number;
   need: number;
+  teamDeaths: number;
   players: SnapPlayer[];
   enemies: SnapEntity[];
   gems: SnapEntity[];
   projectiles: SnapEntity[];
+  potions: SnapEntity[];
   events: FxEvent[];
 }
 
@@ -194,6 +202,7 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
   const level = u16();
   const exp = f32();
   const need = f32();
+  const teamDeaths = u16();
 
   const players: SnapPlayer[] = [];
   const np = u8();
@@ -210,7 +219,9 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
     const phases: number[] = [];
     const nw = u8();
     for (let k = 0; k < nw; k++) phases.push((u16() / 65535) * Math.PI * 2);
-    players.push({ slot, flags, x, y, fx, fy, hp, maxHp, invuln, phases });
+    const revive = u8() / 255;
+    const reviveHp = u8() / 100;
+    players.push({ slot, flags, x, y, fx, fy, hp, maxHp, invuln, phases, revive, reviveHp });
   }
 
   const entities = (): SnapEntity[] => {
@@ -229,10 +240,11 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
   const enemies = entities();
   const gems = entities();
   const projectiles = entities();
+  const potions = entities();
 
   const len = u32();
   const events = len > 0 ? (JSON.parse(decoder.decode(new Uint8Array(buf, o, len))) as FxEvent[]) : [];
-  return { runTime, state, frozen, kills, level, exp, need, players, enemies, gems, projectiles, events };
+  return { runTime, state, frozen, kills, level, exp, need, teamDeaths, players, enemies, gems, projectiles, potions, events };
 }
 
 /** Writes one entity record; must match `entities()` in decodeSnapshot. */
@@ -247,7 +259,7 @@ export function writeEntity(w: Writer, id: number, kind: number, extra: number, 
 /** Writes the snapshot header and players; must match decodeSnapshot. */
 export function writeHeader(
   w: Writer,
-  h: { runTime: number; state: number; frozen: boolean; kills: number; level: number; exp: number; need: number },
+  h: { runTime: number; state: number; frozen: boolean; kills: number; level: number; exp: number; need: number; teamDeaths: number },
   players: SnapPlayer[],
 ): void {
   w.f32(h.runTime);
@@ -257,6 +269,7 @@ export function writeHeader(
   w.u16(h.level);
   w.f32(h.exp);
   w.f32(h.need);
+  w.u16(h.teamDeaths);
   w.u8(players.length);
   for (const p of players) {
     w.u8(p.slot);
@@ -273,5 +286,7 @@ export function writeHeader(
       const t = (((a / (Math.PI * 2)) % 1) + 1) % 1;
       w.u16(Math.round(t * 65535));
     }
+    w.u8(Math.round(Phaser.Math.Clamp(p.revive, 0, 1) * 255));
+    w.u8(Math.round(p.reviveHp * 100));
   }
 }
