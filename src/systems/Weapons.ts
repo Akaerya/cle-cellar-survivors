@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { DEPTH, INNER, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
-import { weaponStatsAt } from '../core/progression';
-import { weaponDef } from '../data';
-import type { WeaponDef, WeaponStats } from '../data/types';
+import { DEPTH, INNER, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
+import { hasteFactor, modsForWeapon, weaponStatsAt } from '../core/progression';
+import { CHAIN_RANGE, ECHO_GAP, ECHO_RADIUS, SPLIT_ARC, weaponDef } from '../data';
+import type { ModEffect, WeaponDef, WeaponStats } from '../data/types';
 import type { Enemy } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
 import { Projectile } from '../entities/Projectile';
@@ -39,10 +39,44 @@ export interface WeaponInstance {
   pulse: number;
   phase: number;
   slashes: Slash[];
+  /** Totals of the owner's modifications that share a tag with this weapon. */
+  mod: Required<ModEffect>;
+  /** Repeats of the last attack still to come, and seconds until the next one. */
+  repeatsLeft: number;
+  repeatTimer: number;
 }
 
-/** Stats after the owner's multipliers (damage, cooldown, area). */
-export interface Effective extends WeaponStats {}
+/** Stats after the owner's multipliers (damage, cooldown, area) and modifications. */
+export interface Effective extends WeaponStats {
+  /** Projectiles: how many one splits into on hit (below 2: no split), and how many times a line can split. */
+  split: number;
+  splitDepth: number;
+  /** Projectiles: bounces once pierce is used up. */
+  chain: number;
+  /** Echo Strike: fraction of an area hit dealt again (0 = none), its radius in px and how many times it goes off. */
+  echo: number;
+  echoRadius: number;
+  echoRepeats: number;
+  /** Duration effect: damage per tick and seconds a stack lasts (0 without an effect). */
+  effectDamage: number;
+  effectDuration: number;
+  /** Duration effect: chance a stack copies itself when applied or when it deals damage. */
+  reiterate: number;
+}
+
+/** An Echo Strike waiting to go off. */
+interface Echo {
+  weapon: WeaponInstance;
+  x: number;
+  y: number;
+  radius: number;
+  amount: number;
+  /** Run time it goes off. */
+  at: number;
+  /** The enemy that was hit (it always takes the echo), and its spawn id so a recycled enemy is not mistaken for it. */
+  source: Enemy;
+  sourceId: number;
+}
 
 const DEG = Math.PI / 180;
 /** Targeting types drawn with the slash graphics (redrawn every frame while effects play). */
@@ -54,10 +88,15 @@ const SLASHERS = new Set(['facing', 'stab', 'breath']);
  * `orbit` keeps objects circling the owner, `aura` damages everything in a radius on a tick,
  * `stab` thrusts a blade at the nearest enemy, `breath` sprays a cone at it, `strike` calls bolts down
  * around the owner, and `shield` blocks a hit every cooldown and absorbs part of the rest.
+ * The owner's modifications (data/modifications.ts) are folded into `eff()` by weapon tag; this class also
+ * runs what they add: projectile splits and chains, Echo Strike echoes and duration effects on enemies.
  */
 export class Weapons {
   readonly list: WeaponInstance[] = [];
   private query: Enemy[] = [];
+  private echoes: Echo[] = [];
+  /** Echo damage summed per weapon and enemy, so one frame of echoes is one hit (and one number) per enemy. */
+  private echoSums = new Map<WeaponInstance, Map<Enemy, number>>();
 
   /** `projectiles` is shared by every player's weapons. */
   constructor(
@@ -67,7 +106,7 @@ export class Weapons {
   ) {}
 
   static createProjectileGroup(game: GameScene): Phaser.Physics.Arcade.Group {
-    return game.physics.add.group({ classType: Projectile, maxSize: 300, runChildUpdate: false });
+    return game.physics.add.group({ classType: Projectile, maxSize: MAX_PROJECTILES, runChildUpdate: false });
   }
 
   get(id: string): WeaponInstance | undefined {
@@ -101,6 +140,9 @@ export class Weapons {
       pulse: 0,
       phase: 0,
       slashes: [],
+      mod: modsForWeapon(def, this.owner.mods),
+      repeatsLeft: 0,
+      repeatTimer: 0,
     };
   }
 
@@ -111,15 +153,35 @@ export class Weapons {
     w.stats = weaponStatsAt(w.def, w.level);
   }
 
+  /** The owner's modifications changed: recompute what they add to every weapon. */
+  refreshMods(): void {
+    for (const w of this.list) w.mod = modsForWeapon(w.def, this.owner.mods);
+  }
+
   eff(w: WeaponInstance): Effective {
     const p = this.owner.stats;
     const s = w.stats;
+    const m = w.mod;
+    // Area bonuses add up: the AREA stat plus area modifications (only AoE weapons get those).
+    const area = Math.max(0.1, p.areaMult + m.area);
+    const damageMult = p.damageMult * (1 + m.damage);
+    const effect = w.def.effect;
     return {
       ...s,
-      damage: s.damage * p.damageMult,
-      cooldown: Math.max(0.05, s.cooldown * p.cooldownMult),
-      size: s.size * p.areaMult,
+      damage: s.damage * damageMult,
+      cooldown: Math.max(0.05, s.cooldown * p.cooldownMult * hasteFactor(p.abilityHaste)),
+      size: s.size * area,
       range: w.def.targeting === 'orbit' ? s.range * p.areaMult : s.range,
+      pierce: s.pierce + m.pierce,
+      split: m.split,
+      splitDepth: m.splitDepth,
+      chain: m.chain,
+      echo: m.echo,
+      echoRadius: ECHO_RADIUS * Math.max(0.1, area + m.echoArea),
+      echoRepeats: m.echo > 0 ? Math.max(1, Math.round(m.echoRepeats)) : 0,
+      effectDamage: effect ? effect.damage * damageMult : 0,
+      effectDuration: effect ? effect.duration * Math.max(0.1, 1 + m.duration) : 0,
+      reiterate: m.reiterate,
     };
   }
 
@@ -148,6 +210,7 @@ export class Weapons {
       }
       if (w.gfx && SLASHERS.has(w.def.targeting)) this.drawSlashes(w, dt);
     }
+    if (firing) this.processEchoes();
   }
 
   /** Projectiles of every player: lifetime, boomerang steering, and the arena wall. */
@@ -164,8 +227,34 @@ export class Weapons {
   }
 
   private tickShooter(w: WeaponInstance, e: Effective, dt: number): void {
+    if (w.repeatsLeft > 0) {
+      w.repeatTimer -= dt;
+      if (w.repeatTimer <= 0) {
+        w.repeatsLeft--;
+        w.repeatTimer += this.repeatGap(w, e);
+        this.attack(w, e);
+      }
+    }
     w.timer -= dt;
     if (w.timer > 0) return;
+    const fired = this.attack(w, e);
+    const repeats = Math.round(e.repeat ?? 0);
+    if (fired && repeats > 0) {
+      w.repeatsLeft = repeats;
+      w.repeatTimer = this.repeatGap(w, e);
+    }
+    // Hold fire with no target: stay ready and shoot the moment one appears.
+    w.timer = fired ? Math.max(w.timer + e.cooldown, e.cooldown * 0.5) : 0;
+  }
+
+  /** Seconds between repeats: the weapon's delay, shortened so every repeat lands before the next attack. */
+  private repeatGap(w: WeaponInstance, e: Effective): number {
+    const n = Math.max(1, Math.round(e.repeat ?? 0));
+    return Math.min(w.def.repeatDelay ?? 0, e.cooldown / (n + 1));
+  }
+
+  /** One attack of a shooter weapon. Returns false when it held fire (no target). */
+  private attack(w: WeaponInstance, e: Effective): boolean {
     let fired = false;
     const p = this.owner;
     if (w.def.targeting === 'nearest') {
@@ -195,8 +284,7 @@ export class Weapons {
       else this.sweep(w, e, base);
       fired = true;
     }
-    // Hold fire with no target: stay ready and shoot the moment one appears.
-    w.timer = fired ? Math.max(w.timer + e.cooldown, e.cooldown * 0.5) : 0;
+    return fired;
   }
 
   private volley(w: WeaponInstance, e: Effective, base: number): void {
@@ -238,7 +326,7 @@ export class Weapons {
         const along = dx * cos + dy * sin;
         if (along < -en.radius || along > e.size + en.radius) continue;
         if (Math.abs(dy * cos - dx * sin) > half + en.radius) continue;
-        this.game.enemies.hit(en, e.damage, cos, sin, e.knockback, w);
+        this.areaHit(w, e, en, cos, sin);
       }
       w.slashes.push({ angle, reach: e.size, arc: e.arc, t: 0, dur });
       this.game.relay(['w', p.slot, this.list.indexOf(w), angle, e.size, e.arc, dur]);
@@ -278,7 +366,7 @@ export class Weapons {
         const dy = en.y - y;
         const d = Math.hypot(dx, dy);
         if (d > e.size + en.radius) continue;
-        this.game.enemies.hit(en, e.damage, dx / (d || 1), dy / (d || 1), e.knockback, w);
+        this.areaHit(w, e, en, dx / (d || 1), dy / (d || 1));
       }
       this.game.fx.lightning(x, y, e.size, w.def.color ?? 0xc8ecff);
     }
@@ -354,7 +442,7 @@ export class Weapons {
         const diff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle));
         const tol = d > 0 ? Math.asin(Math.min(1, en.radius / d)) : Math.PI;
         if (diff > half + tol) continue;
-        this.game.enemies.hit(en, e.damage, dx / (d || 1), dy / (d || 1), e.knockback, w);
+        this.areaHit(w, e, en, dx / (d || 1), dy / (d || 1));
       }
       const dur = Math.max(0.14, e.lifetime);
       w.slashes.push({ angle, reach: e.size, arc: e.arc * DEG, t: 0, dur });
@@ -529,6 +617,7 @@ export class Weapons {
         const ky = en.y - p.y;
         const kd = Math.hypot(kx, ky) || 1;
         this.game.enemies.hit(en, e.damage, kx / kd, ky / kd, e.knockback, w);
+        this.applyEffect(w, e, en);
       }
     }
   }
@@ -550,7 +639,7 @@ export class Weapons {
           const dy = en.y - p.y;
           const d = Math.hypot(dx, dy);
           if (d > R + en.radius * 0.5) continue;
-          this.game.enemies.hit(en, e.damage, dx / (d || 1), dy / (d || 1), e.knockback, w);
+          this.areaHit(w, e, en, dx / (d || 1), dy / (d || 1));
         }
       }
     }
@@ -571,6 +660,10 @@ export class Weapons {
     g.strokeCircle(p.x, p.y, R);
   }
 
+  /**
+   * A projectile touched an enemy. Order: split if it still can (the projectile becomes its splits), otherwise
+   * use up pierce; once pierce is gone a boomerang turns around, anything else chains while it has bounces.
+   */
   onProjectileHit(pr: Projectile, en: Enemy): void {
     if (!pr.active || !en.active || pr.hit.has(en)) return;
     pr.hit.add(en);
@@ -579,11 +672,131 @@ export class Weapons {
     const dx = v > 1 ? body.velocity.x / v : pr.dirX;
     const dy = v > 1 ? body.velocity.y / v : pr.dirY;
     this.game.enemies.hit(en, pr.damage, dx, dy, pr.knockback, pr.weapon);
-    pr.pierceLeft--;
-    if (pr.pierceLeft <= 0) {
-      if (pr.boomerang && !pr.returning) pr.turnAround();
-      else Weapons.release(pr);
+    if (pr.weapon.def.effect) this.applyEffect(pr.weapon, this.eff(pr.weapon), en);
+    if (pr.splitsLeft > 0) {
+      this.split(pr, Math.atan2(dy, dx));
+      Weapons.release(pr);
+      return;
     }
+    pr.pierceLeft--;
+    if (pr.pierceLeft > 0) return;
+    if (pr.boomerang) {
+      if (pr.returning) Weapons.release(pr);
+      else pr.turnAround();
+      return;
+    }
+    if (pr.bouncesLeft > 0) this.chain(pr);
+    else Weapons.release(pr);
+  }
+
+  /** Splits: identical projectiles fan out from the hit, skipping enemies the parent already hit. */
+  private split(pr: Projectile, angle: number): void {
+    const w = pr.weapon;
+    const e = this.eff(w);
+    const n = pr.splitCount;
+    const step = (SPLIT_ARC * DEG) / (n - 1);
+    for (let i = 0; i < n; i++) {
+      const child = this.projectiles.get(pr.x, pr.y) as Projectile | null;
+      if (!child) break;
+      child.fire(w, pr.x, pr.y, angle + (i - (n - 1) / 2) * step, e);
+      child.splitCount = pr.splitCount;
+      child.splitsLeft = pr.splitsLeft - 1;
+      for (const h of pr.hit) child.hit.add(h);
+    }
+  }
+
+  /** Chain: bounce to the closest enemy this projectile has not hit, or a random direction when none is near. */
+  private chain(pr: Projectile): void {
+    pr.bouncesLeft--;
+    let target: Enemy | null = null;
+    let best = CHAIN_RANGE * CHAIN_RANGE;
+    this.query.length = 0;
+    this.game.enemies.grid.query(pr.x, pr.y, CHAIN_RANGE, this.query);
+    for (const en of this.query) {
+      if (!en.active || pr.hit.has(en)) continue;
+      const d2 = (en.x - pr.x) ** 2 + (en.y - pr.y) ** 2;
+      if (d2 < best) {
+        best = d2;
+        target = en;
+      }
+    }
+    const angle = target ? Math.atan2(target.y - pr.y, target.x - pr.x) : this.game.rng.angle();
+    pr.bounce(angle, CHAIN_RANGE / Math.max(1, pr.speed) + 0.1);
+  }
+
+  /** A hit from the area part of a weapon. Also queues Echo Strike echoes when the weapon has them. */
+  private areaHit(w: WeaponInstance, e: Effective, en: Enemy, dirX: number, dirY: number): void {
+    const x = en.x;
+    const y = en.y;
+    this.game.enemies.hit(en, e.damage, dirX, dirY, e.knockback, w);
+    this.applyEffect(w, e, en);
+    for (let i = 0; i < e.echoRepeats; i++) {
+      this.echoes.push({
+        weapon: w,
+        x,
+        y,
+        radius: e.echoRadius,
+        amount: e.damage * e.echo,
+        at: this.game.runTime + i * ECHO_GAP,
+        source: en,
+        sourceId: en.netId,
+      });
+    }
+  }
+
+  /**
+   * Echoes that are due go off: each deals its share to every enemy within its radius, the enemy that was hit
+   * included. Echo damage never echoes again.
+   */
+  private processEchoes(): void {
+    if (this.echoes.length === 0) return;
+    const now = this.game.runTime;
+    let keep = 0;
+    for (let i = 0; i < this.echoes.length; i++) {
+      const ec = this.echoes[i];
+      if (ec.at > now) {
+        this.echoes[keep++] = ec;
+        continue;
+      }
+      let sums = this.echoSums.get(ec.weapon);
+      if (!sums) {
+        sums = new Map();
+        this.echoSums.set(ec.weapon, sums);
+      }
+      const src = ec.source.active && ec.source.netId === ec.sourceId ? ec.source : null;
+      let srcHit = false;
+      this.query.length = 0;
+      this.game.enemies.grid.query(ec.x, ec.y, ec.radius + 16, this.query);
+      for (const en of this.query) {
+        if (!en.active) continue;
+        const dx = en.x - ec.x;
+        const dy = en.y - ec.y;
+        const rr = ec.radius + en.radius;
+        if (dx * dx + dy * dy > rr * rr) continue;
+        if (en === src) srcHit = true;
+        sums.set(en, (sums.get(en) ?? 0) + ec.amount);
+      }
+      if (src && !srcHit) sums.set(src, (sums.get(src) ?? 0) + ec.amount);
+      this.game.fx.echo(ec.x, ec.y, ec.radius, ec.weapon.def.color ?? 0xffffff);
+    }
+    this.echoes.length = keep;
+    for (const [w, sums] of this.echoSums) {
+      for (const [en, amount] of sums) this.game.enemies.hit(en, amount, 0, 0, 0, w);
+      sums.clear();
+    }
+  }
+
+  /** Duration weapons: a hit applies the weapon's effect (refreshing the stack it applied before) and may reiterate. */
+  private applyEffect(w: WeaponInstance, e: Effective, en: Enemy): void {
+    const def = w.def.effect;
+    if (!def || e.effectDuration <= 0 || !en.active) return;
+    let stack = en.effects.find((st) => st.weapon === w && !st.copy);
+    if (stack) stack.left = e.effectDuration;
+    else {
+      stack = { weapon: w, left: e.effectDuration, next: def.interval, copy: false };
+      en.effects.push(stack);
+    }
+    this.game.enemies.reiterate(en, stack, e.reiterate);
   }
 
   private static release(pr: Projectile): void {
@@ -646,6 +859,7 @@ export class Weapons {
 
   /** Removes everything this player drew (player left). The list stays for the party screen. */
   destroy(): void {
+    this.echoes.length = 0;
     for (const w of this.list) {
       for (const s of w.orbiters) s.destroy();
       w.orbiters.length = 0;
@@ -660,12 +874,14 @@ export class Weapons {
     for (const w of this.list) for (const s of w.orbiters) s.setVisible(true);
   }
 
-  /** Hides orbiters and effects (end of run). */
+  /** Hides orbiters and effects, and drops repeats and echoes still to come (fallen, end of run). */
   clearVisuals(): void {
     for (const w of this.list) {
       for (const s of w.orbiters) s.setVisible(false);
       w.gfx?.clear();
       w.slashes.length = 0;
+      w.repeatsLeft = 0;
     }
+    this.echoes.length = 0;
   }
 }

@@ -15,16 +15,20 @@ import {
 } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry, type PartyMember, type RunSummary, type WeaponReport } from '../core/events';
 import { displayName, loadProfile } from '../core/profile';
-import { computeStats, expToNext } from '../core/progression';
+import { computeStats, expToNext, itemMaxLevel, weaponLevelText } from '../core/progression';
 import { Rng, seedFromUrl } from '../core/rng';
 import { sfx, type SfxName } from '../core/sfx';
 import {
   ATTACK_DEFS,
   ENEMIES,
   ITEMS,
+  MODIFICATIONS,
+  POWERUPS,
   REVIVE,
   characterDef,
   itemDef,
+  modDef,
+  powerupDef,
   reviveHpPercent,
   speedScaleForMinute,
   ultimateDef,
@@ -70,12 +74,14 @@ export type RunState = 'playing' | 'dying' | 'victory' | 'ended';
 export type RunMode = 'solo' | 'host' | 'client';
 
 export interface Choice {
-  kind: 'weapon' | 'item' | 'heal';
+  kind: 'weapon' | 'item' | 'mod' | 'powerup' | 'heal';
   id: string;
   name: string;
   icon: string;
   /** Level after taking this card (1 for new). */
   level: number;
+  /** Highest level this weapon, item, modification or powerup can reach. */
+  maxLevel: number;
   isNew: boolean;
   text: string;
 }
@@ -90,6 +96,8 @@ export interface HudSnapshot {
   time: number;
   weapons: BuildEntry[];
   items: BuildEntry[];
+  mods: BuildEntry[];
+  powerups: BuildEntry[];
   debug: boolean;
 }
 
@@ -360,6 +368,7 @@ export class GameScene extends Phaser.Scene {
       const speedScale = speedScaleForMinute(this.runTime / 60);
       this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying', speedScale);
       for (const p of this.players) if (p?.alive) p.weapons.update(dt, this.state === 'playing');
+      if (playing) this.enemies.updateEffects(dt);
       for (const p of this.players) if (p && !p.gone) p.ultimate.update(dt, p.alive && this.state === 'playing');
       Weapons.updateProjectiles(this.projectiles, dt);
       this.gems.update(dt);
@@ -568,8 +577,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Up to 3 random cards from the character's weapons, the shared items, and upgrades of owned ones,
-   * respecting slot limits.
+   * Up to 3 random cards from the character's weapons, the shared items, modifications, generic powerups
+   * and upgrades of owned ones, respecting slot limits. A modification is only offered new while the player
+   * owns a weapon it changes.
    */
   rollChoices(p: Player): Choice[] {
     const pool: Choice[] = [];
@@ -585,24 +595,42 @@ export class GameScene extends Phaser.Scene {
             name: def.name,
             icon: def.icon,
             level: owned.level + 1,
+            maxLevel: MAX_LEVEL,
             isNew: false,
-            text: def.levels[owned.level - 1]?.text ?? '',
+            text: weaponLevelText(def, owned.level + 1),
           });
         }
       } else if (!weaponSlotsFull) {
-        pool.push({ kind: 'weapon', id: def.id, name: def.name, icon: def.icon, level: 1, isNew: true, text: def.description });
+        pool.push({ kind: 'weapon', id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: MAX_LEVEL, isNew: true, text: weaponLevelText(def, 1) });
       }
     }
-    for (const def of ITEMS) {
-      const owned = p.items.find((i) => i.def.id === def.id);
-      if (owned) {
-        if (owned.level < MAX_LEVEL) {
-          pool.push({ kind: 'item', id: def.id, name: def.name, icon: def.icon, level: owned.level + 1, isNew: false, text: def.levelText });
+    const stat = (kind: 'item' | 'powerup', list: typeof ITEMS, owned: typeof p.items, slotsFull: boolean) => {
+      for (const def of list) {
+        const max = itemMaxLevel(def);
+        const have = owned.find((i) => i.def.id === def.id);
+        if (have) {
+          if (have.level < max) {
+            pool.push({ kind, id: def.id, name: def.name, icon: def.icon, level: have.level + 1, maxLevel: max, isNew: false, text: def.levelText });
+          }
+        } else if (!slotsFull) {
+          pool.push({ kind, id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
         }
-      } else if (!itemSlotsFull) {
-        pool.push({ kind: 'item', id: def.id, name: def.name, icon: def.icon, level: 1, isNew: true, text: def.description });
+      }
+    };
+    stat('item', ITEMS, p.items, itemSlotsFull);
+    const tags = new Set(p.weapons.list.flatMap((w) => w.def.tags ?? []));
+    for (const def of MODIFICATIONS) {
+      const max = def.levels.length;
+      const have = p.mods.find((m) => m.def.id === def.id);
+      if (have) {
+        if (have.level < max) {
+          pool.push({ kind: 'mod', id: def.id, name: def.name, icon: def.icon, level: have.level + 1, maxLevel: max, isNew: false, text: def.levels[have.level].text });
+        }
+      } else if (def.tags.some((t) => tags.has(t))) {
+        pool.push({ kind: 'mod', id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
       }
     }
+    stat('powerup', POWERUPS, p.powerups, false);
     if (pool.length === 0) {
       return [
         {
@@ -611,6 +639,7 @@ export class GameScene extends Phaser.Scene {
           name: 'Banana Bunch',
           icon: 'icon_heal',
           level: 0,
+          maxLevel: 0,
           isNew: false,
           text: `Everything is maxed. Heal ${FALLBACK_HEAL} HP.`,
         },
@@ -623,28 +652,47 @@ export class GameScene extends Phaser.Scene {
     if (c.kind === 'weapon') {
       if (p.weapons.get(c.id)) p.weapons.levelUp(c.id);
       else p.weapons.add(c.id);
-    } else if (c.kind === 'item') {
-      const owned = p.items.find((i) => i.def.id === c.id);
+    } else if (c.kind === 'item' || c.kind === 'powerup') {
+      const list = c.kind === 'item' ? p.items : p.powerups;
+      const owned = list.find((i) => i.def.id === c.id);
       if (owned) owned.level++;
-      else p.items.push({ def: itemDef(c.id), level: 1 });
-      p.setStats(computeStats(p.items));
+      else list.push({ def: c.kind === 'item' ? itemDef(c.id) : powerupDef(c.id), level: 1 });
+      p.setStats(computeStats([...p.items, ...p.powerups]));
+    } else if (c.kind === 'mod') {
+      const owned = p.mods.find((m) => m.def.id === c.id);
+      if (owned) owned.level++;
+      else p.mods.push({ def: modDef(c.id), level: 1 });
+      p.weapons.refreshMods();
     } else {
       p.heal(FALLBACK_HEAL);
     }
     p.pendingLevelUps = Math.max(0, p.pendingLevelUps - 1);
     if (this.mode === 'host') this.net?.broadcast(this.buildMsg(p));
     if (p === this.player) {
-      this.events.emit(EV.buildChanged, this.buildWeapons(), this.buildItems());
+      this.emitBuild();
       this.events.emit(EV.hpChanged, this.player.hp, this.player.stats.maxHp);
     }
   }
 
+  private emitBuild(): void {
+    const p = this.player;
+    this.events.emit(EV.buildChanged, this.buildWeapons(p), this.buildItems(p), this.buildMods(p), this.buildPowerups(p));
+  }
+
   buildWeapons(p: Player = this.player): BuildEntry[] {
-    return p.weapons.list.map((w) => ({ id: w.def.id, name: w.def.name, icon: w.def.icon, level: w.level, damage: Math.round(w.damage) }));
+    return p.weapons.list.map((w) => ({ id: w.def.id, name: w.def.name, icon: w.def.icon, level: w.level, max: MAX_LEVEL, damage: Math.round(w.damage) }));
   }
 
   buildItems(p: Player = this.player): BuildEntry[] {
-    return p.items.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level }));
+    return p.items.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level, max: itemMaxLevel(i.def) }));
+  }
+
+  buildMods(p: Player = this.player): BuildEntry[] {
+    return p.mods.map((m) => ({ id: m.def.id, name: m.def.name, icon: m.def.icon, level: m.level, max: m.def.levels.length }));
+  }
+
+  buildPowerups(p: Player = this.player): BuildEntry[] {
+    return p.powerups.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level, max: itemMaxLevel(i.def) }));
   }
 
   hudSnapshot(): HudSnapshot {
@@ -658,6 +706,8 @@ export class GameScene extends Phaser.Scene {
       time: this.runTime,
       weapons: this.buildWeapons(),
       items: this.buildItems(),
+      mods: this.buildMods(),
+      powerups: this.buildPowerups(),
       debug: this.debug,
     };
   }
@@ -815,6 +865,8 @@ export class GameScene extends Phaser.Scene {
         dps: p.runStats.damage / Math.max(1, this.runTime),
         weapons: [...p.weapons.list.map((w) => this.weaponReport(w)), this.weaponReport(p.ultimate.attack, true)],
         items: this.buildItems(p),
+        mods: this.buildMods(p),
+        powerups: this.buildPowerups(p),
       }));
   }
 
@@ -892,6 +944,8 @@ export class GameScene extends Phaser.Scene {
       slot: p.slot,
       weapons: p.weapons.list.map((w): BuildPair => [w.def.id, w.level]),
       items: p.items.map((i): BuildPair => [i.def.id, i.level]),
+      mods: p.mods.map((m): BuildPair => [m.def.id, m.level]),
+      powerups: p.powerups.map((i): BuildPair => [i.def.id, i.level]),
     };
   }
 
@@ -990,6 +1044,7 @@ export class GameScene extends Phaser.Scene {
           case 'p':
           case 'r':
           case 'l':
+          case 'e':
             return this.nearView(p, ev[1], ev[2]);
           case 's':
             if (sounds.has(ev[1])) return false;
@@ -1145,6 +1200,9 @@ export class GameScene extends Phaser.Scene {
       case 'l':
         this.fx.lightning(ev[1], ev[2], ev[3], ev[4]);
         break;
+      case 'e':
+        this.fx.echo(ev[1], ev[2], ev[3], ev[4]);
+        break;
     }
   }
 
@@ -1153,12 +1211,15 @@ export class GameScene extends Phaser.Scene {
       case 'build': {
         const p = this.players[msg.slot];
         if (!p || p.gone) break;
-        p.weapons.sync(msg.weapons);
         p.items = msg.items.map(([id, level]) => ({ def: itemDef(id), level }));
+        p.powerups = (msg.powerups ?? []).map(([id, level]) => ({ def: powerupDef(id), level }));
+        p.mods = (msg.mods ?? []).map(([id, level]) => ({ def: modDef(id), level }));
+        p.weapons.sync(msg.weapons);
+        p.weapons.refreshMods();
         const hp = p.hp;
-        p.setStats(computeStats(p.items));
+        p.setStats(computeStats([...p.items, ...p.powerups]));
         p.hp = hp; // HP comes from the host
-        if (p === this.player) this.events.emit(EV.buildChanged, this.buildWeapons(), this.buildItems());
+        if (p === this.player) this.emitBuild();
         break;
       }
       case 'choices':

@@ -12,6 +12,8 @@ const ULT_Y = 53;
 const ULT_SIZE = 24;
 const TEAM_Y = 84;
 const TEAM_ROW = 22;
+/** px between the slot rows and the modifications / powerups beside them. */
+const EXTRA_GAP = 6;
 
 /** An ultimate icon that greys out with a countdown while on cooldown. */
 interface UltBadge {
@@ -95,7 +97,7 @@ export class UIScene extends Phaser.Scene {
     this.drawExp();
     this.onTime(snap.time);
     this.onKills(snap.kills);
-    this.onBuild(snap.weapons, snap.items);
+    this.onBuild(snap.weapons, snap.items, snap.mods, snap.powerups);
     this.onDebugState(snap.debug);
 
     const ev = this.run.events;
@@ -107,7 +109,7 @@ export class UIScene extends Phaser.Scene {
       [EV.levelUp, () => (this.expFlash = 1)],
       [EV.timeChanged, (t: number) => this.onTime(t)],
       [EV.killsChanged, (k: number) => this.onKills(k)],
-      [EV.buildChanged, (w: BuildEntry[], i: BuildEntry[]) => this.onBuild(w, i)],
+      [EV.buildChanged, (w: BuildEntry[], i: BuildEntry[], m: BuildEntry[], pu: BuildEntry[]) => this.onBuild(w, i, m, pu)],
       [EV.playerHurt, () => this.onHurt()],
       [EV.banner, (t: string, c: number) => this.showBanner(t, c)],
       [EV.debugState, (on: boolean) => this.onDebugState(on)],
@@ -259,29 +261,38 @@ export class UIScene extends Phaser.Scene {
     this.killText.setText(String(k));
   }
 
-  private onBuild(weapons: BuildEntry[], items: BuildEntry[]): void {
+  /**
+   * Top left: weapon slots, item slots under them, and to the right of each row the modifications
+   * (next to the weapons) and generic powerups (next to the items), which take no slots.
+   */
+  private onBuild(weapons: BuildEntry[], items: BuildEntry[], mods: BuildEntry[] = [], powerups: BuildEntry[] = []): void {
     this.build.removeAll(true);
+    const slot = (x: number, y: number, e: BuildEntry | undefined) => {
+      const g = this.add.graphics();
+      g.fillStyle(COLOR.ink, 0.85);
+      g.fillRect(x, y, 18, 18);
+      g.lineStyle(1, e ? COLOR.panelEdge : 0x3a3149, 1);
+      g.strokeRect(x + 0.5, y + 0.5, 17, 17);
+      this.build.add(g);
+      if (!e) return;
+      this.build.add(this.add.image(x + 1, y + 1, ATLAS, e.icon).setOrigin(0));
+      const lv = this.add
+        .bitmapText(x + 18, y + 19, FONT_SMALL, String(e.level), FONT_SMALL_SIZE)
+        .setOrigin(1, 1)
+        .setTint(e.level >= (e.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.white);
+      this.build.add(lv);
+    };
     const row = (list: BuildEntry[], slots: number, y: number) => {
-      for (let i = 0; i < slots; i++) {
-        const x = 4 + i * 19;
-        const g = this.add.graphics();
-        g.fillStyle(COLOR.ink, 0.85);
-        g.fillRect(x, y, 18, 18);
-        g.lineStyle(1, list[i] ? COLOR.panelEdge : 0x3a3149, 1);
-        g.strokeRect(x + 0.5, y + 0.5, 17, 17);
-        this.build.add(g);
-        const e = list[i];
-        if (!e) continue;
-        this.build.add(this.add.image(x + 1, y + 1, ATLAS, e.icon).setOrigin(0));
-        const lv = this.add
-          .bitmapText(x + 18, y + 19, FONT_SMALL, String(e.level), FONT_SMALL_SIZE)
-          .setOrigin(1, 1)
-          .setTint(e.level >= MAX_LEVEL ? COLOR.gold : COLOR.white);
-        this.build.add(lv);
-      }
+      for (let i = 0; i < slots; i++) slot(4 + i * 19, y, list[i]);
+    };
+    const extras = (list: BuildEntry[], slots: number, y: number) => {
+      const x0 = 4 + slots * 19 + EXTRA_GAP;
+      list.forEach((e, i) => slot(x0 + i * 19, y, e));
     };
     row(weapons, MAX_WEAPONS, 13);
     row(items, MAX_ITEMS, 33);
+    extras(mods, MAX_WEAPONS, 13);
+    extras(powerups, MAX_ITEMS, 33);
   }
 
   private onHurt(): void {

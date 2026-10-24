@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
-import { formatTime } from '../core/progression';
+import { COLOR, MAX_LEVEL, SCENES, VIEW_H, VIEW_W } from '../constants';
+import { formatTime, hasteFactor } from '../core/progression';
 import { sfx } from '../core/sfx';
 import { Button, Menu, drawPanel, onKey, text } from '../ui/widgets';
 import { leaveSession } from '../net/flow';
+import type { BuildEntry } from '../core/events';
 import type { GameScene } from './GameScene';
 
 /**
@@ -22,9 +23,9 @@ export class PauseScene extends Phaser.Scene {
     this.add.image(0, 0, 'vignette').setOrigin(0).setDisplaySize(VIEW_W, VIEW_H);
 
     const px = 110;
-    const py = 54;
     const pw = 420;
-    const ph = 252;
+    const ph = 292;
+    const py = Math.round((VIEW_H - ph) / 2);
     const g = this.add.graphics();
     drawPanel(g, px, py, pw, ph);
     text(this, VIEW_W / 2, py + 22, run.coop ? 'MENU' : 'PAUSED', { scale: 3, origin: [0.5, 0.5], color: COLOR.gold });
@@ -68,17 +69,17 @@ export class PauseScene extends Phaser.Scene {
     onKey(this, 'keydown-ESC', resume);
     onKey(this, 'keydown-P', resume);
 
-    // Build: weapons and items with levels.
+    // Build: weapons and items with levels, then modifications and powerups (wrapping, 9 per row).
     const listX = px + 20;
     let ly = py + 200;
     text(this, listX, ly, 'BUILD', { color: COLOR.textDim });
     ly += 12;
-    const all = [...run.buildWeapons(), ...run.buildItems()];
-    all.forEach((e, i) => {
-      const x = listX + i * 19;
-      this.add.image(x, ly, ATLAS, e.icon).setOrigin(0);
-      text(this, x + 16, ly + 16, String(e.level), { origin: [1, 0], color: e.level >= 5 ? COLOR.gold : COLOR.text });
-    });
+    const icon = (e: BuildEntry, x: number, y: number) => {
+      this.add.image(x, y, ATLAS, e.icon).setOrigin(0);
+      text(this, x + 16, y + 16, String(e.level), { origin: [1, 0], color: e.level >= (e.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.text });
+    };
+    [...run.buildWeapons(), ...run.buildItems()].forEach((e, i) => icon(e, listX + i * 19, ly));
+    [...run.buildMods(), ...run.buildPowerups()].forEach((e, i) => icon(e, listX + (i % 9) * 19, ly + 22 + Math.floor(i / 9) * 22));
 
     // Stats column.
     const s = run.player.stats;
@@ -90,11 +91,13 @@ export class PauseScene extends Phaser.Scene {
     const rows: [string, string][] = [
       ['HP', `${Math.ceil(run.player.hp)} / ${s.maxHp}`],
       ['MOVE SPEED', `${Math.round(s.moveSpeed)}`],
-      ['REGEN', `${s.regen.toFixed(1)}/S`],
+      ['REGEN', `${run.player.regenPerSecond.toFixed(1)}/S`],
       ['ARMOR', `${s.armor}`],
+      ['DAMAGE TAKEN', pct(s.damageTaken)],
       ['PICKUP RADIUS', `${Math.round(s.pickupRadius)}`],
       ['DAMAGE', pct(s.damageMult)],
       ['COOLDOWN', pct(s.cooldownMult)],
+      ['ABILITY HASTE', `${Math.round(s.abilityHaste)} (-${Math.round((1 - hasteFactor(s.abilityHaste)) * 100)}%)`],
       ['AREA', pct(s.areaMult)],
       ['EXP GAIN', pct(s.expMult)],
     ];

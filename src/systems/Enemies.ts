@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { ARENA_SIZE, DEPTH, MAX_ENEMIES } from '../constants';
+import { ARENA_SIZE, DEPTH, MAX_EFFECT_STACKS, MAX_ENEMIES } from '../constants';
 import { SpatialGrid } from '../core/spatialGrid';
 import type { EnemyDef } from '../data/types';
-import { Enemy } from '../entities/Enemy';
+import { Enemy, type EffectStack } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 import type { WeaponInstance } from './Weapons';
@@ -126,6 +126,50 @@ export class Enemies {
     }
   }
 
+  /**
+   * Host: ticks duration effects. Each stack deals its weapon's effect damage every `interval` until it runs
+   * out, and every tick may reiterate (copy the stack with the time it has left).
+   */
+  updateEffects(dt: number): void {
+    const active = this.active;
+    for (let i = 0; i < active.length; i++) {
+      const e = active[i];
+      if (e.effects.length === 0) continue;
+      // Copies made this frame start ticking next frame.
+      const n = e.effects.length;
+      for (let k = 0; k < n && e.active; k++) {
+        const st = e.effects[k];
+        const def = st.weapon.def.effect;
+        st.left -= dt;
+        st.next -= dt;
+        if (!def) {
+          st.left = 0;
+          continue;
+        }
+        // A tick counts while it falls inside the stack's duration.
+        while (st.next <= 0 && st.next <= st.left + 1e-6 && e.active) {
+          st.next += def.interval;
+          const eff = st.weapon.owner.weapons.eff(st.weapon);
+          this.hit(e, eff.effectDamage, 0, 0, 0, st.weapon);
+          this.reiterate(e, st, eff.reiterate);
+        }
+      }
+      if (!e.active) continue;
+      let keep = 0;
+      for (let k = 0; k < e.effects.length; k++) if (e.effects[k].left > 0) e.effects[keep++] = e.effects[k];
+      e.effects.length = keep;
+    }
+  }
+
+  /** Reiterate: with `chance`, the stack copies itself (same time left), up to MAX_EFFECT_STACKS per weapon. */
+  reiterate(e: Enemy, stack: EffectStack, chance: number): void {
+    if (chance <= 0 || stack.left <= 0 || !e.active) return;
+    let count = 0;
+    for (const st of e.effects) if (st.weapon === stack.weapon) count++;
+    if (count >= MAX_EFFECT_STACKS || this.game.rng.float() >= chance) return;
+    e.effects.push({ weapon: stack.weapon, left: stack.left, next: stack.next, copy: true });
+  }
+
   /** dirX/dirY: unit vector to push the enemy along. */
   hit(e: Enemy, amount: number, dirX: number, dirY: number, knockback: number, weapon?: WeaponInstance): void {
     if (!e.active || e.hp <= 0) return;
@@ -159,6 +203,7 @@ export class Enemies {
     }
     e.disableBody(true, true);
     e.anims.stop();
+    e.effects.length = 0;
     if (e.shadow) e.shadow.visible = false;
     this.live--;
     if (dropGem) {

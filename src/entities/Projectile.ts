@@ -9,6 +9,20 @@ import type { WeaponInstance } from '../systems/Weapons';
 const BOOMERANG_OUT = 0.9;
 const BOOMERANG_RETURN_ACCEL = 0.45; // seconds to reach full return speed
 
+/** What one shot needs to know. Split, split depth and chain come from modifications (0 without them). */
+export interface ShotStats {
+  damage: number;
+  speed: number;
+  pierce: number;
+  lifetime: number;
+  size: number;
+  knockback: number;
+  boomerang: boolean;
+  split?: number;
+  splitDepth?: number;
+  chain?: number;
+}
+
 /** Pooled straight-flying projectile (bananas, and any `nearest`/`random`/`facing` weapon with speed). */
 export class Projectile extends Phaser.Physics.Arcade.Sprite {
   weapon!: WeaponInstance;
@@ -24,6 +38,12 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
   boomerang = false;
   returning = false;
   returnAge = 0;
+  /** Projectiles this one splits into on its next hit (Splits modification); below 2 it never splits. */
+  splitCount = 0;
+  /** Splits left in this line: the first hit splits while this is above 0, and each child gets one less. */
+  splitsLeft = 0;
+  /** Bounces left once pierce is used up (Chain modification). */
+  bouncesLeft = 0;
   /** Enemies hit on the current pass. Cleared when a boomerang turns around. */
   readonly hit = new Set<Enemy>();
   /** Identifies this shot to network clients (pooled objects are reused). */
@@ -38,7 +58,7 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     x: number,
     y: number,
     angle: number,
-    o: { damage: number; speed: number; pierce: number; lifetime: number; size: number; knockback: number; boomerang: boolean },
+    o: ShotStats,
   ): void {
     this.weapon = weapon;
     this.netId = nextNetId();
@@ -62,9 +82,21 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.returnAge = 0;
     this.life = o.boomerang ? BOOMERANG_OUT + 3 : o.lifetime;
     this.age = 0;
+    this.splitCount = Math.round(o.split ?? 0);
+    this.splitsLeft = this.splitCount >= 2 ? Math.max(1, Math.round(o.splitDepth ?? 1)) : 0;
+    this.bouncesLeft = Math.round(o.chain ?? 0);
     this.hit.clear();
     this.setDepth(DEPTH.projectiles);
     body.setVelocity(this.dirX * this.speed, this.dirY * this.speed);
+  }
+
+  /** Chain: flies off toward `angle`, with at least `minLife` seconds left to get there. */
+  bounce(angle: number, minLife: number): void {
+    this.dirX = Math.cos(angle);
+    this.dirY = Math.sin(angle);
+    this.life = Math.max(this.life - this.age, minLife);
+    this.age = 0;
+    (this.body as Phaser.Physics.Arcade.Body).setVelocity(this.dirX * this.speed, this.dirY * this.speed);
   }
 
   /** Called when the outbound pass is used up or the turn point is reached. */

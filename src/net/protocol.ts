@@ -6,7 +6,7 @@ import type { Choice } from '../scenes/GameScene';
 
 // ------------------------------------------------------------------ JSON messages
 
-/** [weapon or item id, level] */
+/** [weapon, item, modification or powerup id, level] */
 export type BuildPair = [string, number];
 
 /** Each lobby member's name and character, by slot. */
@@ -17,8 +17,8 @@ export type HostMsg =
   | { t: 'reject'; reason: string }
   | { t: 'lobby'; slots: number[]; profiles: Profiles }
   | { t: 'start'; seed: string; slots: number[]; profiles: Profiles }
-  /** A player's weapons and items changed. */
-  | { t: 'build'; slot: number; weapons: BuildPair[]; items: BuildPair[] }
+  /** A player's weapons, items, modifications or powerups changed. */
+  | { t: 'build'; slot: number; weapons: BuildPair[]; items: BuildPair[]; mods: BuildPair[]; powerups: BuildPair[] }
   /** Level-up cards for the receiving player; `pending` counts this pick. */
   | { t: 'choices'; choices: Choice[]; pending: number }
   /** The receiving player has picked everything; teammates are still choosing. */
@@ -61,7 +61,9 @@ export type FxEvent =
   /** camera flash for everyone: duration */
   | ['f', number]
   /** lightning strike: x, y, radius, colour */
-  | ['l', number, number, number, number];
+  | ['l', number, number, number, number]
+  /** Echo Strike ring: x, y, radius, colour */
+  | ['e', number, number, number, number];
 
 // ------------------------------------------------------------------ binary snapshots
 

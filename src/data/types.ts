@@ -5,6 +5,13 @@
 
 export type Targeting = 'nearest' | 'facing' | 'random' | 'orbit' | 'aura' | 'stab' | 'breath' | 'strike' | 'shield';
 
+/**
+ * Ability tags. A modification (data/modifications.ts) changes every weapon that carries one of its tags.
+ * `projectile`: thrown or orbiting objects. `aoe`: hits everything in an area (the area part of the weapon).
+ * `duration`: leaves a timed effect on enemies (see `WeaponDef.effect`).
+ */
+export type WeaponTag = 'projectile' | 'aoe' | 'duration';
+
 export interface WeaponStats {
   /**
    * Seconds between volleys. For orbit and aura weapons: seconds between hits on the same enemy.
@@ -36,9 +43,21 @@ export interface WeaponStats {
   boomerang: boolean;
   /** `shield`: fraction of every hit absorbed while the block is recharging (0..1). */
   reduction?: number;
+  /** Times the attack is performed again after the first one, `WeaponDef.repeatDelay` seconds apart. */
+  repeat?: number;
 }
 
 export type NumericWeaponStat = Exclude<keyof WeaponStats, 'boomerang'>;
+
+/** A damage-over-time effect a weapon's hits leave on enemies (duration weapons). */
+export interface EffectDef {
+  /** Damage per tick, before DAMAGE and modification bonuses. */
+  damage: number;
+  /** Seconds between ticks. */
+  interval: number;
+  /** Seconds one stack lasts. Scaled by duration modifications. */
+  duration: number;
+}
 
 export interface WeaponLevel {
   /** Shown on the level-up card. */
@@ -61,20 +80,86 @@ export interface WeaponDef {
   artRadius?: number;
   /** Colour of slash or aura effects. */
   color?: number;
-  /** Level 1 stats. */
+  /** Which modifications change this weapon. No tags: none do. */
+  tags?: WeaponTag[];
+  /** Base stats. Level 1 is these plus `pickup`, when there is one. */
   stats: WeaponStats;
+  /** Changes applied at level 1, when the weapon is picked up (on top of `stats`). */
+  pickup?: WeaponLevel;
   /** Changes applied to reach level 2, 3, 4 and 5, in order. */
   levels: WeaponLevel[];
+  /** Seconds between an attack and each of its repeats (`stats.repeat`). */
+  repeatDelay?: number;
+  /** Timed effect each hit leaves on the enemy. Give the weapon the `duration` tag. */
+  effect?: EffectDef;
+}
+
+/**
+ * What a modification does, as totals at one level. Missing fields are 0. Every bonus applies only to
+ * weapons that share a tag with the modification.
+ */
+export interface ModEffect {
+  /** Extra enemies a projectile hits before vanishing. */
+  pierce?: number;
+  /** Fraction added to damage (0.15 = +15%). Bonuses from different modifications add up. */
+  damage?: number;
+  /** Projectiles split into this many on hitting an enemy (0 = no split). */
+  split?: number;
+  /** How many times a projectile line can split (1 when `split` is set and this is not). */
+  splitDepth?: number;
+  /** Bounces to a nearby enemy once a projectile's pierce runs out. */
+  chain?: number;
+  /** Fraction added to area. Area bonuses add up with each other and with the AREA stat. */
+  area?: number;
+  /** Echo Strike: fraction of each area hit dealt again around the enemy that was hit. */
+  echo?: number;
+  /** Echo Strike: fraction added to the echo radius. */
+  echoArea?: number;
+  /** Echo Strike: times each echo goes off. */
+  echoRepeats?: number;
+  /** Fraction added to the duration of effects (negative shortens them). */
+  duration?: number;
+  /** Chance (0..1) that an effect stack copies itself when it deals damage or is applied. */
+  reiterate?: number;
+}
+
+export type ModKey = keyof ModEffect;
+
+export interface ModLevel {
+  /** Shown on the level-up card. */
+  text: string;
+  /** Added to the totals of the levels before. */
+  add?: ModEffect;
+  /** Replaces those totals. */
+  set?: ModEffect;
+}
+
+export interface ModificationDef {
+  id: string;
+  name: string;
+  /** Shown on the card when the modification is offered as new. */
+  description: string;
+  icon: string;
+  /** Changes every weapon that has at least one of these tags. */
+  tags: WeaponTag[];
+  /** Level 1 (applied when picked) to level 5, in order. */
+  levels: ModLevel[];
 }
 
 export interface PlayerStats {
   maxHp: number;
   moveSpeed: number;
   regen: number;
+  /** Fraction of max HP healed every second, on top of `regen`. */
+  regenPercent: number;
   armor: number;
+  /** Multiplies damage taken (after armor and shields). */
+  damageTaken: number;
   pickupRadius: number;
   damageMult: number;
   cooldownMult: number;
+  /** Cooldowns are multiplied by 100 / (100 + haste). */
+  abilityHaste: number;
   areaMult: number;
   expMult: number;
 }
@@ -98,6 +183,8 @@ export interface ItemDef {
   perLevel: StatModifier[];
   /** Shown on the card for each upgrade. */
   levelText: string;
+  /** Highest level (defaults to MAX_LEVEL). */
+  maxLevel?: number;
 }
 
 export interface EnemyDef {

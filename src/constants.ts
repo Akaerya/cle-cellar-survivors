@@ -20,6 +20,10 @@ export const INNER = {
 export const RUN_SECONDS = 15 * 60;
 export const MAX_ENEMIES = 400;
 export const MAX_GEMS = 300;
+/** Projectile pool size, shared by every player (splitting projectiles can fill it fast). */
+export const MAX_PROJECTILES = 600;
+/** Duration effects: most stacks one enemy can carry from one weapon (Reiterate copies stop here). */
+export const MAX_EFFECT_STACKS = 30;
 export const MAX_WEAPONS = 4;
 export const MAX_ITEMS = 4;
 export const MAX_LEVEL = 5;

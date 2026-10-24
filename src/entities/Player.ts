@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { COLOR, DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
 import { emptyRunStats, type PlayerRunStats } from '../core/events';
-import type { OwnedItem } from '../core/progression';
+import type { OwnedItem, OwnedMod } from '../core/progression';
 import { BASE_STATS, PLAYER_RADIUS } from '../data/player';
 import type { CharacterDef, PlayerStats } from '../data/types';
 import { text } from '../ui/widgets';
@@ -34,6 +34,10 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   weapons!: Weapons;
   ultimate!: Ultimate;
   items: OwnedItem[] = [];
+  /** Generic powerups (stat boosts up to level 20, no slots). Stats come from items and powerups together. */
+  powerups: OwnedItem[] = [];
+  /** Modifications: change every weapon that shares one of their tags. */
+  mods: OwnedMod[] = [];
   /** Level-up picks this player still has to make (fallen players keep collecting them). */
   pendingLevelUps = 0;
   /** Co-op, while fallen: revive progress 0..1, and the HP fraction a revive restores. */
@@ -81,7 +85,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return !this.dead && !this.gone;
   }
 
-  /** Applies new stats; extra max HP from items is added to current HP too. */
+  /** Applies new stats; extra max HP from items and powerups is added to current HP too. */
   setStats(stats: PlayerStats): void {
     const gained = stats.maxHp - this.stats.maxHp;
     this.stats = stats;
@@ -142,9 +146,15 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.animate(dt);
   }
 
+  /** HP healed per second: flat regen plus the percent-of-max-HP regen. Not paused by taking damage. */
+  get regenPerSecond(): number {
+    return this.stats.regen + this.stats.regenPercent * this.stats.maxHp;
+  }
+
   /** Server-side upkeep the host runs for every character. */
   regenerate(dt: number): void {
-    if (this.alive && this.stats.regen > 0 && this.hp < this.stats.maxHp) this.hp = Math.min(this.stats.maxHp, this.hp + this.stats.regen * dt);
+    const rate = this.regenPerSecond;
+    if (this.alive && rate > 0 && this.hp < this.stats.maxHp) this.hp = Math.min(this.stats.maxHp, this.hp + rate * dt);
   }
 
   /** Facing flip, hurt flash, walk/idle animation, depth and name tag. */
@@ -194,7 +204,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   /**
    * Returns the damage actually taken: 0 while invulnerable or when a charged shield blocks the hit.
-   * Armor is subtracted first, then shields absorb their share; a hit always deals at least 1.
+   * Armor is subtracted first, then shields absorb their share, then Damage Taken applies; a hit always deals at least 1.
    */
   takeHit(raw: number): number {
     if (this.invuln > 0 || !this.alive) return 0;
@@ -204,7 +214,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       this.runStats.blocks++;
       return 0;
     }
-    const dmg = Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction())));
+    const dmg = Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction()) * this.stats.damageTaken));
     this.showHurt();
     if (!this.god) {
       this.runStats.taken += Math.min(this.hp, dmg);

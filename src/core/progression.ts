@@ -1,5 +1,6 @@
+import { MAX_LEVEL } from '../constants';
 import { BASE_STATS } from '../data/player';
-import type { ItemDef, PlayerStats, StatKey, WeaponDef, WeaponStats } from '../data/types';
+import type { ItemDef, ModEffect, ModificationDef, ModKey, PlayerStats, StatKey, WeaponDef, WeaponLevel, WeaponStats } from '../data/types';
 
 /** EXP needed to go from `level` to `level + 1`. */
 export function expToNext(level: number): number {
@@ -7,17 +8,83 @@ export function expToNext(level: number): number {
   return 5 + 10 * 19 + 13 * (level - 20);
 }
 
-/** Weapon stats at a given level (1..5), built from the level-1 stats and the per-level changes. */
+function applyLevel(s: WeaponStats, lv: WeaponLevel): void {
+  const o = s as unknown as Record<string, number>;
+  // Optional stats (repeat, reduction) count as 0 until a level gives them a value.
+  if (lv.add) for (const [k, v] of Object.entries(lv.add)) o[k] = (o[k] ?? 0) + v;
+  if (lv.mul) for (const [k, v] of Object.entries(lv.mul)) o[k] = (o[k] ?? 0) * v;
+  if (lv.set) Object.assign(s, lv.set);
+}
+
+/** Weapon stats at a given level (1..5): the base stats, the pickup bonus, then the per-level changes. */
 export function weaponStatsAt(def: WeaponDef, level: number): WeaponStats {
   const s: WeaponStats = { ...def.stats };
+  if (def.pickup) applyLevel(s, def.pickup);
   const steps = Math.min(level - 1, def.levels.length);
+  for (let i = 0; i < steps; i++) applyLevel(s, def.levels[i]);
+  return s;
+}
+
+/** Card text for reaching `level`: the description for a new weapon, else that level's change. */
+export function weaponLevelText(def: WeaponDef, level: number): string {
+  if (level <= 1) return def.description;
+  return def.levels[level - 2]?.text ?? '';
+}
+
+/** Every modification number, all 0. */
+export function emptyModEffect(): Required<ModEffect> {
+  return {
+    pierce: 0,
+    damage: 0,
+    split: 0,
+    splitDepth: 0,
+    chain: 0,
+    area: 0,
+    echo: 0,
+    echoArea: 0,
+    echoRepeats: 0,
+    duration: 0,
+    reiterate: 0,
+  };
+}
+
+/** A modification's totals at `level`: each level's `add` is summed, its `set` replaces. */
+export function modEffectAt(def: ModificationDef, level: number): Required<ModEffect> {
+  const out = emptyModEffect();
+  const steps = Math.min(level, def.levels.length);
   for (let i = 0; i < steps; i++) {
     const lv = def.levels[i];
-    if (lv.add) for (const k in lv.add) (s as any)[k] += (lv.add as any)[k];
-    if (lv.mul) for (const k in lv.mul) (s as any)[k] *= (lv.mul as any)[k];
-    if (lv.set) Object.assign(s, lv.set);
+    if (lv.add) for (const [k, v] of Object.entries(lv.add)) out[k as ModKey] += v;
+    if (lv.set) Object.assign(out, lv.set);
   }
-  return s;
+  return out;
+}
+
+export interface OwnedMod {
+  def: ModificationDef;
+  level: number;
+}
+
+/** Totals of every owned modification that shares at least one tag with the weapon. */
+export function modsForWeapon(def: WeaponDef, mods: OwnedMod[]): Required<ModEffect> {
+  const out = emptyModEffect();
+  const tags = def.tags ?? [];
+  for (const m of mods) {
+    if (!m.def.tags.some((t) => tags.includes(t))) continue;
+    const e = modEffectAt(m.def, m.level);
+    for (const k in out) out[k as ModKey] += e[k as ModKey];
+  }
+  return out;
+}
+
+/** Multiplier on cooldowns from Ability Haste: 100 / (100 + haste), i.e. haste / (100 + haste) shorter. */
+export function hasteFactor(haste: number): number {
+  return 100 / (100 + Math.max(0, haste));
+}
+
+/** Highest level an item or powerup can reach. */
+export function itemMaxLevel(def: ItemDef): number {
+  return def.maxLevel ?? MAX_LEVEL;
 }
 
 export interface OwnedItem {
@@ -27,7 +94,7 @@ export interface OwnedItem {
 
 const STAT_KEYS = Object.keys(BASE_STATS) as StatKey[];
 
-/** Player stats = (base + flat) x (1 + percent), summed over every owned item level. */
+/** Player stats = (base + flat) x (1 + percent), summed over every owned item and powerup level. */
 export function computeStats(items: OwnedItem[]): PlayerStats {
   const flat: Record<string, number> = {};
   const pct: Record<string, number> = {};
@@ -46,6 +113,7 @@ export function computeStats(items: OwnedItem[]): PlayerStats {
     out[k] = (BASE_STATS[k] + flat[k]) * (1 + pct[k]);
   }
   out.cooldownMult = Math.max(0.1, out.cooldownMult);
+  out.damageTaken = Math.max(0, out.damageTaken);
   out.maxHp = Math.max(1, Math.round(out.maxHp));
   return out;
 }

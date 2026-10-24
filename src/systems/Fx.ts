@@ -11,12 +11,26 @@ interface DamageNumber {
 
 const NUMBER_LIFE = 0.55;
 const MAX_NUMBERS = 90;
+/** Echo Strike rings: how long one shows, and how many can show at once (the oldest is reused). */
+const ECHO_LIFE = 0.25;
+const MAX_ECHOES = 64;
+
+interface EchoRing {
+  x: number;
+  y: number;
+  r: number;
+  color: number;
+  life: number;
+}
 
 /** Juice: floating damage numbers, death puffs, rings. All pooled. */
 export class Fx {
   private numbers: DamageNumber[] = [];
   private cursor = 0;
   private emitters = new Map<number, Phaser.GameObjects.Particles.ParticleEmitter>();
+  private echoes: EchoRing[] = [];
+  private echoCursor = 0;
+  private echoGfx: Phaser.GameObjects.Graphics;
   activeNumbers = 0;
   /** Co-op host: every effect is also handed here to be replayed on the joiners' screens. */
   relay: ((ev: FxEvent) => void) | null = null;
@@ -30,6 +44,20 @@ export class Fx {
         .setVisible(false);
       this.numbers.push({ text: t, life: 0, vy: 0 });
     }
+    this.echoGfx = scene.add.graphics().setDepth(DEPTH.fx);
+    for (let i = 0; i < MAX_ECHOES; i++) this.echoes.push({ x: 0, y: 0, r: 0, color: 0, life: 0 });
+  }
+
+  /** Echo Strike going off: a faint ring that swells to `radius` and fades. All echoes share one Graphics. */
+  echo(x: number, y: number, radius: number, color: number): void {
+    this.relay?.(['e', Math.round(x), Math.round(y), Math.round(radius), color]);
+    const ring = this.echoes[this.echoCursor];
+    this.echoCursor = (this.echoCursor + 1) % MAX_ECHOES;
+    ring.x = x;
+    ring.y = y;
+    ring.r = radius;
+    ring.color = color;
+    ring.life = ECHO_LIFE;
   }
 
   damageNumber(x: number, y: number, value: number, big = false): void {
@@ -83,6 +111,17 @@ export class Fx {
       if (n.life < 0.2) n.text.setAlpha(n.life / 0.2);
     }
     this.activeNumbers = active;
+
+    const g = this.echoGfx;
+    g.clear();
+    for (const ring of this.echoes) {
+      if (ring.life <= 0) continue;
+      ring.life -= dt;
+      if (ring.life <= 0) continue;
+      const k = 1 - ring.life / ECHO_LIFE;
+      g.lineStyle(1, ring.color, 0.7 * (1 - k));
+      g.strokeCircle(ring.x, ring.y, ring.r * (0.5 + 0.5 * k));
+    }
   }
 
   private emitter(color: number): Phaser.GameObjects.Particles.ParticleEmitter {

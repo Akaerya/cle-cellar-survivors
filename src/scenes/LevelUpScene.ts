@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
-import { COLOR, MAX_LEVEL, SCENES, VIEW_H, VIEW_W } from '../constants';
+import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { EV } from '../core/events';
 import { sfx } from '../core/sfx';
 import { drawPanel, onKey, text } from '../ui/widgets';
@@ -10,6 +10,13 @@ const CARD_W = 176;
 const CARD_H = 172;
 const GAP = 12;
 const INPUT_GUARD_MS = 250;
+const KIND_LABELS: Record<Choice['kind'], string> = {
+  weapon: 'WEAPON',
+  item: 'ITEM',
+  mod: 'MODIFICATION',
+  powerup: 'POWERUP',
+  heal: 'HEAL',
+};
 
 interface Card {
   choice: Choice;
@@ -145,7 +152,7 @@ export class LevelUpScene extends Phaser.Scene {
     root.add(icon);
     this.tweens.add({ targets: icon, y: y + 37, yoyo: true, repeat: -1, duration: 700, ease: 'Sine.easeInOut' });
     root.add(text(this, x + CARD_W / 2, y + 72, choice.name.toUpperCase(), { origin: [0.5, 0], color: COLOR.gold }));
-    const kind = choice.kind === 'weapon' ? 'WEAPON' : choice.kind === 'item' ? 'ITEM' : 'HEAL';
+    const kind = KIND_LABELS[choice.kind];
     root.add(text(this, x + CARD_W / 2, y + 84, kind, { origin: [0.5, 0], color: COLOR.textDim }));
     root.add(
       text(this, x + CARD_W / 2, y + 102, choice.text.toUpperCase(), {
@@ -157,13 +164,15 @@ export class LevelUpScene extends Phaser.Scene {
     );
 
     if (choice.kind !== 'heal') {
-      // Level pips: owned levels white, the one this card grants in gold.
-      const pip = 8;
-      const px0 = x + CARD_W / 2 - (MAX_LEVEL * (pip + 3) - 3) / 2;
+      // Level pips: owned levels white, the one this card grants in gold. Powerups (20 levels) get smaller pips.
+      const max = choice.maxLevel;
+      const pip = max > 5 ? 5 : 8;
+      const gap = max > 5 ? 2 : 3;
+      const px0 = x + CARD_W / 2 - (max * (pip + gap) - gap) / 2;
       const pips = this.add.graphics();
-      for (let l = 1; l <= MAX_LEVEL; l++) {
-        const px = px0 + (l - 1) * (pip + 3);
-        const py = y + CARD_H - 16;
+      for (let l = 1; l <= max; l++) {
+        const px = px0 + (l - 1) * (pip + gap);
+        const py = y + CARD_H - 8 - pip;
         pips.fillStyle(COLOR.ink, 1);
         pips.fillRect(px - 1, py - 1, pip + 2, pip + 2);
         const color = l < choice.level ? COLOR.text : l === choice.level ? COLOR.gold : 0x3a3149;

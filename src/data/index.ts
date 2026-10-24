@@ -1,13 +1,17 @@
 import { CHARACTERS } from './characters';
 import { ENEMIES } from './enemies';
 import { ITEMS } from './items';
+import { MODIFICATIONS } from './modifications';
+import { POWERUPS } from './powerups';
 import { ULTIMATES } from './ultimates';
 import { WEAPONS } from './weapons';
-import type { CharacterDef, EnemyDef, ItemDef, UltimateDef, WeaponDef } from './types';
+import type { CharacterDef, EnemyDef, ItemDef, ModificationDef, UltimateDef, WeaponDef } from './types';
 
 export * from './types';
 export { ENEMIES } from './enemies';
 export { ITEMS } from './items';
+export { MODIFICATIONS, SPLIT_ARC, CHAIN_RANGE, ECHO_RADIUS, ECHO_GAP } from './modifications';
+export { POWERUPS, POWERUP_MAX_LEVEL } from './powerups';
 export { WEAPONS } from './weapons';
 export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute, hpScaleForPlayers, speedScaleForMinute } from './waves';
 export { BASE_STATS, PLAYER_RADIUS } from './player';
@@ -24,6 +28,8 @@ const byId = <T extends { id: string }>(list: T[]) => new Map(list.map((e) => [e
 
 const weaponMap = byId(WEAPONS);
 const itemMap = byId(ITEMS);
+const modMap = byId(MODIFICATIONS);
+const powerupMap = byId(POWERUPS);
 const enemyMap = byId(ENEMIES);
 const characterMap = byId(CHARACTERS);
 const ultimateMap = byId(ULTIMATES);
@@ -37,6 +43,18 @@ export function weaponDef(id: string): WeaponDef {
 export function itemDef(id: string): ItemDef {
   const d = itemMap.get(id);
   if (!d) throw new Error(`Unknown item ${id}`);
+  return d;
+}
+
+export function modDef(id: string): ModificationDef {
+  const d = modMap.get(id);
+  if (!d) throw new Error(`Unknown modification ${id}`);
+  return d;
+}
+
+export function powerupDef(id: string): ItemDef {
+  const d = powerupMap.get(id);
+  if (!d) throw new Error(`Unknown powerup ${id}`);
   return d;
 }
 

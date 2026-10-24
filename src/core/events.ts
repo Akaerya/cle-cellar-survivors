@@ -5,7 +5,7 @@ export const EV = {
   levelUp: 'level-up', // (level)
   killsChanged: 'kills-changed', // (kills)
   timeChanged: 'time-changed', // (seconds)
-  buildChanged: 'build-changed', // (weapons: BuildEntry[], items: BuildEntry[])
+  buildChanged: 'build-changed', // (weapons, items, mods, powerups: BuildEntry[])
   playerHurt: 'player-hurt', // (amount)
   banner: 'banner', // (text, color)
   debugStats: 'debug-stats', // (stats object)
@@ -31,6 +31,8 @@ export interface BuildEntry {
   name: string;
   icon: string;
   level: number;
+  /** Highest level it can reach (shown in gold once there). */
+  max?: number;
   damage?: number;
 }
 
@@ -77,6 +79,8 @@ export interface PartyMember {
   dps: number;
   weapons: WeaponReport[];
   items: BuildEntry[];
+  mods: BuildEntry[];
+  powerups: BuildEntry[];
 }
 
 export interface RunSummary {

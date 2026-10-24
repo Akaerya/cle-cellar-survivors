@@ -9,7 +9,12 @@ A survivor-like for desktop browsers where you play as members of the Cle Cellar
 | **rsncle**, the banana monkey | Banana Throw (start), Tail Whip, Coconut Orbit, Howler Aura | **Banana Storm**: a spiral of bananas around you for 15 s, 150 s cooldown |
 | **yookers**, the storm knight | Stormblade (start; a sword stab that reaches further with levels), Thunder Breath (a lightning cone on a cooldown), Thunderstrike (bolts land at random around you; more bolts and more often with levels), Storm Shield (blocks a hit every 30 s, absorbs 10-25% of the rest) | **Storm Drake**: a small dragon follows you and spits lightning orbs at enemies for 25 s, 150 s cooldown |
 
-Each character has its own four weapons (level-up cards only offer your character's); items and base stats are shared. The HUD shows your ultimate under your build: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. In co-op every teammate's ultimate is shown the same way next to their name and HP.
+Each character has its own four weapons (level-up cards only offer your character's); items, modifications, powerups and base stats are shared.
+
+Level-up cards can also offer:
+
+- **Modifications** (up to level 5, no slots) change every weapon that shares one of their tags. Projectile: Pierce, Splits, Chain. AoE: Increased AoE, Reduced AoE, Echo Strike. Duration: Increase Duration, Less Duration, Reiterate. A modification is offered once you own a weapon it changes. rsncle's Banana Throw and Coconut Orbit are tagged projectile, Tail Whip and Howler Aura AoE; yookers' weapons have no tags yet, and no weapon has the duration tag yet.
+- **Generic powerups** (up to level 20, no slots): Damage, Maximum Health, Ability Haste, Movement Speed, Health Regen, Damage Taken. The HUD shows your ultimate under your build: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. In co-op every teammate's ultimate is shown the same way next to their name and HP.
 
 After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing, shield blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate) with its level, damage, DPS, kills and share of their damage.
 
@@ -72,7 +77,7 @@ src/
   main.ts              game config: 640x360, pixelArt, FIT scaling, Arcade at a fixed 60 Hz
   constants.ts         engine constants (arena size, caps, depths, colours, scene keys)
   data/                everything a designer tunes
-    characters.ts ultimates.ts weapons.ts items.ts enemies.ts waves.ts drops.ts coop.ts player.ts types.ts
+    characters.ts ultimates.ts weapons.ts modifications.ts items.ts powerups.ts enemies.ts waves.ts drops.ts coop.ts player.ts types.ts
   wiki/pages.ts        in-game wiki pages, built from data/
   core/
     progression.ts     level curve, weapon stats per level, player stat calculation
@@ -99,7 +104,7 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 
 **An ultimate** goes in `data/ultimates.ts`. `kind: 'storm'` fires `count` projectiles from the caster every `interval` in a spiral turning `spin` degrees per second; `kind: 'pet'` summons a pet that follows the caster and fires at the closest enemy within `attack.stats.range`. `duration` and `cooldown` are in seconds. `attack` is a weapon definition for the projectile, so it shares the projectile pool, the co-op sync and the damage counting. The HUD greys out the `icon`, using an `_grey` copy that `textures.ts` builds for every `icon_ult_*` sprite.
 
-**A weapon** goes in `data/weapons.ts` (and in a character's `weapons` list). Behaviour comes from `targeting`:
+**A weapon** goes in `data/weapons.ts` (and in a character's `weapons` list). `tags` (`projectile`, `aoe`, `duration`) decide which modifications change it. `pickup` is an optional bonus applied at level 1, when the weapon is picked up. `stats.repeat` repeats each attack that many times, `repeatDelay` seconds apart. `effect` (damage, interval, duration) makes every hit leave a damage-over-time stack on the enemy; give such a weapon the `duration` tag. Behaviour comes from `targeting`:
 
 - `nearest`: projectiles aimed at the closest enemy within `range`; holds fire when nothing is in range.
 - `facing`: projectiles in the facing direction, or a melee sweep of `arc` degrees and `size` reach when `speed` is 0.
@@ -128,7 +133,11 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 }
 ```
 
-**An item** goes in `data/items.ts` with `perLevel` modifiers. Each modifier changes one stat from `data/player.ts` by `flat` and/or `percent`. Final stat = (base + flat) x (1 + percent), summed over item levels.
+**An item** goes in `data/items.ts` with `perLevel` modifiers. Each modifier changes one stat from `data/player.ts` by `flat` and/or `percent`. Final stat = (base + flat) x (1 + percent), summed over item and powerup levels.
+
+**A generic powerup** goes in `data/powerups.ts`. It has the same shape as an item, plus `maxLevel` (20), and takes no slot.
+
+**A modification** goes in `data/modifications.ts`: `tags` (the weapons it changes) and five `levels`, each with card text and `add` (summed over levels) or `set` (replaces the total) changes to pierce, damage, split, splitDepth, chain, area, echo, echoArea, echoRepeats, duration or reiterate. Split fan, chain range and echo radius and gap are constants at the top of that file.
 
 **An enemy** goes in `data/enemies.ts`, then gets a weight in a `data/waves.ts` row. New art needs a grid in `art/spriteData.ts` and an animation line in `art/textures.ts`.
 
@@ -152,9 +161,15 @@ Where the spec left room, these are the calls taken. All are easy to change.
 
 - **Ultimates** start ready, and their cooldown counts from the cast and ignores the Cooldown stat (so the HUD number is exact). Falling ends a running ultimate early.
 - **Character weapon kits**: each character has exactly four weapons, which fills the four weapon slots; items are shared by everyone.
-- **Pierce** counts enemies hit before the projectile vanishes, so the starting banana hits one enemy. At level 5 the boomerang turns around when its outbound pierce runs out or after 0.9 s, whichever comes first, and gets a fresh pierce for the return trip.
+- **Pierce** counts enemies hit before the projectile vanishes, so the starting banana hits one enemy. A boomerang projectile (none at the moment) turns around when its outbound pierce runs out or after 0.9 s, whichever comes first, and gets a fresh pierce for the return trip.
+- **Projectile modifications** resolve a hit in this order: split if the projectile still can (it is replaced by its splits, which fan out over 90 degrees and skip enemies it already hit), otherwise use up pierce, then chain to the closest unhit enemy within 140 px (a random direction if none). Orbiting coconuts never vanish, so they only get Pierce's damage bonus.
+- **Area modifications** add to the AREA stat (100% + 20% per Increased AoE level - 10% per Reduced AoE level) and scale radius or reach, like the AREA stat. Damage bonuses from modifications add up, then multiply with DAMAGE.
+- **Echo Strike** echoes have a 20 px radius before area bonuses. Echoes on one enemy in the same frame are added into one hit, so a big aura pulse does not flood the screen with numbers.
+- **Duration effects**: a new hit refreshes the stack that weapon applied; Reiterate copies keep the time left and are never refreshed. At most 30 stacks of one weapon sit on one enemy.
+- **Howler Aura** "deals damage 40% faster" means 40% more pulses per second (time between pulses divided by 1.4).
+- **Ability Haste** multiplies cooldowns by 100 / (100 + haste) on top of the COOLDOWN stat. Ultimates ignore both.
 - **Banana range** is 340 px. With nothing in range it holds fire and shoots the moment a target appears.
-- **Coconut Orbit and Howler Aura** use `cooldown` as the time between hits on the same enemy (orbit) or between pulses (aura), so the Tome speeds them up too.
+- **Coconut Orbit and Howler Aura** use `cooldown` as the time between hits on the same enemy (orbit) or between pulses (aura), so the Tome and Ability Haste speed them up too.
 - **Tail Whip** "area" is its reach. It hits everything in a 150 degree arc in the facing direction.
 - **Heart** adds the extra max HP to current HP as well, so taking it never makes the bar look emptier.
 - **Spawner** tops up at most a sixth of the target per 0.5 s tick, so a cleared screen refills as a stream rather than one ring.

@@ -8,6 +8,8 @@
 import {
   FALLBACK_HEAL,
   INVULN_SECONDS,
+  MAX_EFFECT_STACKS,
+  MAX_PROJECTILES,
   MAX_SHIELD_REDUCTION,
   STAB_LEAD,
   MAX_ENEMIES,
@@ -21,15 +23,22 @@ import {
   SPAWN_TICK_MS,
   COLOR,
 } from '../constants';
-import { computeStats, expToNext, formatTime, weaponStatsAt } from '../core/progression';
+import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffectAt, weaponStatsAt } from '../core/progression';
 import { NAME_MAX } from '../core/profile';
 import {
   BASE_STATS,
+  CHAIN_RANGE,
   CHARACTERS,
+  ECHO_GAP,
+  ECHO_RADIUS,
   ENEMIES,
   GEM_TIERS,
   ITEMS,
+  MODIFICATIONS,
   POTION,
+  POWERUPS,
+  POWERUP_MAX_LEVEL,
+  SPLIT_ARC,
   REVIVE,
   WAVES,
   WAVE_EVENTS,
@@ -42,7 +51,7 @@ import {
   weaponDef,
 } from '../data';
 import { HP_SCALE_PER_EXTRA_PLAYER, HP_SCALE_PER_MINUTE, SPEED_SCALE_PER_MINUTE, SPEED_SCALE_START } from '../data/waves';
-import type { StatKey, Targeting, WeaponStats } from '../data/types';
+import type { ItemDef, ModEffect, StatKey, Targeting, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
 
 export type Cell = string | { text: string; color?: number };
 
@@ -74,28 +83,38 @@ const STAT_LABELS: Record<StatKey, string> = {
   maxHp: 'MAX HP',
   moveSpeed: 'MOVE SPEED',
   regen: 'REGEN (HP/S)',
+  regenPercent: 'REGEN (% MAX HP/S)',
   armor: 'ARMOR',
+  damageTaken: 'DAMAGE TAKEN',
   pickupRadius: 'PICKUP RADIUS',
   damageMult: 'DAMAGE',
   cooldownMult: 'COOLDOWN',
+  abilityHaste: 'ABILITY HASTE',
   areaMult: 'AREA',
   expMult: 'EXP GAIN',
 };
 
 const STAT_NOTES: Record<StatKey, string> = {
-  maxHp: 'Fallen at 0. Items that raise it heal the same amount.',
+  maxHp: 'Fallen at 0. Items and powerups that raise it heal the same amount.',
   moveSpeed: 'px per second.',
   regen: 'HP healed every second.',
+  regenPercent: 'Share of max HP healed every second, on top of REGEN. Keeps working right after a hit.',
   armor: 'Subtracted from every hit (a hit always deals at least 1).',
+  damageTaken: 'Multiplies the damage of every hit, after armor and shields (still at least 1).',
   pickupRadius: 'px. EXP gems inside it fly to you.',
-  damageMult: 'Multiplies all weapon damage.',
+  damageMult: 'Multiplies all weapon damage, after the damage bonuses of modifications.',
   cooldownMult: 'Multiplies all weapon cooldowns (lower is faster, floor 10%).',
-  areaMult: 'Multiplies weapon size, sweep, stab and breath reach, aura, orbit and blast radius.',
+  abilityHaste: 'Cooldowns × 100 / (100 + haste): 20 haste is 16.7% shorter, 100 haste 50%. Works with COOLDOWN; not ultimates.',
+  areaMult: 'Multiplies weapon size, sweep, stab and breath reach, aura, orbit and blast radius. Area modifications add to it.',
   expMult: 'Multiplies EXP from gems you pick up.',
 };
 
-const isPercentStat = (k: StatKey) => k === 'damageMult' || k === 'cooldownMult' || k === 'areaMult' || k === 'expMult';
-const statValue = (k: StatKey, v: number) => (isPercentStat(k) ? pct(v) : num(v));
+const isPercentStat = (k: StatKey) =>
+  k === 'damageMult' || k === 'cooldownMult' || k === 'areaMult' || k === 'expMult' || k === 'damageTaken' || k === 'regenPercent';
+const statValue = (k: StatKey, v: number) => (k === 'regenPercent' ? pct(v, 1) : isPercentStat(k) ? pct(v) : num(v));
+
+const TAG_LABELS: Record<WeaponTag, string> = { projectile: 'PROJECTILE', aoe: 'AOE', duration: 'DURATION' };
+const tagList = (tags: WeaponTag[] | undefined) => (tags?.length ? tags.map((t) => TAG_LABELS[t]).join(', ') : 'NONE');
 
 /** How each targeting type uses its stats. Update when a weapon behaviour changes. */
 const TARGETING_NOTES: Record<Targeting, string> = {
@@ -133,6 +152,7 @@ const C = {
   radius: { label: 'RADIUS', w: 54, get: (s) => num(s.size) },
   recharge: { label: 'RECHARGE', w: 70, get: (s) => secs(s.cooldown) },
   absorbs: { label: 'ABSORBS', w: 64, get: (s) => pct(s.reduction ?? 0) },
+  repeats: { label: 'REPEATS', w: 60, get: (s) => num(s.repeat ?? 0) },
 } satisfies Record<string, Col>;
 const COLUMNS: Record<Targeting, Col[]> = {
   nearest: [C.damage, C.cooldown, C.count, C.pierce, C.area, C.speed, C.range, C.knockback, C.ret],
@@ -148,11 +168,28 @@ const COLUMNS: Record<Targeting, Col[]> = {
 
 // ------------------------------------------------------------------ pages
 
+/** Columns for one weapon: its targeting type's, plus REPEATS when any level repeats the attack. */
+function weaponColumns(def: WeaponDef): Col[] {
+  const cols = [...COLUMNS[def.targeting]];
+  for (let lv = 1; lv <= MAX_LEVEL; lv++) {
+    if ((weaponStatsAt(def, lv).repeat ?? 0) > 0) {
+      cols.push(C.repeats);
+      break;
+    }
+  }
+  return cols;
+}
+
 function weaponsPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Weapons fire on their own. Each character has its own ${MAX_WEAPONS} weapons (see CHARACTERS) and starts with one; level-up cards only offer your character's weapons. Each goes up to level ${MAX_LEVEL}. Values below are before your DAMAGE, COOLDOWN and AREA stats.`,
+      text: `Weapons fire on their own. Each character has its own ${MAX_WEAPONS} weapons (see CHARACTERS) and starts with one; level-up cards only offer your character's weapons. Each goes up to level ${MAX_LEVEL}; some get a bonus at level 1, when picked up. Values below are before your DAMAGE, COOLDOWN, ABILITY HASTE and AREA stats and before modifications.`,
+    },
+    {
+      t: 'p',
+      text: 'TAGS decide which modifications change a weapon (see MODS). REPEATS: the attack is done again that many times right after each one, a moment apart (squeezed so all repeats land before the next attack).',
+      color: COLOR.textDim,
     },
   ];
   for (const c of CHARACTERS) {
@@ -161,15 +198,24 @@ function weaponsPage(): Block[] {
     for (const def of c.weapons.map(weaponDef)) {
       out.push({ t: 'gap', h: 4 });
       const start = def.id === c.startingWeapon ? ' · STARTING WEAPON' : '';
-      out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()}${start} · ${def.description}` });
+      out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()}${start} · TAGS: ${tagList(def.tags)} · ${def.description}` });
       out.push({ t: 'p', text: TARGETING_NOTES[def.targeting], color: COLOR.textDim });
-      const cols = COLUMNS[def.targeting];
+      if (def.effect) {
+        const fx = def.effect;
+        out.push({
+          t: 'p',
+          text: `EFFECT: each hit leaves a stack dealing ${num(fx.damage)} damage every ${secs(fx.interval)} for ${secs(fx.duration)} (hitting again refreshes it).`,
+          color: COLOR.textDim,
+        });
+      }
+      const cols = weaponColumns(def);
       const rows: Cell[][] = [];
       for (let lv = 1; lv <= MAX_LEVEL; lv++) {
         const s: WeaponStats = weaponStatsAt(def, lv);
         rows.push([`LV ${lv}`, ...cols.map((col) => col.get(s))]);
       }
       out.push({ t: 'table', cols: [{ label: '', w: 40 }, ...cols.map(({ label, w }) => ({ label, w }))], rows });
+      if (def.pickup) out.push({ t: 'p', text: `LV 1: ${def.pickup.text}` });
       def.levels.forEach((l, i) => out.push({ t: 'p', text: `LV ${i + 2}: ${l.text}` }));
     }
   }
@@ -180,7 +226,7 @@ function charactersPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby. Each character has its own weapon kit and ultimate. Items and base stats are shared (see ITEMS), and several players may pick the same character.`,
+      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby. Each character has its own weapon kit and ultimate. Items, modifications, powerups and base stats are shared (see ITEMS, MODS and POWERUPS), and several players may pick the same character.`,
     },
     { t: 'h', text: 'ULTIMATES (Q)' },
     {
@@ -221,51 +267,147 @@ function charactersPage(): Block[] {
   return out;
 }
 
+/** One row per level shown: the total bonus of an item or powerup and the stats it gives from base. */
+function statRows(def: ItemDef, levels: number[]): Cell[][] {
+  return levels.map((lv) => {
+    const stats = computeStats([{ def, level: lv }]);
+    const bonus = def.perLevel
+      .map((m) => {
+        const parts: string[] = [];
+        if (m.flat) parts.push(m.stat === 'regenPercent' ? `+${pct(m.flat * lv, 1)}` : `${m.flat * lv >= 0 ? '+' : ''}${num(m.flat * lv)}`);
+        if (m.percent) parts.push(signedPct(m.percent * lv));
+        return `${parts.join(' ')} ${STAT_LABELS[m.stat]}`;
+      })
+      .join(', ');
+    const result = def.perLevel
+      .map((m) => {
+        const v = `${STAT_LABELS[m.stat]} ${statValue(m.stat, stats[m.stat])}`;
+        return m.stat === 'abilityHaste' ? `${v} (COOLDOWNS -${pct(1 - hasteFactor(stats.abilityHaste), 1)})` : v;
+      })
+      .join(', ');
+    return [`LV ${lv}`, bonus, { text: result, color: COLOR.gold }];
+  });
+}
+
+const STAT_COLS = [
+  { label: '', w: 40 },
+  { label: 'TOTAL BONUS', w: 220 },
+  { label: 'RESULT (FROM BASE)', w: 300 },
+];
+
 function itemsPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Items raise your stats. You can hold ${MAX_ITEMS} items; each goes up to level ${MAX_LEVEL}. Final stat = (base + flat bonuses) × (1 + percent bonuses), added up over every item level.`,
+      text: `Items raise your stats. You can hold ${MAX_ITEMS} items; each goes up to level ${MAX_LEVEL}. Final stat = (base + flat bonuses) × (1 + percent bonuses), added up over every item and powerup level (see POWERUPS).`,
     },
   ];
   for (const def of ITEMS) {
     out.push({ t: 'gap', h: 6 });
     out.push({ t: 'entry', icon: def.icon, title: def.name, sub: def.description });
-    const rows: Cell[][] = [];
-    for (let lv = 1; lv <= MAX_LEVEL; lv++) {
-      const stats = computeStats([{ def, level: lv }]);
-      const bonus = def.perLevel
-        .map((m) => {
-          const parts: string[] = [];
-          if (m.flat) parts.push(`${m.flat * lv >= 0 ? '+' : ''}${num(m.flat * lv)}`);
-          if (m.percent) parts.push(signedPct(m.percent * lv));
-          return `${parts.join(' ')} ${STAT_LABELS[m.stat]}`;
-        })
-        .join(', ');
-      const result = def.perLevel.map((m) => `${STAT_LABELS[m.stat]} ${statValue(m.stat, stats[m.stat])}`).join(', ');
-      rows.push([`LV ${lv}`, bonus, { text: result, color: COLOR.gold }]);
-    }
-    out.push({
-      t: 'table',
-      cols: [
-        { label: '', w: 40 },
-        { label: 'TOTAL BONUS', w: 220 },
-        { label: 'RESULT (FROM BASE)', w: 240 },
-      ],
-      rows,
-    });
+    const levels = Array.from({ length: itemMaxLevel(def) }, (_, i) => i + 1);
+    out.push({ t: 'table', cols: STAT_COLS, rows: statRows(def, levels) });
   }
   out.push({ t: 'gap', h: 8 });
   out.push({ t: 'h', text: 'BASE STATS (EVERY CHARACTER)' });
   out.push({
     t: 'table',
     cols: [
-      { label: 'STAT', w: 120 },
+      { label: 'STAT', w: 130 },
       { label: 'BASE', w: 60 },
-      { label: 'NOTES', w: 420 },
+      { label: 'NOTES', w: 410 },
     ],
     rows: (Object.keys(BASE_STATS) as StatKey[]).map((k) => [STAT_LABELS[k], { text: statValue(k, BASE_STATS[k]), color: COLOR.gold }, STAT_NOTES[k]]),
   });
+  return out;
+}
+
+function powerupsPage(): Block[] {
+  const out: Block[] = [
+    {
+      t: 'p',
+      text: `Generic powerups are plain stat boosts. They take no slots and each goes up to level ${POWERUP_MAX_LEVEL}, so they keep showing up on cards after your slots are full. They add to the same stats as items: (base + flat bonuses) × (1 + percent bonuses), added up over every item and powerup level. Base values are on the ITEMS page.`,
+    },
+  ];
+  for (const def of POWERUPS) {
+    out.push({ t: 'gap', h: 6 });
+    out.push({ t: 'entry', icon: def.icon, title: def.name, sub: def.description });
+    const max = itemMaxLevel(def);
+    const levels = [1, 5, 10, 15, max].filter((lv, i, a) => lv <= max && a.indexOf(lv) === i);
+    out.push({ t: 'table', cols: STAT_COLS, rows: statRows(def, levels) });
+  }
+  return out;
+}
+
+/** Non-zero totals of a modification, e.g. "+2 PIERCE, +30% DAMAGE". */
+function modSummary(e: Required<ModEffect>): string {
+  const parts: string[] = [];
+  if (e.pierce) parts.push(`+${num(e.pierce)} PIERCE`);
+  if (e.split) parts.push(`SPLITS INTO ${num(e.split)}${e.splitDepth > 1 ? `, UP TO ${num(e.splitDepth)} TIMES` : ''}`);
+  if (e.chain) parts.push(`+${num(e.chain)} BOUNCE${e.chain === 1 ? '' : 'S'}`);
+  if (e.area) parts.push(`${signedPct(e.area)} AREA`);
+  if (e.echo) parts.push(`ECHO ${pct(e.echo)} OF THE HIT`);
+  if (e.echoArea) parts.push(`${signedPct(e.echoArea)} ECHO AREA`);
+  if (e.echoRepeats > 1) parts.push(`${num(e.echoRepeats)} ECHOES ${secs(ECHO_GAP)} APART`);
+  if (e.duration) parts.push(`${signedPct(e.duration)} DURATION`);
+  if (e.reiterate) parts.push(`${pct(e.reiterate)} REITERATE`);
+  if (e.damage) parts.push(`${signedPct(e.damage)} DAMAGE`);
+  return parts.join(', ');
+}
+
+function modsPage(): Block[] {
+  const out: Block[] = [
+    {
+      t: 'p',
+      text: `Modifications change every weapon that shares one of their tags (PROJECTILE, AOE or DURATION; each weapon's tags are on the WEAPONS page). Each goes up to level ${MAX_LEVEL} and takes no slot. A modification is offered once you own a weapon it changes; after you take it, its upgrades keep being offered.`,
+    },
+    { t: 'h', text: 'PROJECTILES' },
+    {
+      t: 'p',
+      text: `On hitting an enemy a projectile first splits if it still can: it is replaced by its splits, which fan out over ${SPLIT_ARC} degrees from where it was going, skip the enemies it already hit and start with full pierce and bounces. Otherwise it uses up 1 pierce. Once pierce runs out it chains: it flies to the closest enemy within ${CHAIN_RANGE} px that it has not hit yet (a random direction when there is none), using up 1 bounce per hit. Projectiles that never vanish (orbiting coconuts) only get the damage bonus. At most ${MAX_PROJECTILES} projectiles fly at once; splits past that are lost.`,
+    },
+    { t: 'h', text: 'AREA' },
+    {
+      t: 'p',
+      text: 'Area bonuses add up with each other and with the AREA stat: 2 levels of Increased AoE and 1 of Reduced AoE give 100% + 40% - 10% = 130% radius or reach. They change only the area part of a weapon.',
+    },
+    {
+      t: 'p',
+      text: `Echo Strike: every enemy an AOE weapon hits sends out an echo with a ${ECHO_RADIUS} px radius (scaled by area like the weapon, plus Echo Strike's own area bonus). It deals a share of the hit to everything inside, the enemy that was hit included. Echo damage never echoes again. Echoes landing on the same enemy in the same frame count as one hit.`,
+    },
+    { t: 'h', text: 'DURATION' },
+    {
+      t: 'p',
+      text: `Duration weapons leave a stack on every enemy they hit that deals damage each tick until it runs out; hitting again refreshes it. Reiterate: when a stack is applied or deals damage it may copy itself with the time it has left. Copies tick and reiterate too, but are never refreshed. At most ${MAX_EFFECT_STACKS} stacks of one weapon sit on one enemy.`,
+    },
+    { t: 'h', text: 'DAMAGE' },
+    { t: 'p', text: 'Damage bonuses from modifications add up with each other, then multiply with your DAMAGE stat.' },
+  ];
+  const weapons = CHARACTERS.flatMap((c) => c.weapons.map(weaponDef));
+  for (const def of MODIFICATIONS) {
+    out.push({ t: 'gap', h: 6 });
+    out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `TAGS: ${tagList(def.tags)} · ${def.description}` });
+    // Orbiting objects never vanish, so pierce, split and chain do nothing for them; only the other bonuses apply.
+    const top = modEffectAt(def, def.levels.length);
+    const forOrbit = top.damage || top.area || top.echo || top.duration || top.reiterate;
+    const changes = weapons
+      .filter((w) => w.tags?.some((t) => def.tags.includes(t)) && (w.targeting !== 'orbit' || forOrbit))
+      .map((w) => (w.targeting === 'orbit' && (top.pierce || top.split || top.chain) ? `${w.name.toUpperCase()} (DAMAGE ONLY)` : w.name.toUpperCase()));
+    out.push({
+      t: 'p',
+      text: changes.length ? `CHANGES: ${changes.join(', ')}.` : 'NO WEAPON HAS THIS TAG YET, SO IT IS NEVER OFFERED.',
+      color: changes.length ? COLOR.textDim : COLOR.bad,
+    });
+    out.push({
+      t: 'table',
+      cols: [
+        { label: '', w: 40 },
+        { label: 'THIS LEVEL', w: 250 },
+        { label: 'TOTAL', w: 310 },
+      ],
+      rows: def.levels.map((l, i) => [`LV ${i + 1}`, l.text, { text: modSummary(modEffectAt(def, i + 1)), color: COLOR.gold }]),
+    });
+  }
   return out;
 }
 
@@ -390,7 +532,7 @@ function dropsPage(): Block[] {
     { t: 'h', text: 'LEVELS' },
     {
       t: 'p',
-      text: `Each level up offers 3 random cards: new weapons or items (while you have free slots) and upgrades to ones you own. With everything maxed the only card is a heal of ${FALLBACK_HEAL} HP. EXP needed for the next level:`,
+      text: `Each level up offers 3 random cards: new weapons or items (while you have free slots), modifications (once you own a weapon they change), generic powerups, and upgrades to ones you own. With everything maxed the only card is a heal of ${FALLBACK_HEAL} HP. EXP needed for the next level:`,
     },
     {
       t: 'table',
@@ -473,12 +615,12 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'TAKING DAMAGE' },
     {
       t: 'p',
-      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
+      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
     },
     { t: 'h', text: 'CARDS AND SLOTS' },
     {
       t: 'p',
-      text: `${MAX_WEAPONS} weapon slots and ${MAX_ITEMS} item slots. Each weapon and item goes up to level ${MAX_LEVEL}. Several level-ups in a row are offered one after another.`,
+      text: `${MAX_WEAPONS} weapon slots and ${MAX_ITEMS} item slots. Each weapon, item and modification goes up to level ${MAX_LEVEL}, each generic powerup to level ${POWERUP_MAX_LEVEL}. Modifications and powerups take no slots. Several level-ups in a row are offered one after another.`,
     },
     { t: 'h', text: 'WINNING' },
     { t: 'p', text: `Survive until ${formatTime(RUN_SECONDS)} and dawn breaks: every enemy on the field dies and the run is won.` },
@@ -501,7 +643,9 @@ function mechanicsPage(): Block[] {
 export const WIKI_PAGES: WikiPage[] = [
   { tab: 'CHARACTERS', source: 'src/data/characters.ts, src/data/ultimates.ts', blocks: charactersPage },
   { tab: 'WEAPONS', source: 'src/data/weapons.ts', blocks: weaponsPage },
+  { tab: 'MODS', source: 'src/data/modifications.ts, src/constants.ts', blocks: modsPage },
   { tab: 'ITEMS', source: 'src/data/items.ts, src/data/player.ts', blocks: itemsPage },
+  { tab: 'POWERUPS', source: 'src/data/powerups.ts', blocks: powerupsPage },
   { tab: 'MONSTERS', source: 'src/data/enemies.ts', blocks: monstersPage },
   { tab: 'WAVES', source: 'src/data/waves.ts', blocks: wavesPage },
   { tab: 'DROPS', source: 'src/data/drops.ts, src/core/progression.ts', blocks: dropsPage },

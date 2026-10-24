@@ -10,9 +10,12 @@ const BOTTOM = VIEW_H - 22;
 const LEFT = 20;
 const WIDTH = VIEW_W - 44;
 const SCROLL_SPEED = 260;
+/** Tab buttons: px of padding each side of the label, and between tabs. */
+const TAB_PAD = 6;
+const TAB_GAP = 3;
 
 /**
- * Wiki: weapons, items, monsters, waves, drops, co-op and rules, generated from the game data
+ * Wiki: characters, weapons, modifications, items, powerups, monsters, waves, drops, co-op and rules, generated from the game data
  * (see wiki/pages.ts). Opened from the title screen or the pause menu.
  */
 export class WikiScene extends Phaser.Scene {
@@ -46,10 +49,19 @@ export class WikiScene extends Phaser.Scene {
     frame.lineBetween(0, BOTTOM + 2.5, VIEW_W, BOTTOM + 2.5);
     this.bar = this.add.graphics().setDepth(3);
 
-    const tw = 72;
-    const gap = 4;
-    const x0 = Math.round((VIEW_W - (WIKI_PAGES.length * (tw + gap) - gap)) / 2);
-    this.tabs = WIKI_PAGES.map((p, i) => new Button(this, x0 + i * (tw + gap), 6, tw, 17, p.tab, () => this.show(i)).setDepth(3));
+    // Tabs are as wide as their label (plus padding), centred as a row.
+    const widths = WIKI_PAGES.map((p) => {
+      const t = text(this, 0, 0, p.tab);
+      const w = Math.ceil(t.width) + TAB_PAD * 2;
+      t.destroy();
+      return w;
+    });
+    let tx = Math.round((VIEW_W - (widths.reduce((a, b) => a + b, 0) + TAB_GAP * (widths.length - 1))) / 2);
+    this.tabs = WIKI_PAGES.map((p, i) => {
+      const b = new Button(this, tx, 6, widths[i], 17, p.tab, () => this.show(i)).setDepth(3);
+      tx += widths[i] + TAB_GAP;
+      return b;
+    });
     this.source = text(this, 8, VIEW_H - 14, '', { color: COLOR.textDim, depth: 3 });
     text(this, VIEW_W - 8, VIEW_H - 14, 'ARROWS SCROLL/TABS · ESC CLOSE', { origin: [1, 0], color: COLOR.textDim, depth: 3 });
 

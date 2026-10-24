@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { COLOR, MAX_LEVEL, PLAYER_COLORS, SCENES, VIEW_H, VIEW_W } from '../constants';
-import type { PartyMember, RunSummary } from '../core/events';
+import type { BuildEntry, PartyMember, RunSummary } from '../core/events';
 import { formatTime } from '../core/progression';
 import { sfx } from '../core/sfx';
 import { characterDef } from '../data';
@@ -42,7 +42,7 @@ function short(v: number): string {
 /**
  * End of the run: time, level and kills, then the party screen. One row per player with their
  * damage, DPS, kills and survival numbers; below it, the selected player's weapons (and ultimate)
- * with level, damage, DPS, kills and share of their damage, and their items.
+ * with level, damage, DPS, kills and share of their damage, then their items, modifications and powerups.
  */
 export class GameOverScene extends Phaser.Scene {
   private summary!: RunSummary;
@@ -166,7 +166,7 @@ export class GameOverScene extends Phaser.Scene {
     this.drawDetail(this.summary.party[next]);
   }
 
-  /** The selected player's weapons, ultimate and items. */
+  /** The selected player's weapons, ultimate, items, modifications and powerups. */
   private drawDetail(m: PartyMember): void {
     const d = this.detail;
     d.removeAll(true);
@@ -194,9 +194,25 @@ export class GameOverScene extends Phaser.Scene {
     m.items.forEach((it, i) => {
       const x = LEFT + 44 + i * 86;
       add(this.add.image(x, y, ATLAS, it.icon).setOrigin(0));
-      add(text(this, x + 20, y + 4, `${it.name.toUpperCase()} ${it.level}`, { color: it.level >= MAX_LEVEL ? COLOR.gold : COLOR.text }));
+      add(text(this, x + 20, y + 4, `${it.name.toUpperCase()} ${it.level}`, { color: it.level >= (it.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.text }));
     });
     add(text(this, PX + PW - 14, y + 4, `EXP COLLECTED ${short(m.stats.exp)}`, { origin: [1, 0], color: COLOR.textDim }));
+
+    // Modifications and powerups: icon and level only (there can be many).
+    y += 18;
+    let x = LEFT;
+    const icons = (label: string, list: BuildEntry[]) => {
+      x += add(text(this, x, y + 4, label, { color: COLOR.textDim })).width + 8;
+      if (list.length === 0) x += add(text(this, x, y + 4, 'NONE', { color: COLOR.textDim })).width + 8;
+      for (const e of list) {
+        add(this.add.image(x, y, ATLAS, e.icon).setOrigin(0));
+        add(text(this, x + 17, y + 4, String(e.level), { color: e.level >= (e.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.text }));
+        x += 30;
+      }
+      x += 10;
+    };
+    icons('MODS', m.mods ?? []);
+    icons('POWERUPS', m.powerups ?? []);
   }
 
   /** Co-op: the host decides what happens next; joiners wait for it or leave. */

@@ -1,12 +1,15 @@
 import type { WeaponDef } from './types';
 
 export const WEAPONS: WeaponDef[] = [
+  // ---------------------------------------------------------------- rsncle, the banana monkey
+  // Every level of these adds a bonus, level 1 included: its bonus (`pickup`) applies when the weapon is picked up.
   {
     id: 'banana',
     name: 'Banana Throw',
-    description: 'Hurls a spinning banana at the nearest enemy.',
+    description: 'Hurls spinning bananas at the nearest enemy.',
     icon: 'icon_banana',
     targeting: 'nearest',
+    tags: ['projectile'],
     projectileAnim: 'banana-spin',
     artRadius: 5,
     stats: {
@@ -23,15 +26,12 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
     },
+    pickup: { text: '+1 banana.', add: { projectileCount: 1 } },
     levels: [
-      { text: '+1 banana, thrown in a small spread.', add: { projectileCount: 1 } },
-      { text: '+30% damage.', mul: { damage: 1.3 } },
-      { text: 'Bananas pierce 2 more enemies and grow 20%.', add: { pierce: 2 }, mul: { size: 1.2 } },
-      {
-        text: '+1 banana. Bananas boomerang back to the monkey.',
-        add: { projectileCount: 1 },
-        set: { boomerang: true },
-      },
+      { text: '+1 banana.', add: { projectileCount: 1 } },
+      { text: '+1 banana.', add: { projectileCount: 1 } },
+      { text: '+1 banana.', add: { projectileCount: 1 } },
+      { text: '+1 banana.', add: { projectileCount: 1 } },
     ],
   },
   {
@@ -40,6 +40,7 @@ export const WEAPONS: WeaponDef[] = [
     description: 'Spins and lashes the tail in the facing direction, hitting everything in the arc.',
     icon: 'icon_tail',
     targeting: 'facing',
+    tags: ['aoe'],
     color: 0xf0c896,
     stats: {
       cooldown: 1.4,
@@ -54,20 +55,24 @@ export const WEAPONS: WeaponDef[] = [
       range: 0,
       arc: 150,
       boomerang: false,
+      repeat: 0,
     },
+    repeatDelay: 0.2,
+    pickup: { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
     levels: [
-      { text: '+20% area.', mul: { size: 1.2 } },
-      { text: '+20% damage.', mul: { damage: 1.2 } },
-      { text: '+20% area.', mul: { size: 1.2 } },
-      { text: '+20% damage.', mul: { damage: 1.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
     ],
   },
   {
     id: 'coconut',
     name: 'Coconut Orbit',
-    description: '2 coconuts circle the monkey, damaging enemies they touch.',
+    description: 'Coconuts circle the monkey, damaging enemies they touch.',
     icon: 'icon_coconut',
     targeting: 'orbit',
+    tags: ['projectile'],
     projectileAnim: 'coconut-spin',
     artRadius: 5,
     stats: {
@@ -84,11 +89,12 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
     },
+    pickup: { text: '+1 coconut.', add: { projectileCount: 1 } },
     levels: [
-      { text: '+1 coconut.', add: { projectileCount: 1 } },
-      { text: '+1 coconut.', add: { projectileCount: 1 } },
-      { text: '+1 coconut.', add: { projectileCount: 1 } },
-      { text: '+1 coconut.', add: { projectileCount: 1 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
     ],
   },
   {
@@ -97,6 +103,7 @@ export const WEAPONS: WeaponDef[] = [
     description: 'A constant howl that deals small damage to enemies within a radius.',
     icon: 'icon_howl',
     targeting: 'aura',
+    tags: ['aoe'],
     color: 0x57c8d8,
     stats: {
       cooldown: 0.75,
@@ -112,11 +119,13 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
     },
+    // "Deals damage 40% faster": 40% more pulses per second, so the time between pulses is divided by 1.4.
+    pickup: { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
     levels: [
-      { text: '+15% radius and +2 damage.', mul: { size: 1.15 }, add: { damage: 2 } },
-      { text: '+15% radius and +2 damage.', mul: { size: 1.15 }, add: { damage: 2 } },
-      { text: '+15% radius and +2 damage.', mul: { size: 1.15 }, add: { damage: 2 } },
-      { text: '+15% radius and +2 damage.', mul: { size: 1.15 }, add: { damage: 2 } },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
     ],
   },
   // ---------------------------------------------------------------- yookers, the storm knight

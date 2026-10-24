@@ -3,8 +3,20 @@ import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, DEPTH } from '../constants';
 import type { EnemyDef } from '../data/types';
 import { nextNetId } from '../net/ids';
+import type { WeaponInstance } from '../systems/Weapons';
 
 let nextUid = 1;
+
+/** One stack of a duration weapon's effect on an enemy. */
+export interface EffectStack {
+  weapon: WeaponInstance;
+  /** Seconds left. */
+  left: number;
+  /** Seconds until the next tick. */
+  next: number;
+  /** Made by Reiterate: never refreshed by later hits, just runs out. */
+  copy: boolean;
+}
 
 /** Pooled enemy. `spawn` re-initialises a dead member for a new type. */
 export class Enemy extends Phaser.Physics.Arcade.Sprite {
@@ -24,6 +36,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   flashUntil = 0;
   /** Weapon uid -> scene time of the last hit, for orbit and aura weapons. */
   readonly lastHit = new Map<number, number>();
+  /** Duration effects ticking on this enemy (host only). */
+  readonly effects: EffectStack[] = [];
   shadow: Phaser.GameObjects.Bob | null = null;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
@@ -44,6 +58,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.sepX = this.sepY = 0;
     this.flashUntil = 0;
     this.lastHit.clear();
+    this.effects.length = 0;
     this.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
     this.setAlpha(1).setFlipX(false);
     this.setDepth(DEPTH.units + y / ARENA_SIZE);
