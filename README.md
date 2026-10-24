@@ -14,6 +14,16 @@ npm run build:single   # one self-contained dist/index.html
 npm run typecheck
 ```
 
+### Deploy to GitHub Pages
+
+`.github/workflows/deploy.yml` builds the game and publishes `dist/` on every push to `main`.
+
+1. Push this folder to a GitHub repository with `main` as the default branch.
+2. In the repository, open Settings > Pages and set Build and deployment > Source to **GitHub Actions**.
+3. Push again, or run the workflow from the Actions tab. The game appears at `https://<user>.github.io/<repo>/`.
+
+`base: './'` in `vite.config.ts` keeps every asset path relative, so the same build works at any sub-path. Commit the `package-lock.json` that `npm install` creates and the workflow switches to `npm ci` for reproducible installs.
+
 URL options:
 
 | Param | Effect |
