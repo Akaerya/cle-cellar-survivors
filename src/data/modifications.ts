@@ -19,7 +19,7 @@ export const ECHO_GAP = 0.2;
 
 const pierce = { text: '+1 pierce, +15% damage.', add: { pierce: 1, damage: 0.15 } };
 const chain = { text: '+1 bounce.', add: { chain: 1 } };
-const moreArea = { text: '+20% area.', add: { area: 0.2 } };
+const moreArea = { text: '+10% area.', add: { area: 0.1 } };
 const lessArea = { text: '-10% area, +18% damage.', add: { area: -0.1, damage: 0.18 } };
 const moreDuration = { text: '+20% duration.', add: { duration: 0.2 } };
 const lessDuration = { text: '-10% duration, +20% damage.', add: { duration: -0.1, damage: 0.2 } };

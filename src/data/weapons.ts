@@ -147,10 +147,10 @@ export const WEAPONS: WeaponDef[] = [
       boomerang: false,
     },
     levels: [
-      { text: 'The stab reaches 30% further.', mul: { size: 1.3 } },
-      { text: '+25% damage.', mul: { damage: 1.25 } },
-      { text: 'The stab reaches 30% further and the blade is wider.', mul: { size: 1.3 }, add: { arc: 4 } },
-      { text: 'The stab reaches 30% further. +25% damage.', mul: { size: 1.3, damage: 1.25 } },
+      { text: 'The stab reaches 30% further.', pct: { size: 0.3 } },
+      { text: '+25% damage.', pct: { damage: 0.25 } },
+      { text: 'The stab reaches 30% further and the blade is wider.', pct: { size: 0.3 }, add: { arc: 4 } },
+      { text: 'The stab reaches 30% further. +25% damage.', pct: { size: 0.3, damage: 0.25 } },
     ],
   },
   {
@@ -175,10 +175,10 @@ export const WEAPONS: WeaponDef[] = [
       boomerang: false,
     },
     levels: [
-      { text: 'The breath reaches 20% further.', mul: { size: 1.2 } },
-      { text: '+25% damage.', mul: { damage: 1.25 } },
+      { text: 'The breath reaches 20% further.', pct: { size: 0.2 } },
+      { text: '+25% damage.', pct: { damage: 0.25 } },
       { text: 'A wider cone (+20 degrees).', add: { arc: 20 } },
-      { text: 'Breathes 25% more often. +25% damage.', mul: { cooldown: 0.75, damage: 1.25 } },
+      { text: 'Breathes 25% more often. +25% damage.', faster: 0.25, pct: { damage: 0.25 } },
     ],
   },
   {
@@ -204,9 +204,9 @@ export const WEAPONS: WeaponDef[] = [
     },
     levels: [
       { text: '+1 bolt.', add: { projectileCount: 1 } },
-      { text: 'Strikes 20% more often.', mul: { cooldown: 0.8 } },
+      { text: 'Strikes 20% more often.', faster: 0.2 },
       { text: '+1 bolt.', add: { projectileCount: 1 } },
-      { text: '+1 bolt. Strikes 20% more often.', add: { projectileCount: 1 }, mul: { cooldown: 0.8 } },
+      { text: '+1 bolt. Strikes 20% more often.', add: { projectileCount: 1 }, faster: 0.2 },
     ],
   },
   {
@@ -233,9 +233,9 @@ export const WEAPONS: WeaponDef[] = [
     },
     levels: [
       { text: 'Absorbs 15% of every hit.', add: { reduction: 0.05 } },
-      { text: 'The block recharges 15% faster.', mul: { cooldown: 0.85 } },
+      { text: 'The block recharges 15% faster.', faster: 0.15 },
       { text: 'Absorbs 20% of every hit.', add: { reduction: 0.05 } },
-      { text: 'Absorbs 25% of every hit. The block recharges 15% faster.', add: { reduction: 0.05 }, mul: { cooldown: 0.85 } },
+      { text: 'Absorbs 25% of every hit. The block recharges 15% faster.', add: { reduction: 0.05 }, faster: 0.15 },
     ],
   },
 ];
