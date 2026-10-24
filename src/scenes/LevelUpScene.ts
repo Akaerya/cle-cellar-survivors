@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
 import { COLOR, MAX_LEVEL, SCENES, VIEW_H, VIEW_W } from '../constants';
+import { EV } from '../core/events';
 import { sfx } from '../core/sfx';
 import { drawPanel, onKey, text } from '../ui/widgets';
 import type { Choice, GameScene } from './GameScene';
@@ -19,7 +20,10 @@ interface Card {
   y: number;
 }
 
-/** Game paused, three upgrade cards over a dimmed playfield. Queued level-ups are shown one after another. */
+/**
+ * Game paused, three upgrade cards over a dimmed playfield. Queued level-ups are shown one after another.
+ * In co-op every player picks their own cards at the same time; the run is held until all are done.
+ */
 export class LevelUpScene extends Phaser.Scene {
   private run!: GameScene;
   private cards: Card[] = [];
@@ -27,6 +31,9 @@ export class LevelUpScene extends Phaser.Scene {
   private readyAt = 0;
   private busy = false;
   private subtitle!: Phaser.GameObjects.BitmapText;
+  private hint!: Phaser.GameObjects.BitmapText;
+  private closed = false;
+  private shownOnce = false;
 
   constructor() {
     super(SCENES.levelUp);
@@ -36,12 +43,14 @@ export class LevelUpScene extends Phaser.Scene {
     this.run = this.scene.get(SCENES.game) as GameScene;
     this.cards = [];
     this.busy = false;
+    this.closed = false;
+    this.shownOnce = false;
     this.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0a0610, 0.55).setOrigin(0);
     this.add.image(0, 0, 'vignette').setOrigin(0).setDisplaySize(VIEW_W, VIEW_H);
     const title = text(this, VIEW_W / 2, 44, 'LEVEL UP!', { scale: 3, origin: [0.5, 0.5], color: COLOR.gold });
     this.tweens.add({ targets: title, scale: { from: 1.3, to: 1 }, duration: 260, ease: 'Back.easeOut' });
     this.subtitle = text(this, VIEW_W / 2, 70, '', { origin: [0.5, 0.5], color: COLOR.textDim });
-    text(this, VIEW_W / 2, VIEW_H - 22, 'PRESS 1 2 3 OR CLICK A CARD', { origin: [0.5, 0.5], color: COLOR.textDim });
+    this.hint = text(this, VIEW_W / 2, VIEW_H - 22, 'PRESS 1 2 3 OR CLICK A CARD', { origin: [0.5, 0.5], color: COLOR.textDim });
 
     onKey(this, 'keydown-ONE', () => this.choose(0));
     onKey(this, 'keydown-TWO', () => this.choose(1));
@@ -56,18 +65,57 @@ export class LevelUpScene extends Phaser.Scene {
     onKey(this, 'keydown-ENTER', () => this.choose(this.selected));
     onKey(this, 'keydown-SPACE', () => this.choose(this.selected));
 
-    this.showChoices(this.run.rollChoices());
+    const ev = this.run.events;
+    const listeners: [string, () => void][] = [
+      [EV.levelUpOffer, () => this.showOffer()],
+      [EV.levelUpWaiting, () => this.showWaiting()],
+      [EV.levelUpOver, () => this.close()],
+    ];
+    for (const [name, fn] of listeners) ev.on(name, fn);
+    this.events.once('shutdown', () => {
+      for (const [name, fn] of listeners) ev.off(name, fn);
+    });
+
+    if (this.run.offer) this.showOffer();
+    else this.showWaiting();
   }
 
-  private showChoices(choices: Choice[]): void {
+  private clearCards(): void {
     for (const c of this.cards) {
       c.root.destroy();
       c.zone.destroy();
     }
     this.cards = [];
+  }
+
+  private showOffer(): void {
+    const offer = this.run.offer;
+    if (!offer || this.closed) return;
+    if (this.shownOnce) sfx.play('levelup');
+    this.shownOnce = true;
+    this.showChoices(offer.choices, offer.pending);
+  }
+
+  /** Co-op: this player is done (or has nothing to pick); teammates are still choosing. */
+  private showWaiting(): void {
+    if (this.closed || this.run.offer) return;
+    this.clearCards();
+    this.hint.setVisible(false);
+    this.subtitle.setText(this.run.coop ? 'WAITING FOR TEAMMATES TO CHOOSE...' : '');
+  }
+
+  private close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.scene.stop();
+    if (!this.run.coop) this.scene.resume(SCENES.game);
+  }
+
+  private showChoices(choices: Choice[], pending: number): void {
+    this.clearCards();
+    this.hint.setVisible(true);
     this.selected = 0;
     this.readyAt = this.time.now + INPUT_GUARD_MS;
-    const pending = this.run.pendingLevelUps;
     this.subtitle.setText(`LEVEL ${this.run.level - pending + 1}${pending > 1 ? `  (+${pending - 1} MORE)` : ''} · CHOOSE ONE`);
 
     const total = choices.length * CARD_W + (choices.length - 1) * GAP;
@@ -174,15 +222,10 @@ export class LevelUpScene extends Phaser.Scene {
       duration: 160,
       onComplete: () => {
         flash.destroy();
-        this.run.applyChoice(card.choice);
         this.busy = false;
-        if (this.run.pendingLevelUps > 0) {
-          sfx.play('levelup');
-          this.showChoices(this.run.rollChoices());
-        } else {
-          this.scene.stop();
-          this.scene.resume(SCENES.game);
-        }
+        // The run answers with the next offer, a wait, or the end of the level-up (see create).
+        this.run.chooseCard(i);
+        if (!this.run.offer) this.showWaiting();
       },
     });
   }

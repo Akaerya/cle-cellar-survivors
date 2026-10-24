@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
 import { DEPTH } from '../constants';
+import type { FxEvent } from '../net/protocol';
 
 interface DamageNumber {
   text: Phaser.GameObjects.BitmapText;
@@ -17,6 +18,8 @@ export class Fx {
   private cursor = 0;
   private emitters = new Map<number, Phaser.GameObjects.Particles.ParticleEmitter>();
   activeNumbers = 0;
+  /** Co-op host: every effect is also handed here to be replayed on the joiners' screens. */
+  relay: ((ev: FxEvent) => void) | null = null;
 
   constructor(private scene: Phaser.Scene) {
     for (let i = 0; i < MAX_NUMBERS; i++) {
@@ -30,6 +33,17 @@ export class Fx {
   }
 
   damageNumber(x: number, y: number, value: number, big = false): void {
+    this.relay?.(['n', Math.round(x), Math.round(y), Math.round(value), big ? 1 : 0]);
+    this.number(x, y, String(Math.max(1, Math.round(value))), big ? 0xffd24a : 0xffffff);
+  }
+
+  /** Green "+N" over a monkey that healed. */
+  healNumber(x: number, y: number, value: number): void {
+    this.relay?.(['g', Math.round(x), Math.round(y), Math.round(value)]);
+    this.number(x, y, `+${Math.max(1, Math.round(value))}`, 0x7be38a);
+  }
+
+  private number(x: number, y: number, label: string, tint: number): void {
     // Reuse the oldest slot when the pool is full.
     let n: DamageNumber | null = null;
     for (let i = 0; i < MAX_NUMBERS; i++) {
@@ -47,9 +61,9 @@ export class Fx {
     n.life = NUMBER_LIFE;
     n.vy = -38 - Math.random() * 10;
     n.text
-      .setText(String(Math.max(1, Math.round(value))))
+      .setText(label)
       .setPosition(Math.round(x + (Math.random() * 6 - 3)), Math.round(y - 6))
-      .setTint(big ? 0xffd24a : 0xffffff)
+      .setTint(tint)
       .setAlpha(1)
       .setVisible(true);
   }
@@ -91,6 +105,7 @@ export class Fx {
   }
 
   puff(x: number, y: number, color: number, count = 8): void {
+    this.relay?.(['p', Math.round(x), Math.round(y), color, count]);
     this.emitter(color).explode(count, x, y);
     this.emitter(0x2c2338).explode(Math.ceil(count / 3), x, y);
   }
@@ -101,6 +116,7 @@ export class Fx {
 
   /** Expanding ring, e.g. on level up. */
   ring(x: number, y: number, color: number, radius: number, duration = 400): void {
+    this.relay?.(['r', Math.round(x), Math.round(y), color, radius, duration]);
     const g = this.scene.add.graphics().setDepth(DEPTH.fx);
     const state = { r: 4, a: 1 };
     this.scene.tweens.add({

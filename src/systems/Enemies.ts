@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, DEPTH, MAX_ENEMIES } from '../constants';
-import { sfx } from '../core/sfx';
 import { SpatialGrid } from '../core/spatialGrid';
 import type { EnemyDef } from '../data/types';
 import { Enemy } from '../entities/Enemy';
+import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 import type { WeaponInstance } from './Weapons';
 
@@ -42,7 +42,8 @@ export class Enemies {
     return e;
   }
 
-  update(dt: number, now: number, px: number, py: number, frozen: boolean): void {
+  /** Every enemy walks at the nearest monkey in `targets`. */
+  update(dt: number, now: number, targets: Player[], frozen: boolean, speedScale = 1): void {
     const active = this.active;
     active.length = 0;
     this.grid.clear();
@@ -86,19 +87,30 @@ export class Enemies {
     for (let i = 0; i < active.length; i++) {
       const e = active[i];
       const body = e.body as Phaser.Physics.Arcade.Body;
-      if (frozen) {
+      if (frozen || targets.length === 0) {
         body.setVelocity(0, 0);
       } else {
-        const dx = px - e.x;
-        const dy = py - e.y;
+        let t = targets[0];
+        let best = Infinity;
+        for (let k = 0; k < targets.length; k++) {
+          const c = targets[k];
+          const d2 = (c.x - e.x) ** 2 + (c.y - e.y) ** 2;
+          if (d2 < best) {
+            best = d2;
+            t = c;
+          }
+        }
+        const dx = t.x - e.x;
+        const dy = t.y - e.y;
         const d = Math.hypot(dx, dy) || 1;
         e.kbx *= decay;
         e.kby *= decay;
         const sl = Math.hypot(e.sepX, e.sepY);
         const sk = sl > SEP_MAX ? SEP_MAX / sl : 1;
+        const sp = e.def.speed * speedScale;
         body.setVelocity(
-          (dx / d) * e.def.speed + e.kbx + e.sepX * sk,
-          (dy / d) * e.def.speed + e.kby + e.sepY * sk,
+          (dx / d) * sp + e.kbx + e.sepX * sk,
+          (dy / d) * sp + e.kby + e.sepY * sk,
         );
         if (Math.abs(dx) > 2) e.setFlipX(dx < 0);
       }
@@ -125,20 +137,23 @@ export class Enemies {
     const k = (knockback * (1 - e.def.knockbackResist)) / KB_TAU;
     e.kbx += dirX * k;
     e.kby += dirY * k;
-    sfx.play('hit');
+    this.game.playSfx('hit', e.x, e.y);
     if (e.hp <= 0) this.kill(e, true);
   }
 
   kill(e: Enemy, dropGem: boolean): void {
     if (!e.active) return;
     this.game.fx.puff(e.x, e.y, e.def.puffColor, e.def.id === 'brute' ? 18 : 8);
-    if (dropGem) this.game.gems.drop(e.x, e.y + 2, e.def.exp);
+    if (dropGem) {
+      this.game.gems.drop(e.x, e.y + 2, e.def.exp);
+      this.game.potions.roll(e.x, e.y - 2, e.def.potionChance);
+    }
     e.disableBody(true, true);
     e.anims.stop();
     if (e.shadow) e.shadow.visible = false;
     this.live--;
     if (dropGem) {
-      sfx.play('kill');
+      this.game.playSfx('kill', e.x, e.y);
       this.game.onEnemyKilled();
     }
   }

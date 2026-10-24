@@ -11,6 +11,9 @@ export const EV = {
   debugStats: 'debug-stats', // (stats object)
   debugState: 'debug-state', // (on: boolean)
   runEnded: 'run-ended',
+  levelUpOffer: 'level-up-offer', // () new cards for the local player are in GameScene.offer
+  levelUpWaiting: 'level-up-waiting', // () the local player is done; teammates are still picking
+  levelUpOver: 'level-up-over', // () everyone has picked
 } as const;
 
 /** Events the UI scene sends back to the Game scene (debug buttons). */
@@ -38,4 +41,8 @@ export interface RunSummary {
   weapons: BuildEntry[];
   items: BuildEntry[];
   seed: string;
+  /** Co-op: how many players started the run. */
+  coopPlayers?: number;
+  /** Co-op: how many times a monkey fell. */
+  teamDeaths?: number;
 }

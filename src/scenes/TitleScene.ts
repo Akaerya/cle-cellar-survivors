@@ -13,7 +13,7 @@ export class TitleScene extends Phaser.Scene {
     super(SCENES.title);
   }
 
-  create(): void {
+  create(data?: { message?: string }): void {
     this.starting = false;
     this.cameras.main.setBackgroundColor(0x120d18);
     this.buildBackdrop();
@@ -60,9 +60,18 @@ export class TitleScene extends Phaser.Scene {
       this.add.sprite(x, y, ATLAS).play(anim).setScale(2).setFlipX(flip).setAlpha(0.9);
     }
 
-    const start = () => this.startRun();
-    const btn = new Button(this, VIEW_W / 2 - 70, 262, 140, 26, 'START', start);
-    new Menu(this, [btn]);
+    const bw = 108;
+    const bx = VIEW_W / 2 - bw * 2 - 12;
+    const buttons = [
+      new Button(this, bx, 258, bw, 26, 'SOLO', () => this.startRun()),
+      new Button(this, bx + bw + 8, 258, bw, 26, 'HOST CO-OP', () => this.toLobby('host')),
+      new Button(this, bx + (bw + 8) * 2, 258, bw, 26, 'JOIN CO-OP', () => this.toLobby('join')),
+      new Button(this, bx + (bw + 8) * 3, 258, bw, 26, 'WIKI', () => this.scene.start(SCENES.wiki, { from: 'title' })),
+    ];
+    new Menu(this, buttons, true);
+    if (data?.message) {
+      text(this, VIEW_W / 2, 244, data.message, { origin: [0.5, 0.5], color: COLOR.bad });
+    }
     text(this, VIEW_W / 2, 304, 'MOVE WITH WASD OR ARROW KEYS. YOUR WEAPONS FIRE ON THEIR OWN.', {
       origin: [0.5, 0.5],
       color: COLOR.text,
@@ -83,6 +92,13 @@ export class TitleScene extends Phaser.Scene {
       if (b.s.x < -20) b.s.x = VIEW_W + 20;
       if (b.s.x > VIEW_W + 20) b.s.x = -20;
     }
+  }
+
+  private toLobby(mode: 'host' | 'join'): void {
+    if (this.starting) return;
+    this.starting = true;
+    sfx.unlock();
+    this.scene.start(SCENES.lobby, { mode });
   }
 
   private startRun(): void {

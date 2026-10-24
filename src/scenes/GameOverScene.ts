@@ -3,6 +3,8 @@ import { ATLAS } from '../art/textures';
 import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
 import type { RunSummary } from '../core/events';
 import { formatTime } from '../core/progression';
+import { hostStartRun, hostToLobby, leaveSession } from '../net/flow';
+import { netSession } from '../net/Net';
 import { Button, Menu, drawPanel, onKey, text } from '../ui/widgets';
 
 /** Time survived, level, kills, and every weapon and item with its level. */
@@ -30,7 +32,13 @@ export class GameOverScene extends Phaser.Scene {
       color: win ? COLOR.gold : COLOR.bad,
     });
     this.tweens.add({ targets: title, scale: { from: 1.4, to: 1 }, duration: 380, ease: 'Back.easeOut' });
-    text(this, VIEW_W / 2, py + 46, win ? 'DAWN BROKE OVER THE GRAVEYARD' : 'THE NIGHT CLAIMED ANOTHER MONKEY', {
+    const coop = summary.coopPlayers !== undefined;
+    const sub = coop
+      ? `CO-OP · ${summary.coopPlayers} MONKEYS · ${win ? 'DAWN BROKE' : 'THE NIGHT WON'}`
+      : win
+        ? 'DAWN BROKE OVER THE GRAVEYARD'
+        : 'THE NIGHT CLAIMED ANOTHER MONKEY';
+    text(this, VIEW_W / 2, py + 46, sub, {
       origin: [0.5, 0.5],
       color: COLOR.textDim,
     });
@@ -41,8 +49,10 @@ export class GameOverScene extends Phaser.Scene {
       ['LEVEL', String(summary.level)],
       ['KILLS', String(summary.kills)],
     ];
+    if (summary.teamDeaths !== undefined) stats.push(['DEATHS', String(summary.teamDeaths)]);
+    const colW = pw / stats.length;
     stats.forEach(([k, v], i) => {
-      const cx = px + 60 + i * 120;
+      const cx = px + colW * (i + 0.5);
       text(this, cx, py + 64, k, { origin: [0.5, 0], color: COLOR.textDim });
       text(this, cx, py + 76, v, { scale: 2, origin: [0.5, 0], color: COLOR.text });
     });
@@ -73,12 +83,17 @@ export class GameOverScene extends Phaser.Scene {
 
     text(this, px + pw - 8, py + ph - 8, `SEED ${summary.seed}`, { origin: [1, 1], color: 0x5a4f73 });
 
+    const by = py + ph - 40;
+    const net = coop ? netSession() : null;
+    if (net) {
+      this.coopButtons(net.isHost, by);
+      return;
+    }
     const restart = () => this.scene.start(SCENES.game, {});
     const toTitle = () => {
       this.scene.stop(SCENES.game);
       this.scene.start(SCENES.title);
     };
-    const by = py + ph - 40;
     const buttons = [
       new Button(this, VIEW_W / 2 - 132, by, 124, 24, 'RESTART (R)', restart),
       new Button(this, VIEW_W / 2 + 8, by, 124, 24, 'TITLE (T)', toTitle),
@@ -86,5 +101,36 @@ export class GameOverScene extends Phaser.Scene {
     new Menu(this, buttons, true);
     onKey(this, 'keydown-R', restart);
     onKey(this, 'keydown-T', toTitle);
+  }
+
+  /** Co-op: the host decides what happens next; joiners wait for it or leave. */
+  private coopButtons(isHost: boolean, by: number): void {
+    const leave = () => leaveSession(this.game, netSession());
+    if (isHost) {
+      const again = () => {
+        const s = netSession();
+        if (s) hostStartRun(this.game, s);
+      };
+      const lobby = () => {
+        const s = netSession();
+        if (s) hostToLobby(this.game, s);
+      };
+      const w = 104;
+      const buttons = [
+        new Button(this, VIEW_W / 2 - w * 1.5 - 8, by, w, 24, 'AGAIN (R)', again),
+        new Button(this, VIEW_W / 2 - w / 2, by, w, 24, 'LOBBY (L)', lobby),
+        new Button(this, VIEW_W / 2 + w / 2 + 8, by, w, 24, 'LEAVE (T)', leave),
+      ];
+      new Menu(this, buttons, true);
+      onKey(this, 'keydown-R', again);
+      onKey(this, 'keydown-L', lobby);
+      onKey(this, 'keydown-T', leave);
+      return;
+    }
+    const waiting = text(this, VIEW_W / 2, by - 10, 'WAITING FOR THE HOST...', { origin: [0.5, 0.5], color: COLOR.textDim });
+    this.tweens.add({ targets: waiting, alpha: 0.4, yoyo: true, repeat: -1, duration: 700 });
+    const buttons = [new Button(this, VIEW_W / 2 - 62, by + 4, 124, 24, 'LEAVE (T)', leave)];
+    new Menu(this, buttons, true);
+    onKey(this, 'keydown-T', leave);
   }
 }

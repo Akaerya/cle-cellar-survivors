@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { DEPTH } from '../constants';
+import { nextNetId } from '../net/ids';
 import type { Enemy } from './Enemy';
 import type { WeaponInstance } from '../systems/Weapons';
 
@@ -25,6 +26,8 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
   returnAge = 0;
   /** Enemies hit on the current pass. Cleared when a boomerang turns around. */
   readonly hit = new Set<Enemy>();
+  /** Identifies this shot to network clients (pooled objects are reused). */
+  netId = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, ATLAS, 'banana_0');
@@ -38,6 +41,7 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     o: { damage: number; speed: number; pierce: number; lifetime: number; size: number; knockback: number; boomerang: boolean },
   ): void {
     this.weapon = weapon;
+    this.netId = nextNetId();
     this.enableBody(true, x, y, true, true);
     const def = weapon.def;
     if (def.projectileAnim) this.play(def.projectileAnim, true);

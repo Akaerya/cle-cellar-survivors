@@ -2,12 +2,15 @@ import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, DEPTH } from '../constants';
 import type { EnemyDef } from '../data/types';
+import { nextNetId } from '../net/ids';
 
 let nextUid = 1;
 
 /** Pooled enemy. `spawn` re-initialises a dead member for a new type. */
 export class Enemy extends Phaser.Physics.Arcade.Sprite {
   readonly uid = nextUid++;
+  /** Identifies this spawn to network clients (pooled objects are reused). */
+  netId = 0;
   def!: EnemyDef;
   hp = 0;
   maxHp = 0;
@@ -29,6 +32,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   spawn(def: EnemyDef, x: number, y: number, hpScale: number): this {
     this.def = def;
+    this.netId = nextNetId();
     this.enableBody(true, x, y, true, true);
     this.setTexture(ATLAS, def.firstFrame);
     this.play({ key: def.anim, startFrame: Math.floor(Math.random() * 4) }, true);

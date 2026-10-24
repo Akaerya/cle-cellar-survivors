@@ -5,9 +5,11 @@ import { BootScene } from './scenes/BootScene';
 import { GameOverScene } from './scenes/GameOverScene';
 import { GameScene } from './scenes/GameScene';
 import { LevelUpScene } from './scenes/LevelUpScene';
+import { LobbyScene } from './scenes/LobbyScene';
 import { PauseScene } from './scenes/PauseScene';
 import { TitleScene } from './scenes/TitleScene';
 import { UIScene } from './scenes/UIScene';
+import { WikiScene } from './scenes/WikiScene';
 
 const params = new URLSearchParams(window.location.search);
 
@@ -38,7 +40,7 @@ const config: Phaser.Types.Core.GameConfig = {
   input: { keyboard: true, mouse: true, touch: false, gamepad: false },
   disableContextMenu: true,
   // Scene order is draw order: HUD over the run, menus over the HUD.
-  scene: [BootScene, TitleScene, GameScene, UIScene, LevelUpScene, PauseScene, GameOverScene],
+  scene: [BootScene, TitleScene, LobbyScene, GameScene, UIScene, LevelUpScene, PauseScene, GameOverScene, WikiScene],
 };
 
 new Phaser.Game(config);

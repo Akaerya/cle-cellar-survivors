@@ -1,14 +1,15 @@
 import Phaser from 'phaser';
 import { MAX_GEMS } from '../constants';
-import { sfx } from '../core/sfx';
 import { Gem } from '../entities/Gem';
+import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 
-const HOMING_ACCEL = 1500;
-const HOMING_MAX = 720;
-const POP_SPEED = 90;
+/** Speed a gem starts flying at, as a multiple of the target's move speed (always faster than the monkey). */
+const START_SPEED_MULT = 1.6;
+const ACCEL = 900;
+const MAX_SPEED = 900;
 
-/** EXP gems: drop, merge past the cap, home in once inside the pickup radius. */
+/** EXP gems: drop, merge past the cap, fly straight at a monkey once inside its pickup radius. */
 export class Gems {
   readonly group: Phaser.Physics.Arcade.Group;
   live = 0;
@@ -46,41 +47,52 @@ export class Gems {
   }
 
   update(dt: number): void {
-    const p = this.game.player;
-    const R = p.stats.pickupRadius;
-    const R2 = R * R;
+    const players = this.game.livePlayers();
     for (const g of this.group.getChildren() as Gem[]) {
       if (!g.active) continue;
+      if (g.target && !g.target.alive) g.target = null;
+      if (!g.target) {
+        g.target = this.pickupBy(g, players);
+        if (!g.target) continue;
+        g.speed = g.target.stats.moveSpeed * START_SPEED_MULT;
+      }
+      // Straight line at the monkey, re-aimed every frame and always faster than it: no orbiting.
+      const p = g.target;
       const dx = p.x - g.x;
       const dy = p.y - g.y;
-      const d2 = dx * dx + dy * dy;
-      const d = Math.sqrt(d2) || 1;
-      if (!g.attracted) {
-        if (d2 > R2) continue;
-        g.attracted = true;
-        // Small hop away first, then a rush in: reads as being sucked up.
-        g.vx = (-dx / d) * POP_SPEED;
-        g.vy = (-dy / d) * POP_SPEED;
+      const d = Math.hypot(dx, dy) || 1;
+      g.speed = Math.min(MAX_SPEED, g.speed + ACCEL * dt);
+      if (d < p.bodyRadius + 5 || g.speed * dt >= d) {
+        this.collect(g, p);
+        continue;
       }
-      g.vx += (dx / d) * HOMING_ACCEL * dt;
-      g.vy += (dy / d) * HOMING_ACCEL * dt;
-      const sp = Math.hypot(g.vx, g.vy);
-      if (sp > HOMING_MAX) {
-        g.vx = (g.vx / sp) * HOMING_MAX;
-        g.vy = (g.vy / sp) * HOMING_MAX;
-      }
-      (g.body as Phaser.Physics.Arcade.Body).setVelocity(g.vx, g.vy);
-      if (d < p.bodyRadius + 5) this.collect(g);
+      (g.body as Phaser.Physics.Arcade.Body).setVelocity((dx / d) * g.speed, (dy / d) * g.speed);
     }
   }
 
-  collect(g: Gem): void {
+  /** Nearest living monkey whose pickup radius contains the gem. */
+  private pickupBy(g: Gem, players: Player[]): Player | null {
+    let best: Player | null = null;
+    let bestD = Infinity;
+    for (const p of players) {
+      const d2 = (p.x - g.x) ** 2 + (p.y - g.y) ** 2;
+      const R = p.stats.pickupRadius;
+      if (d2 <= R * R && d2 < bestD) {
+        bestD = d2;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  collect(g: Gem, p: Player): void {
     if (!g.active) return;
     const value = g.value;
     g.disableBody(true, true);
     g.anims.stop();
+    g.target = null;
     this.live--;
-    sfx.play('gem');
-    this.game.addExp(value);
+    this.game.playSfx('gem');
+    this.game.addExp(value * p.stats.expMult);
   }
 }

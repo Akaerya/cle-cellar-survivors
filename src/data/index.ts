@@ -7,7 +7,7 @@ export * from './types';
 export { ENEMIES } from './enemies';
 export { ITEMS } from './items';
 export { WEAPONS } from './weapons';
-export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute } from './waves';
+export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute, hpScaleForPlayers, speedScaleForMinute } from './waves';
 export { BASE_STATS, PLAYER_RADIUS, STARTING_WEAPON } from './player';
 
 const byId = <T extends { id: string }>(list: T[]) => new Map(list.map((e) => [e.id, e]));
@@ -33,3 +33,5 @@ export function enemyDef(id: string): EnemyDef {
   if (!d) throw new Error(`Unknown enemy ${id}`);
   return d;
 }
+export { POTION, GEM_TIERS } from './drops';
+export { REVIVE, reviveHpPercent } from './coop';

@@ -16,7 +16,9 @@ export type SfxName =
   | 'swarm'
   | 'victory'
   | 'death'
-  | 'pause';
+  | 'pause'
+  | 'heal'
+  | 'revive';
 
 const THROTTLE_MS: Partial<Record<SfxName, number>> = {
   throw: 60,
@@ -123,6 +125,12 @@ class SfxEngine {
         break;
       case 'pause':
         this.tone(t, 330, 330, 0.05, 'square', 0.04);
+        break;
+      case 'heal':
+        [660, 880, 1320].forEach((f, i) => this.tone(t + i * 0.05, f, f * 1.05, 0.12, 'sine', 0.07));
+        break;
+      case 'revive':
+        [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(t + i * 0.08, f, f, 0.18, 'triangle', 0.07));
         break;
     }
   }

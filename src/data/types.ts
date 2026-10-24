@@ -113,6 +113,8 @@ export interface EnemyDef {
   shadow: 'shadow_s' | 'shadow_l';
   /** Extra px between sprite and shadow (bats hover). */
   hover: number;
+  /** Chance (0..1) to drop a health potion on death. See data/drops.ts. */
+  potionChance: number;
 }
 
 export interface WaveRow {

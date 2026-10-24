@@ -2,10 +2,10 @@ import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { DEPTH, INNER } from '../constants';
 import { weaponStatsAt } from '../core/progression';
-import { sfx } from '../core/sfx';
 import { weaponDef } from '../data';
 import type { WeaponDef, WeaponStats } from '../data/types';
 import type { Enemy } from '../entities/Enemy';
+import type { Player } from '../entities/Player';
 import { Projectile } from '../entities/Projectile';
 import type { GameScene } from '../scenes/GameScene';
 
@@ -21,6 +21,7 @@ interface Slash {
 
 export interface WeaponInstance {
   uid: number;
+  owner: Player;
   def: WeaponDef;
   level: number;
   stats: WeaponStats;
@@ -41,17 +42,23 @@ interface Effective extends WeaponStats {}
 const DEG = Math.PI / 180;
 
 /**
- * Runs every equipped weapon. Behaviour comes from the weapon's `targeting` and stats, so a new
+ * Runs every weapon one monkey has equipped. Behaviour comes from the weapon's `targeting` and stats, so a new
  * weapon is a data entry: `nearest` / `random` / `facing` fire projectiles (or sweep if speed is 0),
  * `orbit` keeps objects circling the monkey, `aura` damages everything in a radius on a tick.
  */
 export class Weapons {
   readonly list: WeaponInstance[] = [];
-  readonly projectiles: Phaser.Physics.Arcade.Group;
   private query: Enemy[] = [];
 
-  constructor(private game: GameScene) {
-    this.projectiles = game.physics.add.group({ classType: Projectile, maxSize: 300, runChildUpdate: false });
+  /** `projectiles` is shared by every monkey's weapons. */
+  constructor(
+    private game: GameScene,
+    readonly owner: Player,
+    readonly projectiles: Phaser.Physics.Arcade.Group,
+  ) {}
+
+  static createProjectileGroup(game: GameScene): Phaser.Physics.Arcade.Group {
+    return game.physics.add.group({ classType: Projectile, maxSize: 300, runChildUpdate: false });
   }
 
   get(id: string): WeaponInstance | undefined {
@@ -62,6 +69,7 @@ export class Weapons {
     const def = weaponDef(id);
     const w: WeaponInstance = {
       uid: nextUid++,
+      owner: this.owner,
       def,
       level: 1,
       stats: weaponStatsAt(def, 1),
@@ -88,7 +96,7 @@ export class Weapons {
   }
 
   private eff(w: WeaponInstance): Effective {
-    const p = this.game.player.stats;
+    const p = this.owner.stats;
     const s = w.stats;
     return {
       ...s,
@@ -99,8 +107,8 @@ export class Weapons {
     };
   }
 
+  /** `firing` false only animates (joiners draw remote weapons this way; the host does the hitting). */
   update(dt: number, firing: boolean): void {
-    const p = this.game.player;
     for (const w of this.list) {
       const e = this.eff(w);
       switch (w.def.targeting) {
@@ -118,27 +126,26 @@ export class Weapons {
       }
       if (w.slashes.length > 0 || (w.gfx && w.def.targeting === 'facing')) this.drawSlashes(w, dt);
     }
+  }
 
-    // Projectiles: lifetime, boomerang steering, and the arena wall.
-    const children = this.projectiles.getChildren() as Projectile[];
+  /** Projectiles of every monkey: lifetime, boomerang steering, and the arena wall. */
+  static updateProjectiles(group: Phaser.Physics.Arcade.Group, dt: number): void {
+    const children = group.getChildren() as Projectile[];
     for (let i = 0; i < children.length; i++) {
       const pr = children[i];
       if (!pr.active) continue;
-      const alive = pr.step(dt, p.x, p.y);
+      const o = pr.weapon.owner;
+      const alive = pr.step(dt, o.x, o.y);
       const hitWall = pr.x < INNER.left || pr.x > INNER.right || pr.y < INNER.top || pr.y > INNER.bottom;
-      if (!alive || hitWall) this.release(pr);
+      if (!alive || hitWall) Weapons.release(pr);
     }
-  }
-
-  get activeProjectiles(): number {
-    return this.projectiles.countActive(true);
   }
 
   private tickShooter(w: WeaponInstance, e: Effective, dt: number): void {
     w.timer -= dt;
     if (w.timer > 0) return;
     let fired = false;
-    const p = this.game.player;
+    const p = this.owner;
     if (w.def.targeting === 'nearest') {
       const target = this.game.enemies.nearest(p.x, p.y, e.range);
       if (target) {
@@ -159,7 +166,7 @@ export class Weapons {
   }
 
   private volley(w: WeaponInstance, e: Effective, base: number): void {
-    const p = this.game.player;
+    const p = this.owner;
     const n = Math.max(1, Math.round(e.projectileCount));
     for (let i = 0; i < n; i++) {
       const angle = base + (i - (n - 1) / 2) * e.spread * DEG;
@@ -167,12 +174,12 @@ export class Weapons {
       if (!pr) break;
       pr.fire(w, p.x, p.y - 2, angle, e);
     }
-    sfx.play('throw');
+    this.game.playSfx('throw', p.x, p.y);
   }
 
   /** Melee arc in the facing direction (Tail Whip). Extra projectiles add sweeps around the monkey. */
   private sweep(w: WeaponInstance, e: Effective, base: number): void {
-    const p = this.game.player;
+    const p = this.owner;
     const n = Math.max(1, Math.round(e.projectileCount));
     const half = (e.arc * DEG) / 2;
     for (let i = 0; i < n; i++) {
@@ -190,17 +197,19 @@ export class Weapons {
         if (diff > half + tol) continue;
         this.game.enemies.hit(en, e.damage, dx / (d || 1), dy / (d || 1), e.knockback, w);
       }
-      w.slashes.push({ angle, reach: e.size, arc: e.arc * DEG, t: 0, dur: Math.max(0.14, e.lifetime) });
+      const dur = Math.max(0.14, e.lifetime);
+      w.slashes.push({ angle, reach: e.size, arc: e.arc * DEG, t: 0, dur });
+      this.game.relay(['w', p.slot, this.list.indexOf(w), angle, e.size, e.arc * DEG, dur]);
     }
     p.spin();
-    sfx.play('whip');
+    this.game.playSfx('whip', p.x, p.y);
   }
 
   private drawSlashes(w: WeaponInstance, dt: number): void {
     const g = w.gfx;
     if (!g) return;
     g.clear();
-    const p = this.game.player;
+    const p = this.owner;
     const color = w.def.color ?? 0xffffff;
     for (let i = w.slashes.length - 1; i >= 0; i--) {
       const s = w.slashes[i];
@@ -243,7 +252,7 @@ export class Weapons {
   }
 
   private updateOrbit(w: WeaponInstance, e: Effective, dt: number, firing: boolean): void {
-    const p = this.game.player;
+    const p = this.owner;
     const n = Math.max(1, Math.round(e.projectileCount));
     while (w.orbiters.length < n) {
       const s = this.game.add.sprite(p.x, p.y, ATLAS, 'coconut_0').setDepth(DEPTH.projectiles);
@@ -283,13 +292,14 @@ export class Weapons {
   }
 
   private updateAura(w: WeaponInstance, e: Effective, dt: number, firing: boolean): void {
-    const p = this.game.player;
+    const p = this.owner;
     const R = e.size;
     if (firing) {
       w.timer -= dt;
       if (w.timer <= 0) {
         w.timer += e.cooldown;
         w.pulse = 1;
+        this.game.relay(['a', p.slot, this.list.indexOf(w)]);
         this.query.length = 0;
         this.game.enemies.grid.query(p.x, p.y, R + 16, this.query);
         for (const en of this.query) {
@@ -330,13 +340,69 @@ export class Weapons {
     pr.pierceLeft--;
     if (pr.pierceLeft <= 0) {
       if (pr.boomerang && !pr.returning) pr.turnAround();
-      else this.release(pr);
+      else Weapons.release(pr);
     }
   }
 
-  private release(pr: Projectile): void {
+  private static release(pr: Projectile): void {
     pr.disableBody(true, true);
     pr.anims.stop();
+  }
+
+  // ---------------------------------------------------------------- joiners: effects the host relays
+
+  addSlash(index: number, angle: number, reach: number, arc: number, dur: number): void {
+    const w = this.list[index];
+    if (!w) return;
+    w.slashes.push({ angle, reach, arc, t: 0, dur });
+    this.owner.spin();
+  }
+
+  pulse(index: number): void {
+    const w = this.list[index];
+    if (w) w.pulse = 1;
+  }
+
+  /** Orbit angles from the host, so coconuts are drawn where they actually hit. */
+  setPhases(phases: number[]): void {
+    phases.forEach((a, i) => {
+      const w = this.list[i];
+      if (!w || w.def.targeting !== 'orbit') return;
+      // Nudge rather than snap: the local spin keeps it smooth between snapshots.
+      const diff = Phaser.Math.Angle.Wrap(a - w.orbitAngle);
+      w.orbitAngle += Math.abs(diff) > 0.6 ? diff : diff * 0.2;
+    });
+  }
+
+  phases(): number[] {
+    return this.list.map((w) => (w.def.targeting === 'orbit' ? w.orbitAngle : 0));
+  }
+
+  /** Brings the weapon list in line with the host's (joiners). */
+  sync(pairs: [string, number][]): void {
+    for (const [id, level] of pairs) {
+      const w = this.get(id) ?? this.add(id);
+      if (w.level !== level) {
+        w.level = level;
+        w.stats = weaponStatsAt(w.def, level);
+      }
+    }
+  }
+
+  /** Removes everything this monkey drew (player left). */
+  destroy(): void {
+    for (const w of this.list) {
+      for (const s of w.orbiters) s.destroy();
+      w.orbiters.length = 0;
+      w.gfx?.destroy();
+      w.gfx = null;
+    }
+    this.list.length = 0;
+  }
+
+  /** Shows orbiters again (revived). */
+  showVisuals(): void {
+    for (const w of this.list) for (const s of w.orbiters) s.setVisible(true);
   }
 
   /** Hides orbiters and effects (end of run). */

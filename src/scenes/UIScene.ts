@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
-import { COLOR, MAX_ITEMS, MAX_LEVEL, MAX_WEAPONS, RUN_SECONDS, SCENES, VIEW_H, VIEW_W } from '../constants';
+import { COLOR, MAX_ITEMS, MAX_LEVEL, MAX_WEAPONS, PLAYER_COLORS, RUN_SECONDS, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry } from '../core/events';
 import { formatTime } from '../core/progression';
 import { Button, drawPanel, text } from '../ui/widgets';
@@ -20,6 +20,9 @@ export class UIScene extends Phaser.Scene {
   private debugText!: Phaser.GameObjects.BitmapText;
   private debugButtons: Button[] = [];
   private expFlash = 0;
+  private team!: Phaser.GameObjects.Graphics;
+  private teamLabels = new Map<number, Phaser.GameObjects.BitmapText>();
+  private deathsText: Phaser.GameObjects.BitmapText | null = null;
   private exp = { exp: 0, need: 5, level: 1 };
 
   constructor() {
@@ -47,6 +50,18 @@ export class UIScene extends Phaser.Scene {
     this.tweens.add({ targets: hint, alpha: 0, delay: 7000, duration: 1200 });
 
     this.buildDebugPanel();
+
+    // Co-op: teammates' HP under the build, and arrows at the screen edge pointing at them.
+    this.team = this.add.graphics();
+    this.teamLabels.clear();
+    this.deathsText = null;
+    if (this.run.coop) {
+      this.deathsText = text(this, VIEW_W - 4, 26, '', { origin: [1, 0], color: COLOR.textDim });
+      for (const p of this.run.players) {
+        if (!p || p === this.run.player) continue;
+        this.teamLabels.set(p.slot, text(this, 4, 0, '', { color: PLAYER_COLORS[p.slot] }));
+      }
+    }
 
     this.exp = { exp: snap.exp, need: snap.need, level: snap.level };
     this.drawExp();
@@ -80,6 +95,54 @@ export class UIScene extends Phaser.Scene {
     if (this.expFlash > 0) {
       this.expFlash = Math.max(0, this.expFlash - delta / 400);
       this.drawExp();
+    }
+    if (this.run.coop) this.drawTeam();
+  }
+
+  private drawTeam(): void {
+    const g = this.team;
+    g.clear();
+    let y = 56;
+    const view = this.run.cameras.main.worldView;
+    this.deathsText?.setText(`TEAM DEATHS ${this.run.teamDeaths}`).setTint(this.run.teamDeaths > 0 ? COLOR.bad : COLOR.textDim);
+    for (const p of this.run.players) {
+      if (!p || p === this.run.player) continue;
+      const label = this.teamLabels.get(p.slot);
+      if (!label) continue;
+      const color = PLAYER_COLORS[p.slot];
+      label.setY(y).setText(`P${p.slot + 1}${p.gone ? ' LEFT' : p.dead ? ' DOWN' : ''}`).setAlpha(p.alive ? 1 : 0.5);
+      if (p.alive) {
+        const w = 40;
+        const frac = Phaser.Math.Clamp(p.hp / p.stats.maxHp, 0, 1);
+        g.fillStyle(COLOR.ink, 1);
+        g.fillRect(21, y + 1, w + 2, 5);
+        g.fillStyle(COLOR.hpDark, 1);
+        g.fillRect(22, y + 2, w, 3);
+        g.fillStyle(COLOR.hp, 1);
+        g.fillRect(22, y + 2, Math.ceil(w * frac), 3);
+
+        // Off-screen: an arrow on the edge of the screen in the teammate's colour.
+        if (!view.contains(p.x, p.y)) {
+          const cx = view.centerX;
+          const cy = view.centerY;
+          const dx = p.x - cx;
+          const dy = p.y - cy;
+          const m = 10;
+          const k = Math.min((VIEW_W / 2 - m) / Math.abs(dx || 1e-6), (VIEW_H / 2 - m) / Math.abs(dy || 1e-6));
+          const ax = VIEW_W / 2 + dx * k;
+          const ay = VIEW_H / 2 + dy * k;
+          const a = Math.atan2(dy, dx);
+          const pt = (r: number, da: number) => ({ x: ax + Math.cos(a + da) * r, y: ay + Math.sin(a + da) * r });
+          const tip = pt(6, 0);
+          const l = pt(5, 2.4);
+          const r = pt(5, -2.4);
+          g.fillStyle(COLOR.ink, 1);
+          g.fillTriangle(tip.x + 1, tip.y + 1, l.x + 1, l.y + 1, r.x + 1, r.y + 1);
+          g.fillStyle(color, 1);
+          g.fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
+        }
+      }
+      y += 10;
     }
   }
 
