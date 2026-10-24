@@ -6,7 +6,7 @@ A survivor-like for desktop browsers where you play as members of the Cle Cellar
 
 | Character | Kit | Ultimate (Q) |
 | --- | --- | --- |
-| **rnscle**, the banana monkey | Banana Throw (start), Tail Whip, Coconut Orbit, Howler Aura | **Banana Storm**: a spiral of bananas around you for 15 s, 150 s cooldown |
+| **rsncle**, the banana monkey | Banana Throw (start), Tail Whip, Coconut Orbit, Howler Aura | **Banana Storm**: a spiral of bananas around you for 15 s, 150 s cooldown |
 | **yookers**, the storm knight | Stormblade (start; a sword stab that reaches further with levels), Thunder Breath (a lightning cone on a cooldown), Thunderstrike (bolts land at random around you; more bolts and more often with levels), Storm Shield (blocks a hit every 30 s, absorbs 10-25% of the rest) | **Storm Drake**: a small dragon follows you and spits lightning orbs at enemies for 25 s, 150 s cooldown |
 
 Each character has its own four weapons (level-up cards only offer your character's); items and base stats are shared. The HUD shows your ultimate under your build: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. In co-op every teammate's ultimate is shown the same way next to their name and HP.
