@@ -11,10 +11,10 @@ export function gemColor(value: number): 'blue' | 'green' | 'red' {
   return c;
 }
 
-/** Pooled EXP gem. Sits on the ground until it enters a pickup radius, then flies at that monkey. */
+/** Pooled EXP gem. Sits on the ground until it enters a pickup radius, then flies at that player. */
 export class Gem extends Phaser.Physics.Arcade.Sprite {
   value = 1;
-  /** The monkey this gem is flying to, or null while it sits on the ground. */
+  /** The player this gem is flying to, or null while it sits on the ground. */
   target: Player | null = null;
   speed = 0;
   /** Identifies this spawn to network clients (pooled objects are reused). */

@@ -9,7 +9,7 @@ const RING_MARGIN = 24;
 
 /**
  * Tops the horde up toward the wave target every tick, and runs timed events such as bat swarms.
- * In co-op each new enemy appears just off the screen of a random living monkey.
+ * In co-op each new enemy appears just off the screen of a random living player.
  */
 export class Spawner {
   private fired = new Set<number>();
@@ -74,7 +74,7 @@ export class Spawner {
     });
   }
 
-  /** A ring of enemies closing in from every side that is inside the arena, around each living monkey. */
+  /** A ring of enemies closing in from every side that is inside the arena, around each living player. */
   private swarm(ev: WaveEvent): void {
     const g = this.game;
     const def = enemyDef(ev.enemy);
@@ -100,7 +100,7 @@ export class Spawner {
 
   /** Random point on a rectangle just outside `p`'s viewport; points outside the arena are dropped. */
   ringPoint(radius: number, p: Player): { x: number; y: number } | null {
-    // The view is centred on the monkey and clamped at the arena edges, like the camera.
+    // The view is centred on the player and clamped at the arena edges, like the camera.
     // Computed directly so it is right even before the camera has rendered once.
     const cx = Phaser.Math.Clamp(p.x, VIEW_W / 2, ARENA_SIZE - VIEW_W / 2);
     const cy = Phaser.Math.Clamp(p.y, VIEW_H / 2, ARENA_SIZE - VIEW_H / 2);
@@ -132,7 +132,7 @@ export class Spawner {
     return null;
   }
 
-  /** Enemies far from every living monkey are moved back near one of them, keeping their HP. */
+  /** Enemies far from every living player are moved back near one of them, keeping their HP. */
   private relocateStragglers(players: Player[]): void {
     const g = this.game;
     const limX = DESPAWN_SCREENS * VIEW_W;

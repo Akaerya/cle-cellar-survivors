@@ -3,8 +3,21 @@ import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
 import { COLOR, MAX_ITEMS, MAX_LEVEL, MAX_WEAPONS, PLAYER_COLORS, RUN_SECONDS, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry } from '../core/events';
 import { formatTime } from '../core/progression';
+import type { Player } from '../entities/Player';
 import { Button, drawPanel, text } from '../ui/widgets';
 import type { GameScene } from './GameScene';
+
+/** Own ultimate box under the build rows, and the teammate list under it. */
+const ULT_Y = 53;
+const ULT_SIZE = 24;
+const TEAM_Y = 84;
+const TEAM_ROW = 22;
+
+/** An ultimate icon that greys out with a countdown while on cooldown. */
+interface UltBadge {
+  icon: Phaser.GameObjects.Image;
+  num: Phaser.GameObjects.BitmapText;
+}
 
 /** HUD drawn in its own scene on top of the Game scene, so it stays fixed while the camera moves. */
 export class UIScene extends Phaser.Scene {
@@ -22,6 +35,10 @@ export class UIScene extends Phaser.Scene {
   private expFlash = 0;
   private team!: Phaser.GameObjects.Graphics;
   private teamLabels = new Map<number, Phaser.GameObjects.BitmapText>();
+  private teamUlts = new Map<number, UltBadge>();
+  private ultGfx!: Phaser.GameObjects.Graphics;
+  private ultBadge!: UltBadge;
+  private ultStatus!: Phaser.GameObjects.BitmapText;
   private deathsText: Phaser.GameObjects.BitmapText | null = null;
   private exp = { exp: 0, need: 5, level: 1 };
 
@@ -43,7 +60,7 @@ export class UIScene extends Phaser.Scene {
     this.banner = text(this, VIEW_W / 2, 92, '', { scale: 2, origin: [0.5, 0.5] }).setAlpha(0);
     this.hurt = this.add.image(0, 0, 'hurt-vignette').setOrigin(0).setDisplaySize(VIEW_W, VIEW_H).setAlpha(0);
 
-    const hint = text(this, VIEW_W / 2, VIEW_H - 14, 'WASD / ARROWS MOVE · ESC PAUSE · M MUTE · F3 DEBUG', {
+    const hint = text(this, VIEW_W / 2, VIEW_H - 14, 'WASD / ARROWS MOVE · Q ULTIMATE · ESC PAUSE · M MUTE · F3 DEBUG', {
       origin: [0.5, 0],
       color: COLOR.textDim,
     });
@@ -51,15 +68,26 @@ export class UIScene extends Phaser.Scene {
 
     this.buildDebugPanel();
 
-    // Co-op: teammates' HP under the build, and arrows at the screen edge pointing at them.
+    // Own ultimate (Q) under the build.
+    const me = this.run.player;
+    this.ultGfx = this.add.graphics();
+    this.ultBadge = this.ultBadgeFor(me, 4 + ULT_SIZE / 2, ULT_Y + ULT_SIZE / 2);
+    text(this, 4 + ULT_SIZE + 5, ULT_Y + 2, `${me.ultimate.def.name.toUpperCase()} (Q)`, { color: COLOR.text });
+    this.ultStatus = text(this, 4 + ULT_SIZE + 5, ULT_Y + 13, '', { color: COLOR.textDim });
+
+    // Co-op: teammates' ultimate, name and HP under it, and arrows at the screen edge pointing at them.
     this.team = this.add.graphics();
     this.teamLabels.clear();
+    this.teamUlts.clear();
     this.deathsText = null;
     if (this.run.coop) {
       this.deathsText = text(this, VIEW_W - 4, 26, '', { origin: [1, 0], color: COLOR.textDim });
+      let y = TEAM_Y;
       for (const p of this.run.players) {
         if (!p || p === this.run.player) continue;
-        this.teamLabels.set(p.slot, text(this, 4, 0, '', { color: PLAYER_COLORS[p.slot] }));
+        this.teamUlts.set(p.slot, this.ultBadgeFor(p, 4 + 9, y + 9));
+        this.teamLabels.set(p.slot, text(this, 26, y + 1, '', { color: PLAYER_COLORS[p.slot] }));
+        y += TEAM_ROW;
       }
     }
 
@@ -96,30 +124,86 @@ export class UIScene extends Phaser.Scene {
       this.expFlash = Math.max(0, this.expFlash - delta / 400);
       this.drawExp();
     }
+    this.drawUltimate();
     if (this.run.coop) this.drawTeam();
+  }
+
+  private ultBadgeFor(p: Player, cx: number, cy: number): UltBadge {
+    return {
+      icon: this.add.image(cx, cy, ATLAS, p.ultimate.def.icon),
+      num: text(this, cx + 1, cy + 1, '', { origin: [0.5, 0.5], color: COLOR.white }),
+    };
+  }
+
+  /** Colour icon when ready or running; greyed out with the seconds left while on cooldown. */
+  private updateBadge(b: UltBadge, p: Player): void {
+    const u = p.ultimate;
+    const cooling = !u.ready && !u.active;
+    b.icon.setFrame(cooling || p.gone ? `${u.def.icon}_grey` : u.def.icon);
+    b.num.setText(cooling && !p.gone ? String(Math.ceil(u.cooldownLeft)) : '');
+  }
+
+  private drawUltimate(): void {
+    const p = this.run.player;
+    const u = p.ultimate;
+    const g = this.ultGfx;
+    const x = 4;
+    const y = ULT_Y;
+    const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 140);
+    g.clear();
+    g.fillStyle(COLOR.ink, 0.85);
+    g.fillRect(x, y, ULT_SIZE, ULT_SIZE);
+    const edge = u.active ? COLOR.gold : u.ready ? COLOR.good : COLOR.panelEdge;
+    g.lineStyle(1, edge, u.active || u.ready ? 0.6 + 0.4 * pulse : 1);
+    g.strokeRect(x + 0.5, y + 0.5, ULT_SIZE - 1, ULT_SIZE - 1);
+    if (u.active) {
+      // Time the effect has left, as a bar under the box.
+      g.fillStyle(COLOR.ink, 1);
+      g.fillRect(x, y + ULT_SIZE + 1, ULT_SIZE, 3);
+      g.fillStyle(COLOR.gold, 1);
+      g.fillRect(x, y + ULT_SIZE + 1, Math.ceil(ULT_SIZE * (u.activeLeft / u.def.duration)), 3);
+    }
+    this.updateBadge(this.ultBadge, p);
+    const status = !p.alive
+      ? 'DOWN'
+      : u.active
+        ? `ACTIVE ${Math.ceil(u.activeLeft)}S`
+        : u.ready
+          ? 'READY'
+          : `${Math.ceil(u.cooldownLeft)}S`;
+    this.ultStatus.setText(status).setTint(u.active ? COLOR.gold : u.ready && p.alive ? COLOR.good : COLOR.textDim);
   }
 
   private drawTeam(): void {
     const g = this.team;
     g.clear();
-    let y = 56;
+    let y = TEAM_Y;
     const view = this.run.cameras.main.worldView;
     this.deathsText?.setText(`TEAM DEATHS ${this.run.teamDeaths}`).setTint(this.run.teamDeaths > 0 ? COLOR.bad : COLOR.textDim);
     for (const p of this.run.players) {
       if (!p || p === this.run.player) continue;
       const label = this.teamLabels.get(p.slot);
-      if (!label) continue;
+      const badge = this.teamUlts.get(p.slot);
+      if (!label || !badge) continue;
       const color = PLAYER_COLORS[p.slot];
-      label.setY(y).setText(`P${p.slot + 1}${p.gone ? ' LEFT' : p.dead ? ' DOWN' : ''}`).setAlpha(p.alive ? 1 : 0.5);
+      label.setText(`${p.displayName}${p.gone ? ' LEFT' : p.dead ? ' DOWN' : ''}`).setAlpha(p.alive ? 1 : 0.5);
+      // Ultimate badge: box, then the icon (grey with a countdown on cooldown, gold edge while running).
+      const u = p.ultimate;
+      g.fillStyle(COLOR.ink, 0.85);
+      g.fillRect(4, y, 18, 18);
+      g.lineStyle(1, u.active ? COLOR.gold : u.ready && p.alive ? COLOR.good : COLOR.panelEdge, 1);
+      g.strokeRect(4.5, y + 0.5, 17, 17);
+      this.updateBadge(badge, p);
+      badge.icon.setAlpha(p.alive ? 1 : 0.5);
       if (p.alive) {
         const w = 40;
         const frac = Phaser.Math.Clamp(p.hp / p.stats.maxHp, 0, 1);
         g.fillStyle(COLOR.ink, 1);
-        g.fillRect(21, y + 1, w + 2, 5);
+        g.fillRect(25, y + 11, w + 2, 5);
         g.fillStyle(COLOR.hpDark, 1);
-        g.fillRect(22, y + 2, w, 3);
+        g.fillRect(26, y + 12, w, 3);
         g.fillStyle(COLOR.hp, 1);
-        g.fillRect(22, y + 2, Math.ceil(w * frac), 3);
+        g.fillRect(26, y + 12, Math.ceil(w * frac), 3);
 
         // Off-screen: an arrow on the edge of the screen in the teammate's colour.
         if (!view.contains(p.x, p.y)) {
@@ -142,7 +226,7 @@ export class UIScene extends Phaser.Scene {
           g.fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
         }
       }
-      y += 10;
+      y += TEAM_ROW;
     }
   }
 
@@ -217,9 +301,9 @@ export class UIScene extends Phaser.Scene {
 
   private buildDebugPanel(): void {
     const x = 4;
-    const y = VIEW_H - 132;
+    const y = VIEW_H - 151;
     const w = 168;
-    const h = 126;
+    const h = 145;
     this.debugPanel = this.add.container(0, 0);
     const g = this.add.graphics();
     drawPanel(g, x, y, w, h, COLOR.panelEdge, COLOR.ink, 0.85);
@@ -233,6 +317,7 @@ export class UIScene extends Phaser.Scene {
       ['+1 LEVEL', DEBUG_EV.addExp],
       ['+1 MIN', DEBUG_EV.skipMinute],
       ['GOD', DEBUG_EV.god],
+      ['ULT READY', DEBUG_EV.ultReady],
     ];
     this.debugButtons = defs.map(([label, name], i) => {
       const bx = x + 6 + (i % 2) * 80;

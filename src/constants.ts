@@ -26,11 +26,15 @@ export const MAX_LEVEL = 5;
 export const INVULN_SECONDS = 0.5;
 export const SPAWN_TICK_MS = 500;
 export const FALLBACK_HEAL = 30;
+/** `stab` weapons thrust at enemies this many px beyond the blade's reach, so the stab lands as they close in. */
+export const STAB_LEAD = 12;
+/** Shields never absorb more than this fraction of a hit, however many levels are stacked. */
+export const MAX_SHIELD_REDUCTION = 0.9;
 
-/** Co-op: players per run, and how each monkey is told apart (P1..P4). */
+/** Co-op: players per run, and how each player is told apart (P1..P4). */
 export const MAX_PLAYERS = 4;
 export const PLAYER_COLORS = [0xf7d84a, 0x6ec6ff, 0xff7a8a, 0x7be38a] as const;
-/** Multiplied into the monkey sprite; P1 keeps the original colours. */
+/** Multiplied into the character sprite; P1 keeps the original colours. */
 export const PLAYER_TINTS = [0xffffff, 0xbfe2ff, 0xffc4c9, 0xc8f5c9] as const;
 
 /** Enemies further than this many screens away (per axis) are moved back near the edge. */
@@ -43,7 +47,7 @@ export const DEPTH = {
   shadows: 4,
   gems: 5,
   aura: 6,
-  units: 10, // enemies and the monkey, y-sorted inside 10..11
+  units: 10, // enemies and players, y-sorted inside 10..11
   projectiles: 20,
   slash: 21,
   fx: 30,
@@ -81,4 +85,5 @@ export const SCENES = {
   gameOver: 'GameOver',
   lobby: 'Lobby',
   wiki: 'Wiki',
+  select: 'CharacterSelect',
 } as const;

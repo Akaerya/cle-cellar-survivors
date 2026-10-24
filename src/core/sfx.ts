@@ -18,7 +18,12 @@ export type SfxName =
   | 'death'
   | 'pause'
   | 'heal'
-  | 'revive';
+  | 'revive'
+  | 'stab'
+  | 'zap'
+  | 'thunder'
+  | 'block'
+  | 'ultimate';
 
 const THROTTLE_MS: Partial<Record<SfxName, number>> = {
   throw: 60,
@@ -27,6 +32,10 @@ const THROTTLE_MS: Partial<Record<SfxName, number>> = {
   kill: 40,
   gem: 28,
   hover: 40,
+  stab: 70,
+  zap: 90,
+  thunder: 70,
+  block: 100,
 };
 
 class SfxEngine {
@@ -128,6 +137,26 @@ class SfxEngine {
         break;
       case 'heal':
         [660, 880, 1320].forEach((f, i) => this.tone(t + i * 0.05, f, f * 1.05, 0.12, 'sine', 0.07));
+        break;
+      case 'stab':
+        this.noiseBurst(t, 0.06, 0.08, 'highpass', 3000, 6000);
+        this.tone(t, 900, 1400, 0.05, 'triangle', 0.03);
+        break;
+      case 'zap':
+        this.noiseBurst(t, 0.25, 0.09, 'bandpass', 4000, 1200);
+        this.tone(t, 1200, 300, 0.22, 'sawtooth', 0.035);
+        break;
+      case 'thunder':
+        this.noiseBurst(t, 0.35, 0.14, 'lowpass', 2400, 120);
+        this.tone(t, 90, 40, 0.3, 'square', 0.05);
+        break;
+      case 'block':
+        this.tone(t, 1320, 990, 0.18, 'square', 0.05);
+        this.tone(t + 0.03, 1760, 1320, 0.2, 'triangle', 0.05);
+        break;
+      case 'ultimate':
+        [262, 392, 523, 784].forEach((f, i) => this.tone(t + i * 0.06, f, f * 1.5, 0.35, 'sawtooth', 0.05));
+        this.noiseBurst(t, 0.5, 0.08, 'bandpass', 600, 3000);
         break;
       case 'revive':
         [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(t + i * 0.08, f, f, 0.18, 'triangle', 0.07));

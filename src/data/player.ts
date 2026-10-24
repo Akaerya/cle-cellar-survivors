@@ -1,6 +1,6 @@
 import type { PlayerStats } from './types';
 
-/** Base stats for the monkey. Items modify these through flat or percentage changes. */
+/** Base stats for every character. Items modify these through flat or percentage changes. */
 export const BASE_STATS: PlayerStats = {
   maxHp: 100,
   moveSpeed: 160,
@@ -13,7 +13,5 @@ export const BASE_STATS: PlayerStats = {
   expMult: 1,
 };
 
-/** Collision circle radius of the monkey in px. */
+/** Collision circle radius of a character in px. */
 export const PLAYER_RADIUS = 6;
-
-export const STARTING_WEAPON = 'banana';
