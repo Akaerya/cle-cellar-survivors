@@ -104,7 +104,7 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 
 **An ultimate** goes in `data/ultimates.ts`. `kind: 'storm'` fires `count` projectiles from the caster every `interval` in a spiral turning `spin` degrees per second; `kind: 'pet'` summons a pet that follows the caster and fires at the closest enemy within `attack.stats.range`. `duration` and `cooldown` are in seconds. `attack` is a weapon definition for the projectile, so it shares the projectile pool, the co-op sync and the damage counting. The HUD greys out the `icon`, using an `_grey` copy that `textures.ts` builds for every `icon_ult_*` sprite.
 
-**A weapon** goes in `data/weapons.ts` (and in a character's `weapons` list). `tags` (`projectile`, `aoe`, `duration`) decide which modifications change it. `pickup` is an optional bonus applied at level 1, when the weapon is picked up. `stats.repeat` repeats each attack that many times, `repeatDelay` seconds apart. `effect` (damage, interval, duration) makes every hit leave a damage-over-time stack on the enemy; give such a weapon the `duration` tag. Behaviour comes from `targeting`:
+**A weapon** goes in `data/weapons.ts` (and in a character's `weapons` list). `tags` (`projectile`, `aoe`, `duration`) decide which modifications change it. `stats.repeat` repeats each attack that many times, `repeatDelay` seconds apart. `effect` (damage, interval, duration) makes every hit leave a damage-over-time stack on the enemy; give such a weapon the `duration` tag. Behaviour comes from `targeting`:
 
 - `nearest`: projectiles aimed at the closest enemy within `range`; holds fire when nothing is in range.
 - `facing`: projectiles in the facing direction, or a melee sweep of `arc` degrees and `size` reach when `speed` is 0.
@@ -169,9 +169,9 @@ Where the spec left room, these are the calls taken. All are easy to change.
 - **Howler Aura** "deals damage 40% faster" means 40% more pulses per second (time between pulses divided by 1.4).
 - **Ability Haste** multiplies cooldowns by 100 / (100 + haste) on top of the COOLDOWN stat. Ultimates ignore both.
 - **Banana range** is 340 px. With nothing in range it holds fire and shoots the moment a target appears.
-- **Coconut Orbit and Howler Aura** use `cooldown` as the time between hits on the same enemy (orbit) or between pulses (aura), so the Tome and Ability Haste speed them up too.
+- **Coconut Orbit and Howler Aura** use `cooldown` as the time between hits on the same enemy (orbit) or between pulses (aura), so Ability Haste speeds them up too.
 - **Tail Whip** "area" is its reach. It hits everything in a 150 degree arc in the facing direction.
-- **Heart** adds the extra max HP to current HP as well, so taking it never makes the bar look emptier.
+- **Maximum Health** adds the extra max HP to current HP as well, so taking it never makes the bar look emptier.
 - **Spawner** tops up at most a sixth of the target per 0.5 s tick, so a cleared screen refills as a stream rather than one ring.
 - **Stragglers**: an enemy more than 1.5 screen widths away horizontally, or 1.5 screen heights vertically, is moved back to the ring just outside the view, keeping its HP.
 - **Fallback card** when everything is maxed is called Banana Bunch and heals 30 HP.

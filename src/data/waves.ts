@@ -12,8 +12,8 @@ export const WAVES: WaveRow[] = [
   { from: 13, to: 15, target: 300, weights: { ghoul: 40, brute: 40, zombie: 20 } },
 ];
 
-/** Enemy HP grows this fraction of base HP per minute (1.0x at 0:00, 2.4x at 14:00). */
-export const HP_SCALE_PER_MINUTE = 0.1;
+/** Enemy HP grows this fraction of base HP per minute (1.0x at 0:00, 3.1x at 14:00). */
+export const HP_SCALE_PER_MINUTE = 0.15;
 
 /**
  * Enemies start slower and reach full speed over the first minutes:

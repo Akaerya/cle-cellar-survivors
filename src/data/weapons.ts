@@ -2,7 +2,7 @@ import type { WeaponDef } from './types';
 
 export const WEAPONS: WeaponDef[] = [
   // ---------------------------------------------------------------- rsncle, the banana monkey
-  // Every level of these adds a bonus, level 1 included: its bonus (`pickup`) applies when the weapon is picked up.
+  // Level 1 is the base stats; `levels` are the changes for levels 2 to 5.
   {
     id: 'banana',
     name: 'Banana Throw',
@@ -26,7 +26,6 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
     },
-    pickup: { text: '+1 banana.', add: { projectileCount: 1 } },
     levels: [
       { text: '+1 banana.', add: { projectileCount: 1 } },
       { text: '+1 banana.', add: { projectileCount: 1 } },
@@ -58,7 +57,6 @@ export const WEAPONS: WeaponDef[] = [
       repeat: 0,
     },
     repeatDelay: 0.2,
-    pickup: { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
     levels: [
       { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
       { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
@@ -89,7 +87,6 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
     },
-    pickup: { text: '+1 coconut.', add: { projectileCount: 1 } },
     levels: [
       { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
       { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
@@ -120,7 +117,6 @@ export const WEAPONS: WeaponDef[] = [
       boomerang: false,
     },
     // "Deals damage 40% faster": 40% more pulses per second, so the time between pulses is divided by 1.4.
-    pickup: { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
     levels: [
       { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
       { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },

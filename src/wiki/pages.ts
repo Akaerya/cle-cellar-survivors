@@ -95,7 +95,7 @@ const STAT_LABELS: Record<StatKey, string> = {
 };
 
 const STAT_NOTES: Record<StatKey, string> = {
-  maxHp: 'Fallen at 0. Items and powerups that raise it heal the same amount.',
+  maxHp: 'Fallen at 0. Maximum Health also heals the HP it adds.',
   moveSpeed: 'px per second.',
   regen: 'HP healed every second.',
   regenPercent: 'Share of max HP healed every second, on top of REGEN. Keeps working right after a hit.',
@@ -184,7 +184,7 @@ function weaponsPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Weapons fire on their own. Each character has its own ${MAX_WEAPONS} weapons (see CHARACTERS) and starts with one; level-up cards only offer your character's weapons. Each goes up to level ${MAX_LEVEL}; some get a bonus at level 1, when picked up. Values below are before your DAMAGE, COOLDOWN, ABILITY HASTE and AREA stats and before modifications.`,
+      text: `Weapons fire on their own. Each character has its own ${MAX_WEAPONS} weapons (see CHARACTERS) and starts with one; level-up cards only offer your character's weapons. Each goes up to level ${MAX_LEVEL}. Values below are before your DAMAGE, COOLDOWN, ABILITY HASTE and AREA stats and before modifications.`,
     },
     {
       t: 'p',
@@ -215,7 +215,6 @@ function weaponsPage(): Block[] {
         rows.push([`LV ${lv}`, ...cols.map((col) => col.get(s))]);
       }
       out.push({ t: 'table', cols: [{ label: '', w: 40 }, ...cols.map(({ label, w }) => ({ label, w }))], rows });
-      if (def.pickup) out.push({ t: 'p', text: `LV 1: ${def.pickup.text}` });
       def.levels.forEach((l, i) => out.push({ t: 'p', text: `LV ${i + 2}: ${l.text}` }));
     }
   }

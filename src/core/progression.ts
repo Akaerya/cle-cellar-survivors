@@ -16,10 +16,9 @@ function applyLevel(s: WeaponStats, lv: WeaponLevel): void {
   if (lv.set) Object.assign(s, lv.set);
 }
 
-/** Weapon stats at a given level (1..5): the base stats, the pickup bonus, then the per-level changes. */
+/** Weapon stats at a given level (1..5), built from the level-1 stats and the per-level changes. */
 export function weaponStatsAt(def: WeaponDef, level: number): WeaponStats {
   const s: WeaponStats = { ...def.stats };
-  if (def.pickup) applyLevel(s, def.pickup);
   const steps = Math.min(level - 1, def.levels.length);
   for (let i = 0; i < steps; i++) applyLevel(s, def.levels[i]);
   return s;

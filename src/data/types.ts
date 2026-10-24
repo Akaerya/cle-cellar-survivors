@@ -82,10 +82,8 @@ export interface WeaponDef {
   color?: number;
   /** Which modifications change this weapon. No tags: none do. */
   tags?: WeaponTag[];
-  /** Base stats. Level 1 is these plus `pickup`, when there is one. */
+  /** Level 1 stats. */
   stats: WeaponStats;
-  /** Changes applied at level 1, when the weapon is picked up (on top of `stats`). */
-  pickup?: WeaponLevel;
   /** Changes applied to reach level 2, 3, 4 and 5, in order. */
   levels: WeaponLevel[];
   /** Seconds between an attack and each of its repeats (`stats.repeat`). */
