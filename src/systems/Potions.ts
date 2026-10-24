@@ -32,7 +32,7 @@ export class Potions {
         continue;
       }
       p.setAlpha(p.blinking ? 0.3 : 1);
-      // Only a monkey that is hurt drinks it, so a full-HP teammate does not waste it.
+      // Only a player that is hurt drinks it, so a full-HP teammate does not waste it.
       for (const pl of players) {
         if (pl.hp >= pl.stats.maxHp) continue;
         if ((pl.x - p.x) ** 2 + (pl.y - p.y) ** 2 > R2) continue;

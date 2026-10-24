@@ -4,12 +4,12 @@ import { Gem } from '../entities/Gem';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 
-/** Speed a gem starts flying at, as a multiple of the target's move speed (always faster than the monkey). */
+/** Speed a gem starts flying at, as a multiple of the target's move speed (always faster than the player). */
 const START_SPEED_MULT = 1.6;
 const ACCEL = 900;
 const MAX_SPEED = 900;
 
-/** EXP gems: drop, merge past the cap, fly straight at a monkey once inside its pickup radius. */
+/** EXP gems: drop, merge past the cap, fly straight at a player once inside their pickup radius. */
 export class Gems {
   readonly group: Phaser.Physics.Arcade.Group;
   live = 0;
@@ -56,7 +56,7 @@ export class Gems {
         if (!g.target) continue;
         g.speed = g.target.stats.moveSpeed * START_SPEED_MULT;
       }
-      // Straight line at the monkey, re-aimed every frame and always faster than it: no orbiting.
+      // Straight line at the player, re-aimed every frame and always faster than it: no orbiting.
       const p = g.target;
       const dx = p.x - g.x;
       const dy = p.y - g.y;
@@ -70,7 +70,7 @@ export class Gems {
     }
   }
 
-  /** Nearest living monkey whose pickup radius contains the gem. */
+  /** Nearest living player whose pickup radius contains the gem. */
   private pickupBy(g: Gem, players: Player[]): Player | null {
     let best: Player | null = null;
     let bestD = Infinity;
@@ -93,6 +93,8 @@ export class Gems {
     g.target = null;
     this.live--;
     this.game.playSfx('gem');
-    this.game.addExp(value * p.stats.expMult);
+    const exp = value * p.stats.expMult;
+    p.runStats.exp += exp;
+    this.game.addExp(exp);
   }
 }

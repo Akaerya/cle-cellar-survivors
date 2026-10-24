@@ -46,7 +46,7 @@ export class WikiScene extends Phaser.Scene {
     frame.lineBetween(0, BOTTOM + 2.5, VIEW_W, BOTTOM + 2.5);
     this.bar = this.add.graphics().setDepth(3);
 
-    const tw = 78;
+    const tw = 72;
     const gap = 4;
     const x0 = Math.round((VIEW_W - (WIKI_PAGES.length * (tw + gap) - gap)) / 2);
     this.tabs = WIKI_PAGES.map((p, i) => new Button(this, x0 + i * (tw + gap), 6, tw, 17, p.tab, () => this.show(i)).setDepth(3));

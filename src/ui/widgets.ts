@@ -115,6 +115,8 @@ export class Button {
 /** Keyboard navigation over a list of buttons (arrows/WASD + Enter/Space). */
 export class Menu {
   index = 0;
+  /** Off while something else owns the keyboard (e.g. typing a name). */
+  enabled = true;
 
   constructor(
     scene: Phaser.Scene,
@@ -130,10 +132,10 @@ export class Menu {
     });
     const back = horizontal ? ['LEFT', 'A'] : ['UP', 'W'];
     const fwd = horizontal ? ['RIGHT', 'D'] : ['DOWN', 'S'];
-    for (const k of back) onKey(scene, `keydown-${k}`, () => this.move(-1));
-    for (const k of fwd) onKey(scene, `keydown-${k}`, () => this.move(1));
-    onKey(scene, 'keydown-ENTER', () => this.buttons[this.index]?.press());
-    onKey(scene, 'keydown-SPACE', () => this.buttons[this.index]?.press());
+    for (const k of back) onKey(scene, `keydown-${k}`, () => this.enabled && this.move(-1));
+    for (const k of fwd) onKey(scene, `keydown-${k}`, () => this.enabled && this.move(1));
+    onKey(scene, 'keydown-ENTER', () => this.enabled && this.buttons[this.index]?.press());
+    onKey(scene, 'keydown-SPACE', () => this.enabled && this.buttons[this.index]?.press());
     this.select(0, false);
   }
 

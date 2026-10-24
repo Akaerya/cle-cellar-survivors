@@ -1,7 +1,9 @@
 import Peer, { type DataConnection } from 'peerjs';
 import Phaser from 'phaser';
 import { MAX_PLAYERS } from '../constants';
-import type { ClientMsg, HostMsg } from './protocol';
+import { sanitizeName, type Profile } from '../core/profile';
+import { characterDef } from '../data';
+import type { ClientMsg, HostMsg, Profiles } from './protocol';
 
 /**
  * Co-op over WebRTC. The host's browser runs the whole simulation; joiners send their position
@@ -9,7 +11,7 @@ import type { ClientMsg, HostMsg } from './protocol';
  * to each other (the invite code is the host's peer id); game traffic goes peer to peer.
  */
 
-const ID_PREFIX = 'banana-nocturne-coop-';
+const ID_PREFIX = 'cle-cellar-survivors-coop-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const CODE_LENGTH = 5;
 /** Stop queueing snapshots for a peer that has this much unsent data (slow link). */
@@ -78,6 +80,8 @@ export class NetSession {
   mySlot = 0;
   /** Slots in the lobby, host first. */
   slots: number[] = [0];
+  /** Name and character of everyone in the lobby, by slot (the host's copy is the one that counts). */
+  profiles: Profiles = {};
   /** True once the host has started a run (late joiners are turned away). */
   inGame = false;
   private peer: Peer | null = null;
@@ -96,8 +100,9 @@ export class NetSession {
   // ---------------------------------------------------------------- setup
 
   /** Registers a fresh invite code with the broker. Resolves once joiners can connect. */
-  static host(): Promise<NetSession> {
+  static host(profile: Profile): Promise<NetSession> {
     const s = new NetSession('host');
+    s.profiles = { 0: cleanProfile(profile) };
     return s.openHost(0);
   }
 
@@ -130,7 +135,7 @@ export class NetSession {
   }
 
   /** Connects to the host behind `code`. Resolves once the host has given us a slot. */
-  static join(code: string): Promise<NetSession> {
+  static join(code: string, profile: Profile): Promise<NetSession> {
     const s = new NetSession('client');
     s.code = code;
     return new Promise((resolve, reject) => {
@@ -165,6 +170,8 @@ export class NetSession {
               clearTimeout(timer);
               s.mySlot = msg.you;
               s.slots = msg.slots;
+              s.profiles = msg.profiles ?? {};
+              s.setMyProfile(profile);
               resolve(s);
             } else if (msg.t === 'reject') {
               clearTimeout(timer);
@@ -172,7 +179,10 @@ export class NetSession {
             }
             return;
           }
-          if (msg.t === 'lobby') s.slots = msg.slots;
+          if (msg.t === 'lobby') {
+            s.slots = msg.slots;
+            s.profiles = msg.profiles ?? {};
+          }
           s.events.emit(NET_EV.hostMsg, msg);
           if (msg.t === 'lobby') s.events.emit(NET_EV.lobby, s.slots);
         });
@@ -217,20 +227,25 @@ export class NetSession {
       left = true;
       this.conns.delete(slot);
       this.slots = this.slots.filter((s) => s !== slot);
+      delete this.profiles[slot];
       if (this.closed) return;
       this.events.emit(NET_EV.peerLeft, slot);
-      this.broadcast({ t: 'lobby', slots: this.slots });
-      this.events.emit(NET_EV.lobby, this.slots);
+      this.lobbyChanged();
     };
     conn.on('open', () => {
       if (left) return;
-      this.sendTo(slot, { t: 'welcome', you: slot, slots: this.slots });
-      this.broadcast({ t: 'lobby', slots: this.slots });
-      this.events.emit(NET_EV.lobby, this.slots);
+      this.sendTo(slot, { t: 'welcome', you: slot, slots: this.slots, profiles: this.profiles });
+      this.lobbyChanged();
     });
     conn.on('data', (data) => {
       if (typeof data !== 'string') return;
-      this.events.emit(NET_EV.clientMsg, slot, JSON.parse(data) as ClientMsg);
+      const msg = JSON.parse(data) as ClientMsg;
+      if (msg.t === 'profile') {
+        this.profiles[slot] = cleanProfile(msg);
+        this.lobbyChanged();
+        return;
+      }
+      this.events.emit(NET_EV.clientMsg, slot, msg);
     });
     conn.on('close', leave);
     conn.on('error', leave);
@@ -241,6 +256,22 @@ export class NetSession {
         conn.close();
       }
     }, 20000);
+  }
+
+  /** Host: tells everyone (and this browser) who is in the lobby now. */
+  private lobbyChanged(): void {
+    this.broadcast({ t: 'lobby', slots: this.slots, profiles: this.profiles });
+    this.events.emit(NET_EV.lobby, this.slots);
+  }
+
+  /** This player's name or character changed. */
+  setMyProfile(p: Profile): void {
+    this.profiles[this.mySlot] = cleanProfile(p);
+    if (this.isHost) this.lobbyChanged();
+    else {
+      this.sendHost({ t: 'profile', ...this.profiles[this.mySlot] });
+      this.events.emit(NET_EV.lobby, this.slots);
+    }
   }
 
   // ---------------------------------------------------------------- sending
@@ -291,6 +322,11 @@ export class NetSession {
     setTimeout(() => peer?.destroy(), 300);
     if (current === this) current = null;
   }
+}
+
+/** Names are re-sanitised and unknown characters replaced, whoever sent them. */
+function cleanProfile(p: { name?: unknown; character?: unknown }): Profile {
+  return { name: sanitizeName(p.name), character: characterDef(typeof p.character === 'string' ? p.character : undefined).id };
 }
 
 /** The session that outlives scene changes (lobby -> run -> game over -> next run). */

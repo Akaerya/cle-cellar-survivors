@@ -23,6 +23,7 @@ export const DEBUG_EV = {
   addExp: 'debug-add-exp',
   skipMinute: 'debug-skip-minute',
   god: 'debug-god',
+  ultReady: 'debug-ult-ready',
 } as const;
 
 export interface BuildEntry {
@@ -33,16 +34,63 @@ export interface BuildEntry {
   damage?: number;
 }
 
+/** Per-player numbers collected during a run (host side) for the party screen. */
+export interface PlayerRunStats {
+  /** Damage dealt by weapons and the ultimate (overkill not counted). */
+  damage: number;
+  kills: number;
+  /** HP lost to enemies (after armor and shields). */
+  taken: number;
+  /** HP restored by potions and heal cards. */
+  healed: number;
+  deaths: number;
+  /** Teammates this player helped revive. */
+  revives: number;
+  /** EXP picked up (after EXP gain). */
+  exp: number;
+  /** Hits a shield blocked completely. */
+  blocks: number;
+  ultCasts: number;
+}
+
+export function emptyRunStats(): PlayerRunStats {
+  return { damage: 0, kills: 0, taken: 0, healed: 0, deaths: 0, revives: 0, exp: 0, blocks: 0, ultCasts: 0 };
+}
+
+/** One weapon (or the ultimate) on the party screen. */
+export interface WeaponReport extends BuildEntry {
+  damage: number;
+  kills: number;
+  /** Damage per second since the weapon was picked up. */
+  dps: number;
+  ultimate?: boolean;
+}
+
+export interface PartyMember {
+  slot: number;
+  name: string;
+  character: string;
+  /** Left the game before the end. */
+  left: boolean;
+  stats: PlayerRunStats;
+  /** Damage per second over the whole run. */
+  dps: number;
+  weapons: WeaponReport[];
+  items: BuildEntry[];
+}
+
 export interface RunSummary {
   victory: boolean;
   time: number;
   level: number;
   kills: number;
-  weapons: BuildEntry[];
-  items: BuildEntry[];
+  /** Every player in the run, by slot. */
+  party: PartyMember[];
+  /** The slot of the player this summary is shown to. */
+  mySlot: number;
   seed: string;
   /** Co-op: how many players started the run. */
   coopPlayers?: number;
-  /** Co-op: how many times a monkey fell. */
+  /** Co-op: how many times a player fell. */
   teamDeaths?: number;
 }

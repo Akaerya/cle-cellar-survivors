@@ -37,7 +37,7 @@ export class Fx {
     this.number(x, y, String(Math.max(1, Math.round(value))), big ? 0xffd24a : 0xffffff);
   }
 
-  /** Green "+N" over a monkey that healed. */
+  /** Green "+N" over a player that healed. */
   healNumber(x: number, y: number, value: number): void {
     this.relay?.(['g', Math.round(x), Math.round(y), Math.round(value)]);
     this.number(x, y, `+${Math.max(1, Math.round(value))}`, 0x7be38a);
@@ -112,6 +112,42 @@ export class Fx {
 
   sparkle(x: number, y: number, color: number): void {
     this.emitter(color).explode(3, x, y);
+  }
+
+  /** A lightning bolt from the sky onto (x, y) with a flash of `radius` px. */
+  lightning(x: number, y: number, radius: number, color: number): void {
+    this.relay?.(['l', Math.round(x), Math.round(y), Math.round(radius), color]);
+    const g = this.scene.add.graphics().setDepth(DEPTH.fx);
+    // Bolt path: zig-zag down from above the screen point (visual only, so Math.random is fine).
+    const pts: [number, number][] = [];
+    const top = y - 120;
+    const segs = 7;
+    for (let i = 0; i <= segs; i++) {
+      const k = i / segs;
+      const off = i === segs ? 0 : (Math.random() - 0.5) * 16;
+      pts.push([x + off, top + (y - top) * k]);
+    }
+    const state = { a: 1 };
+    const draw = () => {
+      g.clear();
+      g.fillStyle(color, 0.3 * state.a);
+      g.fillCircle(x, y, radius);
+      g.lineStyle(4, color, 0.6 * state.a);
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (const [px, py] of pts) g.lineTo(px, py);
+      g.strokePath();
+      g.lineStyle(1, 0xffffff, state.a);
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (const [px, py] of pts) g.lineTo(px, py);
+      g.strokePath();
+      g.lineStyle(1, 0xffffff, 0.7 * state.a);
+      g.strokeCircle(x, y, radius * (1.2 - 0.2 * state.a));
+    };
+    draw();
+    this.scene.tweens.add({ targets: state, a: 0, duration: 260, ease: 'Quad.easeIn', onUpdate: draw, onComplete: () => g.destroy() });
+    this.emitter(color).explode(5, x, y);
   }
 
   /** Expanding ring, e.g. on level up. */

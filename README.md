@@ -1,6 +1,17 @@
-# Banana Nocturne
+# Cle Cellar Survivors
 
-A survivor-like for desktop browsers, built to the MVP spec. A monkey runs around a walled graveyard throwing bananas automatically while waves of bats, zombies, ghouls and brutes close in. Survive until 15:00 and dawn breaks.
+A survivor-like for desktop browsers where you play as members of the Cle Cellar Discord server. Pick a character, run around a walled graveyard while your weapons fire on their own, and survive the waves of bats, zombies, ghouls and brutes until 15:00, when dawn breaks. Play solo or with up to 3 friends online.
+
+## Characters
+
+| Character | Kit | Ultimate (Q) |
+| --- | --- | --- |
+| **rnscle**, the banana monkey | Banana Throw (start), Tail Whip, Coconut Orbit, Howler Aura | **Banana Storm**: a spiral of bananas around you for 15 s, 150 s cooldown |
+| **yookers**, the storm knight | Stormblade (start; a sword stab that reaches further with levels), Thunder Breath (a lightning cone on a cooldown), Thunderstrike (bolts land at random around you; more bolts and more often with levels), Storm Shield (blocks a hit every 30 s, absorbs 10-25% of the rest) | **Storm Drake**: a small dragon follows you and spits lightning orbs at enemies for 25 s, 150 s cooldown |
+
+Each character has its own four weapons (level-up cards only offer your character's); items and base stats are shared. The HUD shows your ultimate under your build: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. In co-op every teammate's ultimate is shown the same way next to their name and HP.
+
+After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing, shield blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate) with its level, damage, DPS, kills and share of their damage.
 
 Phaser 4.2.1, TypeScript, Vite, Arcade Physics. No backend, no asset files: all pixel art, fonts and sounds are generated at boot from data in `src/art`.
 
@@ -29,30 +40,30 @@ URL options:
 | Param | Effect |
 | --- | --- |
 | `?seed=1234` | Fixed RNG seed. The same seed replays the same spawns, card offers and arena layout. The seed is shown on the end screen and in the debug overlay. |
-| `?play` | Skip the title screen. |
+| `?play` | Skip the title screen (plays the last character you picked). |
 | `?canvas` | Force Phaser's canvas renderer (deprecated in v4; only for machines without WebGL). |
 
 ## Co-op (up to 4 players)
 
-Title screen > **HOST CO-OP** gives a 5-character invite code and a **COPY LINK** button (`?join=CODE`). Friends press **JOIN CO-OP** and type or paste the code, or just open the link. The host presses **START** when everyone is in.
+Title screen > **HOST CO-OP** gives a 5-character invite code and a **COPY LINK** button (`?join=CODE`). Friends press **JOIN CO-OP** and type or paste the code, or just open the link. In the lobby everyone picks a character (**CHARACTER**) and can set a display name (**NAME**, up to 10 characters; without one you are P1 to P4). Names show over each character, in the teammate list and on the party screen. Name and character are remembered in `localStorage`. The host presses **START** when everyone is in.
 
 - **Networking**: peer to peer over WebRTC with [PeerJS](https://peerjs.com). PeerJS's free public broker only introduces the browsers (the invite code is the host's peer id); game traffic goes directly between them. No server of our own is needed, so it still deploys to GitHub Pages.
-- **Host-authoritative**: the host's browser simulates enemies, weapons, damage and gems and sends each joiner a binary snapshot 20 times a second (only what is near their screen), plus effects and sounds. Joiners move their own monkey locally and report its position, so movement has no input lag.
-- **Shared EXP**: one EXP bar and level for the team. Each level gives every living monkey its own card pick; the run is held until everyone has chosen. A gem goes to whichever monkey's pickup radius it enters, using that monkey's EXP Gain.
-- **Enemy HP** is multiplied by `1 + 0.75 x (players - 1)` (`HP_SCALE_PER_EXTRA_PLAYER` in `data/waves.ts`). Enemies chase the nearest living monkey and spawn around a random one.
-- A fallen monkey spectates a teammate. Standing on the body for 5 seconds revives it at 80% HP; the team's deaths are counted for the run and each later death revives with less (80, 75, 65, 50, 30%, floor 10%; `data/coop.ts`). Fallen monkeys keep their level-up picks for when they are back. The run ends when all are down. Players who disconnect are removed; if the host leaves, the run ends for everyone.
+- **Host-authoritative**: the host's browser simulates enemies, weapons, damage and gems and sends each joiner a binary snapshot 20 times a second (only what is near their screen), plus effects and sounds. Joiners move their own character locally and report its position, so movement has no input lag. Pressing Q asks the host to cast; ultimate timers come back in the snapshots.
+- **Shared EXP**: one EXP bar and level for the team. Each level gives every player their own card pick; the run is held until everyone has chosen. A gem goes to whichever player's pickup radius it enters, using that player's EXP Gain.
+- **Enemy HP** is multiplied by `1 + 0.75 x (players - 1)` (`HP_SCALE_PER_EXTRA_PLAYER` in `data/waves.ts`). Enemies chase the nearest living player and spawn around a random one.
+- A fallen player spectates a teammate. Standing on the body for 5 seconds revives them at 80% HP; the team's deaths are counted for the run and each later death revives with less (80, 75, 65, 50, 30%, floor 10%; `data/coop.ts`). Fallen players keep their level-up picks for when they are back. The run ends when all are down. Players who disconnect are removed; if the host leaves, the run ends for everyone.
 - The co-op menu (Esc) does not pause the run, and the game does not auto-pause on blur. Browsers stop animating hidden tabs, so the host should keep the game tab visible.
 - After a run the host can play again with the same group or go back to the lobby so others can join.
 
-Code lives in `src/net/` (session, message and snapshot format, the joiner-side renderer) and `scenes/LobbyScene.ts`.
+Code lives in `src/net/` (session, lobby profiles, message and snapshot format, the joiner-side renderer) and `scenes/LobbyScene.ts`.
 
 ## Wiki
 
-Title screen > **WIKI** (also in the pause menu) lists every weapon, item, monster, wave, drop and co-op rule with its numbers, read straight from `src/data`. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
+Title screen > **WIKI** (also in the pause menu) lists every character, ultimate, weapon, item, monster, wave, drop and co-op rule with its numbers, read straight from `src/data`. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
 
 ## Controls
 
-WASD or arrow keys to move. Weapons fire on their own. Esc or P pauses (the game also pauses when the window loses focus). M mutes. F3 opens the debug overlay. Level-up cards: 1, 2, 3, arrows and Enter, or click.
+WASD or arrow keys to move. Weapons fire on their own. Q casts your ultimate. Esc or P pauses (the game also pauses when the window loses focus). M mutes. F3 opens the debug overlay. Level-up cards: 1, 2, 3, arrows and Enter, or click.
 
 ## Layout
 
@@ -61,35 +72,44 @@ src/
   main.ts              game config: 640x360, pixelArt, FIT scaling, Arcade at a fixed 60 Hz
   constants.ts         engine constants (arena size, caps, depths, colours, scene keys)
   data/                everything a designer tunes
-    weapons.ts items.ts enemies.ts waves.ts drops.ts coop.ts player.ts types.ts
+    characters.ts ultimates.ts weapons.ts items.ts enemies.ts waves.ts drops.ts coop.ts player.ts types.ts
   wiki/pages.ts        in-game wiki pages, built from data/
   core/
     progression.ts     level curve, weapon stats per level, player stat calculation
     rng.ts             seeded RNG (one per run)
     spatialGrid.ts     64 px grid for enemy push-apart and area hit queries
     sfx.ts             placeholder sound effects synthesised with WebAudio
-    events.ts          event names between scenes
+    events.ts          event names between scenes, run summary and per-player stats
+    profile.ts         display name and character, kept in localStorage
   art/
     spriteData.ts      every sprite and tile as a character grid + palette
     font.ts            hand-drawn pixel fonts
     textures.ts        builds the texture atlas, tileset, bitmap fonts and animations
-  entities/            Player, Enemy, Projectile, Gem (pooled)
-  systems/             Arena, Enemies, Weapons, Gems, Spawner, Fx
-  scenes/              Boot, Title, Game, UI (HUD), LevelUp, Pause, GameOver
+  entities/            Player, Enemy, Projectile, Gem, Potion (pooled)
+  systems/             Arena, Enemies, Weapons, Ultimate, Gems, Potions, Spawner, Fx
+  scenes/              Boot, Title, CharacterSelect, Lobby, Game, UI (HUD), LevelUp, Pause, GameOver (party screen), Wiki
   ui/widgets.ts        bitmap text, panels, buttons, keyboard menus
 ```
 
 ## Adding content
 
-Every weapon, item, enemy and wave is a data entry. Engine code reads them generically.
+Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine code reads them generically.
 
-**A weapon** goes in `data/weapons.ts`. Behaviour comes from `targeting`:
+**A character** goes in `data/characters.ts`: a name, art (`anim` prefix with `-idle`, `-walk` and `-hurt` animations in `art/textures.ts`), a starting weapon, its weapon kit (the ids level-up cards may offer) and an ultimate id.
+
+**An ultimate** goes in `data/ultimates.ts`. `kind: 'storm'` fires `count` projectiles from the caster every `interval` in a spiral turning `spin` degrees per second; `kind: 'pet'` summons a pet that follows the caster and fires at the closest enemy within `attack.stats.range`. `duration` and `cooldown` are in seconds. `attack` is a weapon definition for the projectile, so it shares the projectile pool, the co-op sync and the damage counting. The HUD greys out the `icon`, using an `_grey` copy that `textures.ts` builds for every `icon_ult_*` sprite.
+
+**A weapon** goes in `data/weapons.ts` (and in a character's `weapons` list). Behaviour comes from `targeting`:
 
 - `nearest`: projectiles aimed at the closest enemy within `range`; holds fire when nothing is in range.
-- `facing`: projectiles in the monkey's facing direction, or a melee sweep of `arc` degrees and `size` reach when `speed` is 0.
+- `facing`: projectiles in the facing direction, or a melee sweep of `arc` degrees and `size` reach when `speed` is 0.
 - `random`: projectiles in a random direction.
-- `orbit`: `projectileCount` objects circle the monkey at `range`, hitting each enemy at most once per `cooldown`.
+- `orbit`: `projectileCount` objects circle the owner at `range`, hitting each enemy at most once per `cooldown`.
 - `aura`: everything within `size` takes damage every `cooldown`.
+- `stab`: a blade `size` px long and `arc` px wide thrust at the closest enemy.
+- `breath`: a cone of `arc` degrees and `size` reach sprayed at the closest enemy every `cooldown`.
+- `strike`: `projectileCount` bolts every `cooldown`, each on a random enemy within `range` (or a random spot), hitting everything within `size`.
+- `shield`: blocks one hit, then recharges for `cooldown`; `reduction` is the fraction of other hits it absorbs.
 
 `levels` holds the changes for levels 2 to 5, each with card text and `add`, `mul` or `set` stat changes. Example, a bone that flies in a random direction:
 
@@ -114,7 +134,7 @@ Every weapon, item, enemy and wave is a data entry. Engine code reads them gener
 
 **Waves** are rows keyed by minute (`from` inclusive, `to` exclusive) with a target count and spawn weights. HP scales by `HP_SCALE_PER_MINUTE`; speed starts at `SPEED_SCALE_START` (70%) and reaches full speed by 4:00.
 
-**Drops**: every enemy has a `potionChance` for a health potion that heals 30% of max HP (`data/drops.ts`). A monkey at full HP leaves potions on the ground. Timed events (the 5:00 and 10:00 bat swarms) are in `WAVE_EVENTS`.
+**Drops**: every enemy has a `potionChance` for a health potion that heals 30% of max HP (`data/drops.ts`). A player at full HP leaves potions on the ground. Timed events (the 5:00 and 10:00 bat swarms) are in `WAVE_EVENTS`.
 
 ## Art
 
@@ -124,12 +144,14 @@ The spec names 0x72's CC0 [16x16 DungeonTileset II](https://0x72.itch.io/dungeon
 
 ## Debug overlay (F3)
 
-FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, and toggle god mode.
+FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, toggle god mode, and make every ultimate ready.
 
 ## Decisions made while building
 
 Where the spec left room, these are the calls taken. All are easy to change.
 
+- **Ultimates** start ready, and their cooldown counts from the cast and ignores the Cooldown stat (so the HUD number is exact). Falling ends a running ultimate early.
+- **Character weapon kits**: each character has exactly four weapons, which fills the four weapon slots; items are shared by everyone.
 - **Pierce** counts enemies hit before the projectile vanishes, so the starting banana hits one enemy. At level 5 the boomerang turns around when its outbound pierce runs out or after 0.9 s, whichever comes first, and gets a fresh pierce for the return trip.
 - **Banana range** is 340 px. With nothing in range it holds fire and shoots the moment a target appears.
 - **Coconut Orbit and Howler Aura** use `cooldown` as the time between hits on the same enemy (orbit) or between pulses (aura), so the Tome speeds them up too.

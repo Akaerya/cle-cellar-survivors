@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, DEPTH } from '../constants';
-import { ENEMIES, WEAPONS } from '../data';
+import { ATTACK_DEFS, ENEMIES } from '../data';
 import { EF, type SnapEntity } from './protocol';
 
 export const SNAPSHOT_HZ = 20;
@@ -151,7 +151,7 @@ export class Mirror {
       (o, e, fresh) => {
         if (fresh || o.kind !== e.kind) {
           o.kind = e.kind;
-          const anim = WEAPONS[e.kind]?.projectileAnim;
+          const anim = ATTACK_DEFS[e.kind]?.projectileAnim;
           if (anim) o.s.play(anim, true);
           o.s.setDepth(DEPTH.projectiles).clearTint().setAlpha(1);
         }

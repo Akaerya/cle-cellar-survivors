@@ -41,7 +41,10 @@ function rgba(ch: string): RGBA | null {
   return c;
 }
 
-function paint(img: ImageData, rows: string[], ox: number, oy: number): void {
+/** Sprites that also get a greyed-out copy named `${name}_grey` (ultimate icons on cooldown). */
+const GREY_PREFIX = 'icon_ult_';
+
+function paint(img: ImageData, rows: string[], ox: number, oy: number, grey = false): void {
   for (let y = 0; y < rows.length; y++) {
     const row = rows[y];
     for (let x = 0; x < row.length; x++) {
@@ -51,9 +54,14 @@ function paint(img: ImageData, rows: string[], ox: number, oy: number): void {
       const py = oy + y;
       if (px < 0 || py < 0 || px >= img.width || py >= img.height) continue;
       const i = (py * img.width + px) * 4;
-      img.data[i] = c[0];
-      img.data[i + 1] = c[1];
-      img.data[i + 2] = c[2];
+      if (grey) {
+        const l = Math.round((c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11) * 0.55);
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = l;
+      } else {
+        img.data[i] = c[0];
+        img.data[i + 1] = c[1];
+        img.data[i + 2] = c[2];
+      }
       img.data[i + 3] = c[3];
     }
   }
@@ -70,14 +78,11 @@ function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingCo
 const nextPow2 = (n: number) => Math.pow(2, Math.ceil(Math.log2(Math.max(1, n))));
 
 function buildAtlas(scene: Phaser.Scene): void {
-  const entries = Object.entries(SPRITES).map(([name, rows]) => ({
-    name,
-    rows,
-    w: rows[0].length,
-    h: rows.length,
-    x: 0,
-    y: 0,
-  }));
+  const sprites = Object.entries(SPRITES).map(([name, rows]) => ({ name, rows, grey: false }));
+  for (const [name, rows] of Object.entries(SPRITES)) {
+    if (name.startsWith(GREY_PREFIX)) sprites.push({ name: `${name}_grey`, rows, grey: true });
+  }
+  const entries = sprites.map((s) => ({ ...s, w: s.rows[0].length, h: s.rows.length, x: 0, y: 0 }));
   entries.sort((a, b) => b.h - a.h || b.w - a.w);
   const W = 256;
   let x = 1;
@@ -97,7 +102,7 @@ function buildAtlas(scene: Phaser.Scene): void {
   const H = nextPow2(y + shelf + 2);
   const [canvas, ctx] = makeCanvas(W, H);
   const img = ctx.createImageData(W, H);
-  for (const e of entries) paint(img, e.rows, e.x, e.y);
+  for (const e of entries) paint(img, e.rows, e.x, e.y, e.grey);
   ctx.putImageData(img, 0, 0);
   const tex = scene.textures.addCanvas(ATLAS, canvas)!;
   for (const e of entries) tex.add(e.name, 0, e.x, e.y, e.w, e.h);
@@ -233,6 +238,11 @@ function buildAnimations(scene: Phaser.Scene): void {
   a.create({ key: 'monkey-idle', frames: frames('monkey_idle', 4), frameRate: 4, repeat: -1 });
   a.create({ key: 'monkey-walk', frames: frames('monkey_walk', 4), frameRate: 10, repeat: -1 });
   a.create({ key: 'monkey-hurt', frames: frames('monkey_hurt', 2), frameRate: 10, repeat: 0 });
+  a.create({ key: 'knight-idle', frames: frames('knight_idle', 4), frameRate: 4, repeat: -1 });
+  a.create({ key: 'knight-walk', frames: frames('knight_walk', 4), frameRate: 10, repeat: -1 });
+  a.create({ key: 'knight-hurt', frames: frames('knight_hurt', 2), frameRate: 10, repeat: 0 });
+  a.create({ key: 'drake-fly', frames: frames('drake', 2), frameRate: 8, repeat: -1 });
+  a.create({ key: 'orb-pulse', frames: frames('orb', 2), frameRate: 12, repeat: -1 });
   a.create({ key: 'bat-fly', frames: frames('bat', 4), frameRate: 12, repeat: -1 });
   a.create({ key: 'zombie-walk', frames: frames('zombie', 4), frameRate: 6, repeat: -1 });
   a.create({ key: 'ghoul-run', frames: frames('ghoul', 4), frameRate: 12, repeat: -1 });

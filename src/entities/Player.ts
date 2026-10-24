@@ -1,16 +1,23 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { COLOR, DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
+import { emptyRunStats, type PlayerRunStats } from '../core/events';
 import type { OwnedItem } from '../core/progression';
 import { BASE_STATS, PLAYER_RADIUS } from '../data/player';
-import type { PlayerStats } from '../data/types';
+import type { CharacterDef, PlayerStats } from '../data/types';
 import { text } from '../ui/widgets';
+import type { Ultimate } from '../systems/Ultimate';
 import type { Weapons } from '../systems/Weapons';
 
-/** The monkey. The player only steers it; everything else is automatic. */
+/** A playable character. The player only steers it (and casts the ultimate); weapons fire on their own. */
 export class Player extends Phaser.Physics.Arcade.Sprite {
   /** 0 for solo and the host, 1..3 for joiners. */
   readonly slot: number;
+  readonly character: CharacterDef;
+  /** Display name (already falls back to P1..P4). */
+  readonly displayName: string;
+  /** Numbers for the party screen (counted on the host). */
+  readonly runStats: PlayerRunStats = emptyRunStats();
   stats: PlayerStats = { ...BASE_STATS };
   hp = BASE_STATS.maxHp;
   /** Last non-zero movement direction, normalised. Some weapons aim with it. */
@@ -22,25 +29,28 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   hurtAnim = 0;
   god = false;
   dead = false;
-  /** Co-op: the player disconnected. Their monkey is hidden and ignored. */
+  /** Co-op: the player disconnected. Their character is hidden and ignored. */
   gone = false;
   weapons!: Weapons;
+  ultimate!: Ultimate;
   items: OwnedItem[] = [];
-  /** Level-up picks this player still has to make (fallen monkeys keep collecting them). */
+  /** Level-up picks this player still has to make (fallen players keep collecting them). */
   pendingLevelUps = 0;
   /** Co-op, while fallen: revive progress 0..1, and the HP fraction a revive restores. */
   revive = 0;
   reviveHp = 0;
-  /** Co-op: where the network says this monkey is (remote players are eased toward it). */
+  /** Co-op: where the network says this character is (remote players are eased toward it). */
   netX = 0;
   netY = 0;
   private tag: Phaser.GameObjects.BitmapText | null = null;
   private reviveTag: Phaser.GameObjects.BitmapText | null = null;
   private readonly baseTint: number;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, slot = 0, coop = false) {
-    super(scene, x, y, ATLAS, 'monkey_idle_0');
+  constructor(scene: Phaser.Scene, x: number, y: number, slot: number, coop: boolean, character: CharacterDef, name: string) {
+    super(scene, x, y, ATLAS, character.firstFrame);
     this.slot = slot;
+    this.character = character;
+    this.displayName = name;
     this.baseTint = coop ? PLAYER_TINTS[slot] : 0xffffff;
     this.netX = x;
     this.netY = y;
@@ -51,11 +61,15 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     body.setCircle(PLAYER_RADIUS, 8 - PLAYER_RADIUS, 10 - PLAYER_RADIUS);
     this.setCollideWorldBounds(true);
     this.setTint(this.baseTint);
-    this.play('monkey-idle');
+    this.play(this.anim('idle'));
     if (coop) {
-      this.tag = text(scene, x, y - 14, `P${slot + 1}`, { origin: [0.5, 1], color: PLAYER_COLORS[slot], depth: DEPTH.hpBar });
+      this.tag = text(scene, x, y - 14, name, { origin: [0.5, 1], color: PLAYER_COLORS[slot], depth: DEPTH.hpBar });
       this.reviveTag = text(scene, x, y + 16, '', { origin: [0.5, 0], color: COLOR.good, depth: DEPTH.hpBar }).setVisible(false);
     }
+  }
+
+  private anim(state: 'idle' | 'walk' | 'hurt'): string {
+    return `${this.character.anim}-${state}`;
   }
 
   get bodyRadius(): number {
@@ -78,13 +92,17 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private spinTime = 0;
   private lookLeft = false;
 
-  /** Brief turn-around flip when the tail lashes. */
+  /** Brief turn-around flip (the tail lash). */
   spin(): void {
     this.spinTime = 0.12;
   }
 
-  heal(amount: number): void {
+  /** Returns the HP actually restored. */
+  heal(amount: number): number {
+    const before = this.hp;
     this.hp = Math.min(this.stats.maxHp, this.hp + amount);
+    this.runStats.healed += this.hp - before;
+    return this.hp - before;
   }
 
   /** ix, iy: raw input in -1..1. Diagonals are normalised so they are not faster. */
@@ -110,7 +128,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   /**
-   * Co-op: a monkey moved by someone else's input. Eases toward the last reported position
+   * Co-op: a character moved by someone else's input. Eases toward the last reported position
    * so 20-30 updates a second still look smooth.
    */
   follow(dt: number): void {
@@ -124,9 +142,9 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.animate(dt);
   }
 
-  /** Server-side upkeep the host runs for every monkey. */
+  /** Server-side upkeep the host runs for every character. */
   regenerate(dt: number): void {
-    if (this.alive && this.stats.regen > 0 && this.hp < this.stats.maxHp) this.heal(this.stats.regen * dt);
+    if (this.alive && this.stats.regen > 0 && this.hp < this.stats.maxHp) this.hp = Math.min(this.stats.maxHp, this.hp + this.stats.regen * dt);
   }
 
   /** Facing flip, hurt flash, walk/idle animation, depth and name tag. */
@@ -152,7 +170,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       if (this.hurtAnim > 0) {
         this.hurtAnim -= dt;
       } else {
-        const key = this.moving ? 'monkey-walk' : 'monkey-idle';
+        const key = this.anim(this.moving ? 'walk' : 'idle');
         if (this.anims.currentAnim?.key !== key) this.play(key, true);
       }
     }
@@ -174,19 +192,31 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
-  /** Returns the damage actually taken (0 while invulnerable). */
+  /**
+   * Returns the damage actually taken: 0 while invulnerable or when a charged shield blocks the hit.
+   * Armor is subtracted first, then shields absorb their share; a hit always deals at least 1.
+   */
   takeHit(raw: number): number {
     if (this.invuln > 0 || !this.alive) return 0;
-    const dmg = Math.max(1, raw - this.stats.armor);
+    if (this.weapons.tryBlock()) {
+      // A blocked hit still grants the usual invulnerability, so the same enemy cannot hit next frame.
+      this.invuln = this.invulnTotal = INVULN_SECONDS;
+      this.runStats.blocks++;
+      return 0;
+    }
+    const dmg = Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction())));
     this.showHurt();
-    if (!this.god) this.hp = Math.max(0, this.hp - dmg);
+    if (!this.god) {
+      this.runStats.taken += Math.min(this.hp, dmg);
+      this.hp = Math.max(0, this.hp - dmg);
+    }
     return dmg;
   }
 
   showHurt(): void {
     this.invuln = this.invulnTotal = INVULN_SECONDS;
     this.hurtAnim = 0.2;
-    this.play('monkey-hurt', true);
+    this.play(this.anim('hurt'), true);
   }
 
   /** Falls over. Used on the host when HP runs out and on joiners when a snapshot says so. */
@@ -194,7 +224,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.dead = true;
     this.moving = false;
     (this.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    this.play('monkey-hurt', true);
+    this.play(this.anim('hurt'), true);
     this.setTint(this.baseTint).setTintMode(Phaser.TintModes.MULTIPLY);
     this.scene.tweens.add({ targets: this, alpha: 0.25, angle: 90, duration: 900, ease: 'Quad.easeIn' });
     this.tag?.setAlpha(0.4);
@@ -209,7 +239,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.hp = Math.max(1, Math.round(this.stats.maxHp * hpFraction));
     this.invuln = this.invulnTotal = invulnSeconds;
     this.hurtAnim = 0;
-    this.play('monkey-idle', true);
+    this.play(this.anim('idle'), true);
     this.tag?.setAlpha(1);
   }
 

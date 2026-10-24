@@ -21,7 +21,7 @@ export function installSession(game: Phaser.Game, s: NetSession): void {
   setNetSession(s);
   if (!s.isHost) {
     s.events.on(NET_EV.hostMsg, (msg: HostMsg) => {
-      if (msg.t === 'start') goTo(game, SCENES.game, { seed: msg.seed, slots: msg.slots });
+      if (msg.t === 'start') goTo(game, SCENES.game, { seed: msg.seed, slots: msg.slots, profiles: msg.profiles });
       else if (msg.t === 'toLobby') goTo(game, SCENES.lobby, { mode: 'resume' });
     });
   }
@@ -43,8 +43,9 @@ export function hostStartRun(game: Phaser.Game, s: NetSession): void {
   s.inGame = true;
   const seed = seedFromUrl() ?? String(Math.floor(Math.random() * 1e9));
   const slots = [...s.slots];
-  s.broadcast({ t: 'start', seed, slots });
-  goTo(game, SCENES.game, { seed, slots });
+  const profiles = s.profiles;
+  s.broadcast({ t: 'start', seed, slots, profiles });
+  goTo(game, SCENES.game, { seed, slots, profiles });
 }
 
 /** Host: takes everyone back to the lobby, where new players can join again. */

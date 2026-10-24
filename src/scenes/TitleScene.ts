@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { ATLAS, TILESET, TILESET_MARGIN, TILESET_SPACING, TILE_INDEX } from '../art/textures';
 import { COLOR, SCENES, TILE, VIEW_H, VIEW_W } from '../constants';
 import { sfx } from '../core/sfx';
+import { CHARACTERS } from '../data';
 import { Button, Menu, text } from '../ui/widgets';
 
 /** Game name, Start button, one-line controls hint. */
@@ -40,16 +41,19 @@ export class TitleScene extends Phaser.Scene {
       this.bats.push({ s, vx: (25 + Math.random() * 30) * (i % 2 ? 1 : -1), base: 30 + Math.random() * 120, amp: 6 + Math.random() * 10, ph: Math.random() * 6 });
     }
 
-    const shadowT = text(this, VIEW_W / 2 + 3, 63, 'BANANA', { scale: 5, origin: [0.5, 0.5], color: 0x000000 }).setAlpha(0.5);
-    const t1 = text(this, VIEW_W / 2, 60, 'BANANA', { scale: 5, origin: [0.5, 0.5], color: COLOR.gold });
-    const t2 = text(this, VIEW_W / 2, 108, 'NOCTURNE', { scale: 4, origin: [0.5, 0.5], color: 0xc9b8ee });
-    text(this, VIEW_W / 2, 138, 'SURVIVE THE NIGHT. THROW BANANAS. WAIT FOR DAWN.', { origin: [0.5, 0.5], color: COLOR.textDim });
+    const shadowT = text(this, VIEW_W / 2 + 3, 63, 'CLE CELLAR', { scale: 5, origin: [0.5, 0.5], color: 0x000000 }).setAlpha(0.5);
+    const t1 = text(this, VIEW_W / 2, 60, 'CLE CELLAR', { scale: 5, origin: [0.5, 0.5], color: COLOR.gold });
+    const t2 = text(this, VIEW_W / 2, 108, 'SURVIVORS', { scale: 4, origin: [0.5, 0.5], color: 0xc9b8ee });
+    text(this, VIEW_W / 2, 138, 'PLAY AS THE CLE CELLAR CREW. SURVIVE THE NIGHT UNTIL DAWN.', { origin: [0.5, 0.5], color: COLOR.textDim });
     this.tweens.add({ targets: [t1, shadowT], y: '-=3', yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
     this.tweens.add({ targets: t2, alpha: 0.75, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
 
-    // The monkey, with a ring of enemies peeking in
-    this.add.image(VIEW_W / 2, 222, ATLAS, 'shadow_l').setScale(1.2);
-    this.add.sprite(VIEW_W / 2, 196, ATLAS, 'monkey_idle_0').setScale(3).play('monkey-idle');
+    // The cast, with a ring of enemies peeking in
+    CHARACTERS.forEach((c, i) => {
+      const x = VIEW_W / 2 + (i - (CHARACTERS.length - 1) / 2) * 56;
+      this.add.image(x, 222, ATLAS, 'shadow_l').setScale(1.2);
+      this.add.sprite(x, 196, ATLAS, c.firstFrame).setScale(3).play(`${c.anim}-idle`).setFlipX(x > VIEW_W / 2);
+    });
     const foes: [string, number, number, boolean][] = [
       ['zombie-walk', 214, 206, false],
       ['ghoul-run', 160, 214, false],
@@ -63,7 +67,7 @@ export class TitleScene extends Phaser.Scene {
     const bw = 108;
     const bx = VIEW_W / 2 - bw * 2 - 12;
     const buttons = [
-      new Button(this, bx, 258, bw, 26, 'SOLO', () => this.startRun()),
+      new Button(this, bx, 258, bw, 26, 'SOLO', () => this.chooseCharacter()),
       new Button(this, bx + bw + 8, 258, bw, 26, 'HOST CO-OP', () => this.toLobby('host')),
       new Button(this, bx + (bw + 8) * 2, 258, bw, 26, 'JOIN CO-OP', () => this.toLobby('join')),
       new Button(this, bx + (bw + 8) * 3, 258, bw, 26, 'WIKI', () => this.scene.start(SCENES.wiki, { from: 'title' })),
@@ -76,7 +80,7 @@ export class TitleScene extends Phaser.Scene {
       origin: [0.5, 0.5],
       color: COLOR.text,
     });
-    text(this, VIEW_W / 2, 318, 'ESC PAUSES · M MUTES', { origin: [0.5, 0.5], color: COLOR.textDim });
+    text(this, VIEW_W / 2, 318, 'Q CASTS YOUR ULTIMATE · ESC PAUSES · M MUTES', { origin: [0.5, 0.5], color: COLOR.textDim });
     text(this, 6, VIEW_H - 4, 'MVP BUILD', { origin: [0, 1], color: 0x5a4f73 });
 
     this.cameras.main.fadeIn(400, 18, 13, 24);
@@ -101,12 +105,11 @@ export class TitleScene extends Phaser.Scene {
     this.scene.start(SCENES.lobby, { mode });
   }
 
-  private startRun(): void {
+  private chooseCharacter(): void {
     if (this.starting) return;
     this.starting = true;
     sfx.unlock();
-    this.cameras.main.fadeOut(260, 18, 13, 24);
-    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(SCENES.game, {}));
+    this.scene.start(SCENES.select, { from: 'title' });
   }
 
   /** A small graveyard tilemap behind the title. */

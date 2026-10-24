@@ -42,7 +42,7 @@ export class Enemies {
     return e;
   }
 
-  /** Every enemy walks at the nearest monkey in `targets`. */
+  /** Every enemy walks at the nearest player in `targets`. */
   update(dt: number, now: number, targets: Player[], frozen: boolean, speedScale = 1): void {
     const active = this.active;
     active.length = 0;
@@ -131,14 +131,23 @@ export class Enemies {
     if (!e.active || e.hp <= 0) return;
     const dealt = Math.min(e.hp, amount);
     e.hp -= amount;
-    if (weapon) weapon.damage += dealt;
+    if (weapon) {
+      weapon.damage += dealt;
+      weapon.owner.runStats.damage += dealt;
+    }
     e.flash(this.game.time.now);
     this.game.fx.damageNumber(e.x, e.y - e.height / 2, amount, amount >= 25);
     const k = (knockback * (1 - e.def.knockbackResist)) / KB_TAU;
     e.kbx += dirX * k;
     e.kby += dirY * k;
     this.game.playSfx('hit', e.x, e.y);
-    if (e.hp <= 0) this.kill(e, true);
+    if (e.hp <= 0) {
+      this.kill(e, true);
+      if (weapon) {
+        weapon.kills++;
+        weapon.owner.runStats.kills++;
+      }
+    }
   }
 
   kill(e: Enemy, dropGem: boolean): void {
@@ -158,7 +167,7 @@ export class Enemies {
     }
   }
 
-  /** Moves an enemy without losing its HP (used for stragglers far from the monkey). */
+  /** Moves an enemy without losing its HP (used for stragglers far from every player). */
   relocate(e: Enemy, x: number, y: number): void {
     (e.body as Phaser.Physics.Arcade.Body).reset(x, y);
     e.kbx = e.kby = 0;

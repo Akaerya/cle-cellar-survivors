@@ -1,6 +1,6 @@
 /** Co-op revives: stand on a fallen teammate to bring them back. */
 export const REVIVE = {
-  /** Seconds a living monkey must stand on the body. */
+  /** Seconds a living player must stand on the body. */
   seconds: 5,
   /** px from the body that counts as standing on it. */
   radius: 18,
@@ -19,7 +19,7 @@ export const REVIVE = {
   invulnSeconds: 2,
 };
 
-/** HP fraction a monkey gets back when revived from the team's `deathNumber`-th death (1-based). */
+/** HP fraction a player gets back when revived from the team's `deathNumber`-th death (1-based). */
 export function reviveHpPercent(deathNumber: number): number {
   const k = Math.max(0, deathNumber - 1);
   return Math.max(REVIVE.minHpPercent, REVIVE.baseHpPercent - REVIVE.penaltyStep * ((k * (k + 1)) / 2));

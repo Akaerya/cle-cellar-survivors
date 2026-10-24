@@ -3,10 +3,13 @@
  * that satisfies one of these types; engine code reads them generically.
  */
 
-export type Targeting = 'nearest' | 'facing' | 'random' | 'orbit' | 'aura';
+export type Targeting = 'nearest' | 'facing' | 'random' | 'orbit' | 'aura' | 'stab' | 'breath' | 'strike' | 'shield';
 
 export interface WeaponStats {
-  /** Seconds between volleys. For orbit and aura weapons: seconds between hits on the same enemy. */
+  /**
+   * Seconds between volleys. For orbit and aura weapons: seconds between hits on the same enemy.
+   * For shields: seconds for the block to recharge.
+   */
   cooldown: number;
   damage: number;
   projectileCount: number;
@@ -16,18 +19,23 @@ export interface WeaponStats {
   pierce: number;
   /** Seconds a projectile lives (for sweeps: how long the slash is drawn). */
   lifetime: number;
-  /** px radius of the projectile, sweep or aura. Scaled by the player's area multiplier. */
+  /**
+   * px radius of the projectile, sweep or aura; reach of a stab or breath; blast radius of a strike.
+   * Scaled by the player's area multiplier.
+   */
   size: number;
   /** px an enemy is pushed back on hit. */
   knockback: number;
   /** Degrees between projectiles in one volley. */
   spread: number;
-  /** `nearest`: max distance to a target. `orbit`: ring radius (scaled by area). */
+  /** `nearest`: max distance to a target. `orbit`: ring radius (scaled by area). `strike`: px around the player bolts land in. */
   range: number;
-  /** `facing` sweeps: arc width in degrees. */
+  /** `facing` sweeps and `breath`: arc width in degrees. `stab`: blade width in px. */
   arc: number;
-  /** Projectiles fly out, then return to the monkey; the return trip is a new pass. */
+  /** Projectiles fly out, then return to the thrower; the return trip is a new pass. */
   boomerang: boolean;
+  /** `shield`: fraction of every hit absorbed while the block is recharging (0..1). */
+  reduction?: number;
 }
 
 export type NumericWeaponStat = Exclude<keyof WeaponStats, 'boomerang'>;
@@ -134,4 +142,48 @@ export interface WaveEvent {
   type: 'swarm';
   enemy: string;
   count: number;
+}
+
+export interface CharacterDef {
+  id: string;
+  /** Shown as typed (the pixel font draws it in capitals). */
+  name: string;
+  /** One-line epithet on the character select screen. */
+  title: string;
+  description: string;
+  /** Animation prefix: `${anim}-idle`, `${anim}-walk` and `${anim}-hurt` must exist. */
+  anim: string;
+  /** Atlas frame for previews (wiki, lobby). */
+  firstFrame: string;
+  startingWeapon: string;
+  /** Weapon ids this character can be offered on level-up (its own kit). Items are shared. */
+  weapons: string[];
+  /** Ultimate id (data/ultimates.ts), cast with Q. */
+  ultimate: string;
+}
+
+export type UltimateKind = 'storm' | 'pet';
+
+export interface UltimateDef {
+  id: string;
+  name: string;
+  description: string;
+  /** Atlas frame for the HUD. A greyed-out copy named `${icon}_grey` is built at boot. */
+  icon: string;
+  kind: UltimateKind;
+  /** Seconds the effect lasts once cast. */
+  duration: number;
+  /** Seconds from casting until it can be cast again (not affected by the cooldown stat). */
+  cooldown: number;
+  /** Seconds between shots while active. */
+  interval: number;
+  /** Projectiles per shot (`storm`: spread evenly around the caster). */
+  count: number;
+  /** `storm`: degrees per second the spiral turns. */
+  spin?: number;
+  /**
+   * The projectile the ultimate fires. Uses the WeaponDef shape so it shares the projectile pool,
+   * the network sync and the damage tracking. `pet`: `stats.range` is how far the pet looks for targets.
+   */
+  attack: WeaponDef;
 }

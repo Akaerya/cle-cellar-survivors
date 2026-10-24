@@ -8,6 +8,8 @@
 import {
   FALLBACK_HEAL,
   INVULN_SECONDS,
+  MAX_SHIELD_REDUCTION,
+  STAB_LEAD,
   MAX_ENEMIES,
   MAX_GEMS,
   MAX_ITEMS,
@@ -20,22 +22,23 @@ import {
   COLOR,
 } from '../constants';
 import { computeStats, expToNext, formatTime, weaponStatsAt } from '../core/progression';
+import { NAME_MAX } from '../core/profile';
 import {
   BASE_STATS,
+  CHARACTERS,
   ENEMIES,
   GEM_TIERS,
   ITEMS,
   POTION,
   REVIVE,
-  STARTING_WEAPON,
   WAVES,
   WAVE_EVENTS,
-  WEAPONS,
   enemyDef,
   hpScaleForMinute,
   hpScaleForPlayers,
   reviveHpPercent,
   speedScaleForMinute,
+  ultimateDef,
   weaponDef,
 } from '../data';
 import { HP_SCALE_PER_EXTRA_PLAYER, HP_SCALE_PER_MINUTE, SPEED_SCALE_PER_MINUTE, SPEED_SCALE_START } from '../data/waves';
@@ -87,7 +90,7 @@ const STAT_NOTES: Record<StatKey, string> = {
   pickupRadius: 'px. EXP gems inside it fly to you.',
   damageMult: 'Multiplies all weapon damage.',
   cooldownMult: 'Multiplies all weapon cooldowns (lower is faster, floor 10%).',
-  areaMult: 'Multiplies weapon size, sweep reach, aura and orbit radius.',
+  areaMult: 'Multiplies weapon size, sweep, stab and breath reach, aura, orbit and blast radius.',
   expMult: 'Multiplies EXP from gems you pick up.',
 };
 
@@ -99,11 +102,48 @@ const TARGETING_NOTES: Record<Targeting, string> = {
   nearest:
     'Throws at the closest enemy within RANGE. Holds fire while nothing is in range and shoots the moment something is. COUNT projectiles fan out by the spread angle. PIERCE is how many enemies one projectile hits.',
   facing:
-    'Fires toward the way the monkey last moved. With SPEED 0 it is a melee sweep: everything within AREA px inside the arc is hit. Extra COUNT adds sweeps spread evenly around the monkey.',
+    'Fires toward the way you last moved. With SPEED 0 it is a melee sweep: everything within AREA px inside the arc is hit. Extra COUNT adds sweeps spread evenly around you.',
   random: 'Fires in a random direction.',
   orbit:
-    'COUNT objects circle the monkey at RANGE px (scaled by AREA). Each enemy can be hit by this weapon once per COOLDOWN. SPEED is how fast they travel along the ring.',
-  aura: 'Every COOLDOWN, hits everything within AREA px of the monkey.',
+    'COUNT objects circle you at RANGE px (scaled by AREA). Each enemy can be hit by this weapon once per COOLDOWN. SPEED is how fast they travel along the ring.',
+  aura: 'Every COOLDOWN, hits everything within AREA px of you.',
+  stab: `Thrusts at the closest enemy once it is within REACH + ${STAB_LEAD} px, hitting everything along a blade REACH px long and WIDTH px wide. Holds while nothing is close. REACH is scaled by AREA.`,
+  breath: 'Every COOLDOWN, sprays a cone at the closest enemy within REACH px: everything inside the ARC (degrees) and REACH is hit. Holds while nothing is in reach. REACH is scaled by AREA.',
+  strike:
+    'Every COOLDOWN, BOLTS lightning bolts land within RANGE px of you. Each bolt picks a different random enemy in range, or a random spot when there are none, and hits everything within RADIUS px of where it lands. RADIUS is scaled by AREA.',
+  shield: `Blocks one hit completely, then recharges for RECHARGE seconds (shortened by COOLDOWN). Every hit that is not blocked is reduced by ABSORBS (after armor, at most ${pct(MAX_SHIELD_REDUCTION)}, still at least 1). A blocked hit gives the usual invulnerability. The bubble around you shows the charge.`,
+};
+
+/** Table columns per targeting type: which stats mean something for that behaviour. */
+type Col = { label: string; w: number; get: (s: WeaponStats) => string };
+const C = {
+  damage: { label: 'DAMAGE', w: 58, get: (s) => num(s.damage) },
+  cooldown: { label: 'COOLDOWN', w: 70, get: (s) => secs(s.cooldown) },
+  count: { label: 'COUNT', w: 50, get: (s) => num(s.projectileCount) },
+  pierce: { label: 'PIERCE', w: 54, get: (s) => (s.pierce === Infinity ? 'ALL' : num(s.pierce)) },
+  area: { label: 'AREA', w: 46, get: (s) => num(s.size) },
+  speed: { label: 'SPEED', w: 50, get: (s) => dash(s.speed) },
+  range: { label: 'RANGE', w: 50, get: (s) => dash(s.range) },
+  knockback: { label: 'KNOCKBACK', w: 80, get: (s) => num(s.knockback) },
+  ret: { label: 'RETURN', w: 50, get: (s) => (s.boomerang ? 'YES' : '-') },
+  reach: { label: 'REACH', w: 50, get: (s) => num(s.size) },
+  width: { label: 'WIDTH', w: 50, get: (s) => num(s.arc) },
+  arc: { label: 'ARC (DEG)', w: 70, get: (s) => num(s.arc) },
+  bolts: { label: 'BOLTS', w: 50, get: (s) => num(s.projectileCount) },
+  radius: { label: 'RADIUS', w: 54, get: (s) => num(s.size) },
+  recharge: { label: 'RECHARGE', w: 70, get: (s) => secs(s.cooldown) },
+  absorbs: { label: 'ABSORBS', w: 64, get: (s) => pct(s.reduction ?? 0) },
+} satisfies Record<string, Col>;
+const COLUMNS: Record<Targeting, Col[]> = {
+  nearest: [C.damage, C.cooldown, C.count, C.pierce, C.area, C.speed, C.range, C.knockback, C.ret],
+  random: [C.damage, C.cooldown, C.count, C.pierce, C.area, C.speed, C.knockback, C.ret],
+  facing: [C.damage, C.cooldown, C.count, C.area, C.arc, C.knockback],
+  orbit: [C.damage, C.cooldown, C.count, C.area, C.speed, C.range, C.knockback],
+  aura: [C.damage, C.cooldown, C.area, C.knockback],
+  stab: [C.damage, C.cooldown, C.reach, C.width, C.count, C.knockback],
+  breath: [C.damage, C.cooldown, C.reach, C.arc, C.knockback],
+  strike: [C.damage, C.cooldown, C.bolts, C.radius, C.range, C.knockback],
+  shield: [C.recharge, C.absorbs],
 };
 
 // ------------------------------------------------------------------ pages
@@ -112,46 +152,71 @@ function weaponsPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Weapons fire on their own. You start with ${weaponDef(STARTING_WEAPON).name.toUpperCase()} and can hold ${MAX_WEAPONS} weapons; each goes up to level ${MAX_LEVEL}. Values below are before your DAMAGE, COOLDOWN and AREA stats.`,
+      text: `Weapons fire on their own. Each character has its own ${MAX_WEAPONS} weapons (see CHARACTERS) and starts with one; level-up cards only offer your character's weapons. Each goes up to level ${MAX_LEVEL}. Values below are before your DAMAGE, COOLDOWN and AREA stats.`,
     },
   ];
-  for (const def of WEAPONS) {
-    out.push({ t: 'gap', h: 6 });
-    out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()} · ${def.description}` });
-    out.push({ t: 'p', text: TARGETING_NOTES[def.targeting], color: COLOR.textDim });
-    const rows: Cell[][] = [];
-    for (let lv = 1; lv <= MAX_LEVEL; lv++) {
-      const s: WeaponStats = weaponStatsAt(def, lv);
-      rows.push([
-        `LV ${lv}`,
-        num(s.damage),
-        secs(s.cooldown),
-        num(s.projectileCount),
-        s.pierce === Infinity ? 'ALL' : num(s.pierce),
-        num(s.size),
-        dash(s.speed),
-        dash(s.range),
-        num(s.knockback),
-        s.boomerang ? 'YES' : '-',
-      ]);
+  for (const c of CHARACTERS) {
+    out.push({ t: 'gap', h: 4 });
+    out.push({ t: 'h', text: `${c.name.toUpperCase()}'S WEAPONS` });
+    for (const def of c.weapons.map(weaponDef)) {
+      out.push({ t: 'gap', h: 4 });
+      const start = def.id === c.startingWeapon ? ' · STARTING WEAPON' : '';
+      out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()}${start} · ${def.description}` });
+      out.push({ t: 'p', text: TARGETING_NOTES[def.targeting], color: COLOR.textDim });
+      const cols = COLUMNS[def.targeting];
+      const rows: Cell[][] = [];
+      for (let lv = 1; lv <= MAX_LEVEL; lv++) {
+        const s: WeaponStats = weaponStatsAt(def, lv);
+        rows.push([`LV ${lv}`, ...cols.map((col) => col.get(s))]);
+      }
+      out.push({ t: 'table', cols: [{ label: '', w: 40 }, ...cols.map(({ label, w }) => ({ label, w }))], rows });
+      def.levels.forEach((l, i) => out.push({ t: 'p', text: `LV ${i + 2}: ${l.text}` }));
     }
+  }
+  return out;
+}
+
+function charactersPage(): Block[] {
+  const out: Block[] = [
+    {
+      t: 'p',
+      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby. Each character has its own weapon kit and ultimate. Items and base stats are shared (see ITEMS), and several players may pick the same character.`,
+    },
+    { t: 'h', text: 'ULTIMATES (Q)' },
+    {
+      t: 'p',
+      text: 'Press Q to cast your ultimate. Its cooldown starts when you cast it and is not shortened by COOLDOWN; its damage scales with DAMAGE and its projectiles with AREA. Falling ends a running ultimate early (the cooldown keeps going). The box under your build shows it: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. Teammates are shown the same way in the list below it.',
+    },
+  ];
+  for (const c of CHARACTERS) {
+    const ult = ultimateDef(c.ultimate);
+    const a = ult.attack.stats;
+    out.push({ t: 'gap', h: 8 });
+    out.push({ t: 'entry', icon: c.firstFrame, title: c.name, sub: `${c.title} · ${c.description}`, scale: 2 });
+    out.push({
+      t: 'p',
+      text: `STARTS WITH ${weaponDef(c.startingWeapon).name.toUpperCase()}. KIT: ${c.weapons.map((id) => weaponDef(id).name.toUpperCase()).join(', ')}.`,
+    });
+    out.push({ t: 'entry', icon: ult.icon, title: `ULTIMATE: ${ult.name}`, sub: ult.description });
+    const how =
+      ult.kind === 'storm'
+        ? `Every ${secs(ult.interval)} for ${ult.duration}S, ${ult.count} projectiles fly out from you in a spiral that turns ${ult.spin} degrees per second.`
+        : `For ${ult.duration}S a pet follows you and every ${secs(ult.interval)} fires at the closest enemy within ${a.range} px of it.`;
+    out.push({ t: 'p', text: how, color: COLOR.textDim });
     out.push({
       t: 'table',
       cols: [
-        { label: '', w: 40 },
-        { label: 'DAMAGE', w: 58 },
+        { label: 'DURATION', w: 70 },
         { label: 'COOLDOWN', w: 70 },
-        { label: 'COUNT', w: 50 },
+        { label: 'DAMAGE', w: 58 },
         { label: 'PIERCE', w: 54 },
-        { label: 'AREA', w: 46 },
         { label: 'SPEED', w: 50 },
-        { label: 'RANGE', w: 50 },
+        { label: 'LIFETIME', w: 66 },
+        { label: 'SIZE', w: 40 },
         { label: 'KNOCKBACK', w: 80 },
-        { label: 'RETURN', w: 50 },
       ],
-      rows,
+      rows: [[`${ult.duration}S`, `${ult.cooldown}S`, num(a.damage), num(a.pierce), num(a.speed), secs(a.lifetime), num(a.size), num(a.knockback)]],
     });
-    def.levels.forEach((l, i) => out.push({ t: 'p', text: `LV ${i + 2}: ${l.text}` }));
   }
   return out;
 }
@@ -191,7 +256,7 @@ function itemsPage(): Block[] {
     });
   }
   out.push({ t: 'gap', h: 8 });
-  out.push({ t: 'h', text: 'MONKEY BASE STATS' });
+  out.push({ t: 'h', text: 'BASE STATS (EVERY CHARACTER)' });
   out.push({
     t: 'table',
     cols: [
@@ -208,7 +273,7 @@ function monstersPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Enemies walk straight at the nearest living monkey and hurt it on touch. HP grows ${pct(HP_SCALE_PER_MINUTE)} of base per minute; speed starts at ${pct(SPEED_SCALE_START)} and rises ${pct(SPEED_SCALE_PER_MINUTE, 1)} per minute up to 100%. In co-op HP is also multiplied by the player count (see CO-OP).`,
+      text: `Enemies walk straight at the nearest living player and hurt them on touch. HP grows ${pct(HP_SCALE_PER_MINUTE)} of base per minute; speed starts at ${pct(SPEED_SCALE_START)} and rises ${pct(SPEED_SCALE_PER_MINUTE, 1)} per minute up to 100%. In co-op HP is also multiplied by the player count (see CO-OP).`,
     },
     { t: 'gap', h: 4 },
   ];
@@ -243,7 +308,7 @@ function monstersPage(): Block[] {
   });
   out.push({
     t: 'p',
-    text: 'SPEED is px per second at full speed. DAMAGE is per hit before armor; a monkey cannot be hit again for ' +
+    text: 'SPEED is px per second at full speed. DAMAGE is per hit before armor; a player cannot be hit again for ' +
       `${secs(INVULN_SECONDS)} after a hit. KB RESIST is how much knockback is ignored. SIZE is the collision radius in px.`,
     color: COLOR.textDim,
   });
@@ -254,7 +319,7 @@ function wavesPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `The run lasts ${formatTime(RUN_SECONDS)}. Every ${SPAWN_TICK_MS} ms the spawner tops the horde up toward ON FIELD, at most a sixth of it per tick, on a ring just outside a random living monkey's screen. At most ${MAX_ENEMIES} enemies exist at once. Enemies more than ${DESPAWN_SCREENS} screens away from every monkey are moved back near one, keeping their HP.`,
+      text: `The run lasts ${formatTime(RUN_SECONDS)}. Every ${SPAWN_TICK_MS} ms the spawner tops the horde up toward ON FIELD, at most a sixth of it per tick, on a ring just outside a random living player's screen. At most ${MAX_ENEMIES} enemies exist at once. Enemies more than ${DESPAWN_SCREENS} screens away from every player are moved back near one, keeping their HP.`,
     },
   ];
   out.push({
@@ -282,7 +347,7 @@ function wavesPage(): Block[] {
   });
   out.push({ t: 'h', text: 'EVENTS' });
   for (const ev of WAVE_EVENTS) {
-    out.push({ t: 'p', text: `${formatTime(ev.at)} · SWARM: a ring of ${ev.count} ${enemyDef(ev.enemy).name.toUpperCase()}S closes in around every living monkey.` });
+    out.push({ t: 'p', text: `${formatTime(ev.at)} · SWARM: a ring of ${ev.count} ${enemyDef(ev.enemy).name.toUpperCase()}S closes in around every living player.` });
   }
   out.push({ t: 'p', text: `${formatTime(RUN_SECONDS)} · DAWN: every enemy dies and the run is won.` });
   return out;
@@ -293,7 +358,7 @@ function dropsPage(): Block[] {
     { t: 'h', text: 'EXP GEMS' },
     {
       t: 'p',
-      text: `Every kill drops a gem worth the monster's EXP. Once a gem is inside a monkey's PICKUP RADIUS it flies straight to that monkey, always faster than it can run. Past ${MAX_GEMS} gems on the ground, new drops merge into the nearest gem, which changes colour as it grows:`,
+      text: `Every kill drops a gem worth the monster's EXP. Once a gem is inside a player's PICKUP RADIUS it flies straight to them, always faster than they can run. Past ${MAX_GEMS} gems on the ground, new drops merge into the nearest gem, which changes colour as it grows:`,
     },
     {
       t: 'table',
@@ -310,7 +375,7 @@ function dropsPage(): Block[] {
     { t: 'entry', icon: 'potion', title: 'Health potion', sub: `HEALS ${pct(POTION.healPercent)} OF MAX HP`, scale: 2 },
     {
       t: 'p',
-      text: `A rare drop from any enemy (chance per monster below). Walk over it to drink it; a monkey at full HP walks past without using it. It stays for ${POTION.lifetime}S (blinking for the last 5) and at most ${POTION.maxOnGround} lie on the ground at once.`,
+      text: `A rare drop from any enemy (chance per monster below). Walk over it to drink it; a player at full HP walks past without using it. It stays for ${POTION.lifetime}S (blinking for the last 5) and at most ${POTION.maxOnGround} lie on the ground at once.`,
     },
     {
       t: 'table',
@@ -350,15 +415,20 @@ function coopPage(): Block[] {
       t: 'p',
       text: `Up to ${MAX_PLAYERS} players. HOST CO-OP gives an invite code and link; friends use JOIN CO-OP. The host's game runs the run for everyone, so the host should keep the game tab visible.`,
     },
+    { t: 'h', text: 'LOBBY' },
+    {
+      t: 'p',
+      text: `Everyone picks a character with CHARACTER and can set a display name (up to ${NAME_MAX} letters, digits or . - _ ! ? ') with NAME; without one you are shown as P1 to P4. Names are shown over each character, in the teammate list and on the party screen. Both are remembered for next time.`,
+    },
     { t: 'h', text: 'SHARED EXP' },
     {
       t: 'p',
-      text: 'The team shares one EXP bar and level. Every level gives each monkey its own card pick, and the run is held until everyone has chosen. EXP GAIN of the monkey that picks a gem up applies.',
+      text: 'The team shares one EXP bar and level. Every level gives each player their own card pick, and the run is held until everyone has chosen. EXP GAIN of the player that picks a gem up applies.',
     },
     { t: 'h', text: 'ENEMY HP' },
     {
       t: 'p',
-      text: `Enemy HP × (1 + ${HP_SCALE_PER_EXTRA_PLAYER} × (players - 1)). Enemies chase the nearest living monkey and spawn around a random one.`,
+      text: `Enemy HP × (1 + ${HP_SCALE_PER_EXTRA_PLAYER} × (players - 1)). Enemies chase the nearest living player and spawn around a random one.`,
     },
     {
       t: 'table',
@@ -371,7 +441,7 @@ function coopPage(): Block[] {
     { t: 'h', text: 'FALLING AND REVIVING' },
     {
       t: 'p',
-      text: `A monkey at 0 HP falls and watches a teammate. Stand within ${REVIVE.radius} px of the body for ${REVIVE.seconds}S to revive it; the bar drains again while nobody stands there. Revived monkeys get ${secs(REVIVE.invulnSeconds)} of invulnerability and make the level-up picks they missed. The run is lost when every monkey is down.`,
+      text: `A player at 0 HP falls and watches a teammate. Stand within ${REVIVE.radius} px of the body for ${REVIVE.seconds}S to revive them; the bar drains again while nobody stands there. Revived players get ${secs(REVIVE.invulnSeconds)} of invulnerability and make the level-up picks they missed. The run is lost when every player is down.`,
     },
     {
       t: 'p',
@@ -398,12 +468,12 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'MOVING AND FIGHTING' },
     {
       t: 'p',
-      text: 'You only steer the monkey (WASD or arrows); weapons fire on their own. Some weapons aim where you last moved. The arena is a walled graveyard; graves and decor never block you.',
+      text: 'You steer your character (WASD or arrows) and cast its ultimate with Q; weapons fire on their own. Some weapons aim where you last moved, others at the closest enemy. The arena is a walled graveyard; graves and decor never block you.',
     },
     { t: 'h', text: 'TAKING DAMAGE' },
     {
       t: 'p',
-      text: `Touching an enemy deals its DAMAGE minus your ARMOR (at least 1). After a hit you are invulnerable for ${secs(INVULN_SECONDS)}. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
+      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
     },
     { t: 'h', text: 'CARDS AND SLOTS' },
     {
@@ -412,8 +482,13 @@ function mechanicsPage(): Block[] {
     },
     { t: 'h', text: 'WINNING' },
     { t: 'p', text: `Survive until ${formatTime(RUN_SECONDS)} and dawn breaks: every enemy on the field dies and the run is won.` },
+    { t: 'h', text: 'PARTY SCREEN' },
+    {
+      t: 'p',
+      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions and heal cards, not regen), BLOCKS (hits a shield stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one) and ULTS cast. Pick a row to see that player\'s weapons and ultimate: level, damage, DPS since it was picked up, kills and share of their damage.',
+    },
     { t: 'h', text: 'CONTROLS' },
-    { t: 'p', text: 'ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click.' },
+    { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click.' },
     { t: 'h', text: 'FEEDBACK' },
     {
       t: 'p',
@@ -424,6 +499,7 @@ function mechanicsPage(): Block[] {
 }
 
 export const WIKI_PAGES: WikiPage[] = [
+  { tab: 'CHARACTERS', source: 'src/data/characters.ts, src/data/ultimates.ts', blocks: charactersPage },
   { tab: 'WEAPONS', source: 'src/data/weapons.ts', blocks: weaponsPage },
   { tab: 'ITEMS', source: 'src/data/items.ts, src/data/player.ts', blocks: itemsPage },
   { tab: 'MONSTERS', source: 'src/data/enemies.ts', blocks: monstersPage },

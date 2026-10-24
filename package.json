@@ -1,8 +1,8 @@
 {
-  "name": "banana-nocturne",
+  "name": "cle-cellar-survivors",
   "private": true,
   "version": "0.1.0",
-  "description": "Survivor-like browser game MVP: a monkey throws bananas at gothic-horror monsters until dawn.",
+  "description": "Survivor-like browser game: play as members of the Cle Cellar Discord server and survive the night until dawn.",
   "type": "module",
   "scripts": {
     "dev": "vite",

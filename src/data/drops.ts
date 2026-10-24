@@ -6,7 +6,7 @@ export const POTION = {
   lifetime: 45,
   /** Most potions on the ground at once; further drops are skipped. */
   maxOnGround: 12,
-  /** px between the potion and the monkey's centre to pick it up (no magnet). */
+  /** px between the potion and the player's centre to pick it up (no magnet). */
   pickupRadius: 12,
 };
 

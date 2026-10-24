@@ -13,11 +13,23 @@ import {
   VIEW_H,
   VIEW_W,
 } from '../constants';
-import { DEBUG_EV, EV, type BuildEntry, type RunSummary } from '../core/events';
+import { DEBUG_EV, EV, type BuildEntry, type PartyMember, type RunSummary, type WeaponReport } from '../core/events';
+import { displayName, loadProfile } from '../core/profile';
 import { computeStats, expToNext } from '../core/progression';
 import { Rng, seedFromUrl } from '../core/rng';
 import { sfx, type SfxName } from '../core/sfx';
-import { ENEMIES, ITEMS, REVIVE, STARTING_WEAPON, WEAPONS, itemDef, reviveHpPercent, speedScaleForMinute } from '../data';
+import {
+  ATTACK_DEFS,
+  ENEMIES,
+  ITEMS,
+  REVIVE,
+  characterDef,
+  itemDef,
+  reviveHpPercent,
+  speedScaleForMinute,
+  ultimateDef,
+  weaponDef,
+} from '../data';
 import type { Enemy } from '../entities/Enemy';
 import type { Gem } from '../entities/Gem';
 import { Player } from '../entities/Player';
@@ -37,6 +49,7 @@ import {
   type ClientMsg,
   type FxEvent,
   type HostMsg,
+  type Profiles,
   type SnapPlayer,
   type Snapshot,
 } from '../net/protocol';
@@ -47,7 +60,8 @@ import { Gems } from '../systems/Gems';
 import { Potions } from '../systems/Potions';
 import type { Potion } from '../entities/Potion';
 import { Spawner } from '../systems/Spawner';
-import { Weapons } from '../systems/Weapons';
+import { Ultimate } from '../systems/Ultimate';
+import { Weapons, type WeaponInstance } from '../systems/Weapons';
 import { onKey } from '../ui/widgets';
 
 export type RunState = 'playing' | 'dying' | 'victory' | 'ended';
@@ -79,14 +93,14 @@ export interface HudSnapshot {
   debug: boolean;
 }
 
-/** Where each monkey starts, by slot. */
+/** Where each player starts, by slot. */
 const SPAWN_OFFSETS = [
   [0, 0],
   [28, 0],
   [-28, 0],
   [0, 26],
 ] as const;
-/** Joiners report their monkey this often. */
+/** Joiners report their character's position this often. */
 const POS_HZ = 30;
 /** Entities further than this past a joiner's view are not sent to them. */
 const CULL_MARGIN = 96;
@@ -94,17 +108,17 @@ const CULL_MARGIN = 96;
 const MAX_EVENTS = 400;
 
 /**
- * The run itself: owns the monkeys, the systems, progression, and the run clock.
- * In co-op the host simulates everything and streams snapshots; joiners move their own monkey
+ * The run itself: owns the players' characters, the systems, progression, and the run clock.
+ * In co-op the host simulates everything and streams snapshots; joiners move their own character
  * and draw the rest from the snapshots.
  */
 export class GameScene extends Phaser.Scene {
   mode: RunMode = 'solo';
   net: NetSession | null = null;
   rng!: Rng;
-  /** Every monkey in the run, indexed by slot. */
+  /** Every player in the run, indexed by slot. */
   players: Player[] = [];
-  /** The monkey this browser controls. */
+  /** The character this browser controls. */
   player!: Player;
   fx!: Fx;
   enemies!: Enemies;
@@ -117,7 +131,7 @@ export class GameScene extends Phaser.Scene {
   state: RunState = 'playing';
   runTime = 0;
   kills = 0;
-  /** Co-op: monkeys that have fallen this run (each later one is revived with less HP). */
+  /** Co-op: players that have fallen this run (each later one is revived with less HP). */
   teamDeaths = 0;
   level = 1;
   exp = 0;
@@ -189,11 +203,13 @@ export class GameScene extends Phaser.Scene {
     this.posTimer = 0;
   }
 
-  create(data: { seed?: string; slots?: number[] }): void {
+  /** Solo: the saved profile picks the character. Co-op: `slots` and `profiles` come from the host. */
+  create(data: { seed?: string; slots?: number[]; profiles?: Profiles }): void {
     const net = data?.slots ? netSession() : null;
     this.net = net;
     this.mode = !net ? 'solo' : net.isHost ? 'host' : 'client';
     const slots = net ? data.slots! : [0];
+    const profiles: Profiles = net ? (data.profiles ?? {}) : { 0: loadProfile() };
     this.startCount = slots.length;
 
     this.rng = new Rng(data?.seed ?? seedFromUrl());
@@ -203,9 +219,12 @@ export class GameScene extends Phaser.Scene {
     this.projectiles = Weapons.createProjectileGroup(this);
     for (const slot of slots) {
       const [ox, oy] = this.coop ? SPAWN_OFFSETS[slot] : SPAWN_OFFSETS[0];
-      const p = new Player(this, ARENA_SIZE / 2 + ox, ARENA_SIZE / 2 + oy, slot, this.coop);
+      const character = characterDef(profiles[slot]?.character);
+      const name = displayName(profiles[slot]?.name, slot);
+      const p = new Player(this, ARENA_SIZE / 2 + ox, ARENA_SIZE / 2 + oy, slot, this.coop, character, name);
       p.weapons = new Weapons(this, p, this.projectiles);
-      p.weapons.add(STARTING_WEAPON);
+      p.weapons.add(character.startingWeapon);
+      p.ultimate = new Ultimate(this, p, ultimateDef(character.ultimate));
       this.players[slot] = p;
     }
     this.player = this.players[net?.mySlot ?? 0];
@@ -222,11 +241,11 @@ export class GameScene extends Phaser.Scene {
     cam.setBackgroundColor(0x120d18);
 
     if (this.mode === 'client') {
-      // Joiners only move their own monkey; the host decides every hit.
+      // Joiners only move their own character; the host decides every hit.
       this.physics.add.collider(this.player, arena.walls);
       this.mirror = new Mirror(this);
     } else {
-      // Physics: walls block the monkeys and enemies; overlaps drive damage and pickups.
+      // Physics: walls block the players and enemies; overlaps drive damage and pickups.
       this.physics.add.collider(this.enemies.group, arena.walls);
       this.physics.add.overlap(this.projectiles, this.enemies.group, (pr, e) =>
         this.onProjectileHit(pr as Projectile, e as Enemy),
@@ -255,6 +274,7 @@ export class GameScene extends Phaser.Scene {
     onKey(this, 'keydown-P', () => this.openPause());
     onKey(this, 'keydown-M', () => this.events.emit(EV.banner, sfx.toggleMute() ? 'SOUND OFF' : 'SOUND ON', COLOR.textDim));
     onKey(this, 'keydown-F3', () => this.toggleDebug());
+    onKey(this, 'keydown-Q', () => this.castUltimate());
 
     this.hpBar = this.add.graphics().setDepth(DEPTH.hpBar);
 
@@ -269,6 +289,7 @@ export class GameScene extends Phaser.Scene {
       [DEBUG_EV.addExp, () => this.mode !== 'client' && this.addExp(this.expNeed - this.exp)],
       [DEBUG_EV.skipMinute, () => this.mode !== 'client' && (this.runTime = Math.min(RUN_SECONDS - 1, this.runTime + 60))],
       [DEBUG_EV.god, () => this.mode !== 'client' && (this.player.god = !this.player.god)],
+      [DEBUG_EV.ultReady, () => this.mode !== 'client' && this.players.forEach((p) => p && (p.ultimate.cooldownLeft = 0))],
       [DEBUG_EV.toggle, () => this.toggleDebug()],
     ];
     for (const [ev, fn] of listen) this.events.on(ev, fn);
@@ -295,7 +316,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     if (this.debug) this.applyDebugDraw();
-    (window as any).__bananaNocturne = this;
+    (window as any).__cleCellar = this;
 
     // A fresh run never inherits an overlay from the previous one.
     for (const key of [SCENES.levelUp, SCENES.pause, SCENES.gameOver, SCENES.wiki]) {
@@ -339,6 +360,7 @@ export class GameScene extends Phaser.Scene {
       const speedScale = speedScaleForMinute(this.runTime / 60);
       this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying', speedScale);
       for (const p of this.players) if (p?.alive) p.weapons.update(dt, this.state === 'playing');
+      for (const p of this.players) if (p && !p.gone) p.ultimate.update(dt, p.alive && this.state === 'playing');
       Weapons.updateProjectiles(this.projectiles, dt);
       this.gems.update(dt);
       this.potions.update(dt);
@@ -399,7 +421,7 @@ export class GameScene extends Phaser.Scene {
     if (this.mode === 'host' && this.outbox.length < MAX_EVENTS) this.outbox.push(ev);
   }
 
-  /** Plays a sound here (if it happened near this monkey) and relays it to joiners. */
+  /** Plays a sound here (if it happened near this player) and relays it to joiners. */
   playSfx(name: SfxName, x?: number, y?: number): void {
     if (x === undefined || y === undefined) {
       sfx.play(name);
@@ -415,7 +437,7 @@ export class GameScene extends Phaser.Scene {
     this.relay(['b', text, color]);
   }
 
-  /** The monkey whose view a player sees: their own, or a living teammate's once they fall. */
+  /** The character whose view a player sees: their own, or a living teammate's once they fall. */
   viewTarget(p: Player): Player {
     if (!p.dead || !this.coop) return p;
     return this.livePlayers()[0] ?? p;
@@ -455,14 +477,14 @@ export class GameScene extends Phaser.Scene {
     this.events.emit(EV.killsChanged, this.kills);
   }
 
-  /** Shared EXP: every level gained gives each living monkey one pick. */
+  /** Shared EXP: every level gained gives each player one pick. */
   addExp(value: number): void {
     this.exp += value;
     let leveled = false;
     while (this.exp >= this.expNeed) {
       this.exp -= this.expNeed;
       this.level++;
-      // Fallen monkeys collect their picks too and make them once revived.
+      // Fallen players collect their picks too and make them once revived.
       for (const p of this.players) if (p && !p.gone) p.pendingLevelUps++;
       this.expNeed = expToNext(this.level);
       leveled = true;
@@ -545,12 +567,15 @@ export class GameScene extends Phaser.Scene {
     else this.physics.world.resume();
   }
 
-  /** Up to 3 random cards from new weapons/items and upgrades of owned ones, respecting slot limits. */
+  /**
+   * Up to 3 random cards from the character's weapons, the shared items, and upgrades of owned ones,
+   * respecting slot limits.
+   */
   rollChoices(p: Player): Choice[] {
     const pool: Choice[] = [];
     const weaponSlotsFull = p.weapons.list.length >= MAX_WEAPONS;
     const itemSlotsFull = p.items.length >= MAX_ITEMS;
-    for (const def of WEAPONS) {
+    for (const def of p.character.weapons.map(weaponDef)) {
       const owned = p.weapons.get(def.id);
       if (owned) {
         if (owned.level < MAX_LEVEL) {
@@ -639,6 +664,16 @@ export class GameScene extends Phaser.Scene {
 
   // ------------------------------------------------------------------ run flow
 
+  /** Q: the local player's ultimate. Joiners ask the host, which checks the cooldown. */
+  private castUltimate(): void {
+    if (this.state !== 'playing' || this.frozen || this.menuOpen || !this.player.alive) return;
+    if (this.mode === 'client') {
+      if (this.player.ultimate.ready) this.net?.sendHost({ t: 'ult' });
+      return;
+    }
+    this.player.ultimate.cast();
+  }
+
   openPause(): void {
     if (this.state !== 'playing' || !this.scene.isActive() || this.scene.isActive(SCENES.levelUp)) return;
     if (this.menuOpen) return;
@@ -650,23 +685,25 @@ export class GameScene extends Phaser.Scene {
   private die(p: Player): void {
     p.fallOver();
     p.weapons.clearVisuals();
+    p.ultimate.stop();
+    p.runStats.deaths++;
     this.playSfx('death', p.x, p.y);
     if (this.coop) {
       this.teamDeaths++;
       p.revive = 0;
       p.reviveHp = reviveHpPercent(this.teamDeaths);
-      // Cards still on offer wait until the monkey is revived.
+      // Cards still on offer wait until the player is revived.
       this.remoteOffers.delete(p.slot);
       if (p === this.player) this.offer = null;
       this.checkLevelUpOver();
     }
     if (p === this.player) this.onLocalDeath();
     if (this.livePlayers().length > 0) {
-      if (this.coop) this.banner(`P${p.slot + 1} IS DOWN · STAND ON THEM TO REVIVE`, COLOR.bad);
+      if (this.coop) this.banner(`${p.displayName} IS DOWN · STAND ON THEM TO REVIVE`, COLOR.bad);
       return;
     }
     this.state = 'dying';
-    for (const q of this.players) q?.weapons.clearVisuals();
+    this.stopEffects();
     this.time.delayedCall(1300, () => this.endRun(false));
   }
 
@@ -677,17 +714,20 @@ export class GameScene extends Phaser.Scene {
     this.events.emit(EV.hpChanged, 0, this.player.stats.maxHp);
   }
 
-  /** Co-op host: a living monkey standing on a fallen one fills its revive bar. */
+  /** Co-op host: a living player standing on a fallen one fills its revive bar. */
   private updateRevives(dt: number): void {
     if (!this.coop) return;
     const live = this.livePlayers();
     const R2 = REVIVE.radius * REVIVE.radius;
     for (const p of this.players) {
       if (!p || !p.dead || p.gone) continue;
-      const helped = live.some((q) => (q.x - p.x) ** 2 + (q.y - p.y) ** 2 <= R2);
+      const helpers = live.filter((q) => (q.x - p.x) ** 2 + (q.y - p.y) ** 2 <= R2);
       const rate = dt / REVIVE.seconds;
-      p.revive = Phaser.Math.Clamp(p.revive + (helped ? rate : -rate * REVIVE.drainRate), 0, 1);
-      if (p.revive >= 1) this.revivePlayer(p);
+      p.revive = Phaser.Math.Clamp(p.revive + (helpers.length > 0 ? rate : -rate * REVIVE.drainRate), 0, 1);
+      if (p.revive >= 1) {
+        for (const q of helpers) q.runStats.revives++;
+        this.revivePlayer(p);
+      }
     }
   }
 
@@ -696,10 +736,19 @@ export class GameScene extends Phaser.Scene {
     this.onRevived(p);
     this.playSfx('revive', p.x, p.y);
     this.fx.ring(p.x, p.y, COLOR.good, 60, 500);
-    this.banner(`P${p.slot + 1} IS BACK (${Math.round(p.reviveHp * 100)}% HP)`, COLOR.good);
+    this.banner(`${p.displayName} IS BACK (${Math.round(p.reviveHp * 100)}% HP)`, COLOR.good);
   }
 
-  /** Shared by host and joiners once a monkey stands up again. */
+  /** Weapon and ultimate visuals off for everyone (the run is ending). */
+  private stopEffects(): void {
+    for (const p of this.players) {
+      if (!p) continue;
+      p.weapons.clearVisuals();
+      p.ultimate.stop();
+    }
+  }
+
+  /** Shared by host and joiners once a player stands up again. */
   private onRevived(p: Player): void {
     p.weapons.showVisuals();
     if (p === this.player) this.events.emit(EV.hpChanged, p.hp, p.stats.maxHp);
@@ -711,7 +760,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.startFollow(t, true, lerp, lerp);
   }
 
-  /** Own monkey, or a living teammate's a moment after falling in co-op. */
+  /** Own character, or a living teammate's a moment after falling in co-op. */
   private updateCamera(): void {
     let t = this.player;
     if (this.player.dead && this.coop && this.time.now - this.diedAt > 1200) t = this.viewTarget(this.player);
@@ -728,7 +777,7 @@ export class GameScene extends Phaser.Scene {
     this.playSfx('victory');
     this.cameras.main.flash(900, 255, 236, 190);
     this.relay(['f', 900]);
-    for (const p of this.players) p?.weapons.clearVisuals();
+    this.stopEffects();
     let puffs = 0;
     for (const e of this.enemies.active.slice()) {
       if (!e.active) continue;
@@ -739,14 +788,44 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(2200, () => this.endRun(true));
   }
 
-  private summaryFor(p: Player, victory: boolean): RunSummary {
+  /** One weapon (or the ultimate) for the party screen. */
+  private weaponReport(w: WeaponInstance, ultimate = false): WeaponReport {
+    return {
+      id: w.def.id,
+      name: w.def.name,
+      icon: w.def.icon,
+      level: ultimate ? 0 : w.level,
+      damage: Math.round(w.damage),
+      kills: w.kills,
+      dps: w.damage / Math.max(1, this.runTime - w.acquiredAt),
+      ultimate: ultimate || undefined,
+    };
+  }
+
+  /** Everyone's numbers for the party screen (host and solo: the only copy of them). */
+  private partyReport(): PartyMember[] {
+    return this.players
+      .filter((p) => p)
+      .map((p) => ({
+        slot: p.slot,
+        name: p.displayName,
+        character: p.character.id,
+        left: p.gone,
+        stats: { ...p.runStats, damage: Math.round(p.runStats.damage), taken: Math.round(p.runStats.taken), healed: Math.round(p.runStats.healed), exp: Math.round(p.runStats.exp) },
+        dps: p.runStats.damage / Math.max(1, this.runTime),
+        weapons: [...p.weapons.list.map((w) => this.weaponReport(w)), this.weaponReport(p.ultimate.attack, true)],
+        items: this.buildItems(p),
+      }));
+  }
+
+  private summaryFor(p: Player, victory: boolean, party: PartyMember[]): RunSummary {
     return {
       victory,
       time: this.runTime,
       level: this.level,
       kills: this.kills,
-      weapons: this.buildWeapons(p),
-      items: this.buildItems(p),
+      party,
+      mySlot: p.slot,
       seed: this.rng.seed,
       coopPlayers: this.coop ? this.startCount : undefined,
       teamDeaths: this.coop ? this.teamDeaths : undefined,
@@ -755,11 +834,12 @@ export class GameScene extends Phaser.Scene {
 
   private endRun(victory: boolean, summary?: RunSummary): void {
     if (this.state === 'ended') return;
+    const party = summary ? summary.party : this.partyReport();
     if (this.mode === 'host') {
       // Final snapshot so joiners see the last moment, then everyone's own end screen.
       this.sendSnapshots();
       for (const p of this.players) {
-        if (p && p !== this.player && !p.gone) this.net?.sendTo(p.slot, { t: 'end', summary: this.summaryFor(p, victory) });
+        if (p && p !== this.player && !p.gone) this.net?.sendTo(p.slot, { t: 'end', summary: this.summaryFor(p, victory, party) });
       }
     }
     this.state = 'ended';
@@ -768,7 +848,7 @@ export class GameScene extends Phaser.Scene {
     if (this.scene.isActive(SCENES.levelUp)) this.scene.stop(SCENES.levelUp);
     this.closeMenus();
     this.scene.pause();
-    this.scene.launch(SCENES.gameOver, summary ?? this.summaryFor(this.player, victory));
+    this.scene.launch(SCENES.gameOver, summary ?? this.summaryFor(this.player, victory, party));
   }
 
   // ------------------------------------------------------------------ co-op: host side
@@ -788,6 +868,8 @@ export class GameScene extends Phaser.Scene {
       this.remoteOffers.delete(slot);
       this.applyChoice(p, c);
       this.afterPick(p);
+    } else if (msg.t === 'ult') {
+      if (this.state === 'playing' && !this.frozen) p.ultimate.cast();
     }
   }
 
@@ -796,10 +878,11 @@ export class GameScene extends Phaser.Scene {
     if (!p || p.gone) return;
     p.leave();
     p.weapons.destroy();
+    p.ultimate.destroy();
     p.pendingLevelUps = 0;
     this.remoteOffers.delete(slot);
     if (this.state === 'ended') return;
-    this.banner(`P${slot + 1} LEFT THE GAME`, COLOR.textDim);
+    this.banner(`${p.displayName} LEFT THE GAME`, COLOR.textDim);
     this.checkLevelUpOver();
   }
 
@@ -833,6 +916,8 @@ export class GameScene extends Phaser.Scene {
         phases: p.weapons.phases(),
         revive: p.revive,
         reviveHp: p.reviveHp,
+        ultCd: p.ultimate.cooldownLeft,
+        ultActive: p.ultimate.activeLeft,
       });
     }
     const header = {
@@ -847,7 +932,7 @@ export class GameScene extends Phaser.Scene {
     };
     const now = this.time.now;
     const enemyKind = new Map(ENEMIES.map((d, i) => [d, i]));
-    const weaponKind = new Map(WEAPONS.map((d, i) => [d, i]));
+    const weaponKind = new Map(ATTACK_DEFS.map((d, i) => [d, i]));
 
     for (const slot of net.remoteSlots) {
       const p = this.players[slot];
@@ -904,6 +989,7 @@ export class GameScene extends Phaser.Scene {
           case 'g':
           case 'p':
           case 'r':
+          case 'l':
             return this.nearView(p, ev[1], ev[2]);
           case 's':
             if (sounds.has(ev[1])) return false;
@@ -926,6 +1012,7 @@ export class GameScene extends Phaser.Scene {
       if (!p || p.gone) continue;
       if (p !== this.player) p.follow(dt);
       if (!p.dead) p.weapons.update(dt, false);
+      p.ultimate.update(this.frozen ? 0 : dt, false);
     }
     this.mirror!.update(dt);
     this.fx.update(dt);
@@ -967,7 +1054,7 @@ export class GameScene extends Phaser.Scene {
     const state = STATE_CODES[s.state] ?? 'playing';
     if (state !== this.state && state !== 'ended') {
       this.state = state;
-      if (state !== 'playing') for (const p of this.players) p?.weapons.clearVisuals();
+      if (state !== 'playing') this.stopEffects();
     }
 
     for (const sp of s.players) {
@@ -977,6 +1064,7 @@ export class GameScene extends Phaser.Scene {
         if (!p.gone) {
           p.leave();
           p.weapons.destroy();
+          p.ultimate.destroy();
         }
         continue;
       }
@@ -991,6 +1079,7 @@ export class GameScene extends Phaser.Scene {
         p.moving = (sp.flags & PF.moving) !== 0;
       }
       p.weapons.setPhases(sp.phases);
+      if (this.state === 'playing') p.ultimate.sync(sp.ultCd, sp.ultActive);
       p.revive = sp.revive;
       p.reviveHp = sp.reviveHp;
       if (!(sp.flags & PF.dead) && p.dead) {
@@ -1001,6 +1090,7 @@ export class GameScene extends Phaser.Scene {
       if (sp.flags & PF.dead && !p.dead) {
         p.fallOver();
         p.weapons.clearVisuals();
+        p.ultimate.stop();
         if (p === this.player) this.onLocalDeath();
       }
       if (p === this.player && hpChanged) this.events.emit(EV.hpChanged, p.hp, p.stats.maxHp);
@@ -1051,6 +1141,9 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'f':
         this.cameras.main.flash(ev[1], 255, 236, 190);
+        break;
+      case 'l':
+        this.fx.lightning(ev[1], ev[2], ev[3], ev[4]);
         break;
     }
   }

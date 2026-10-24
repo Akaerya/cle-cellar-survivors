@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { RunSummary } from '../core/events';
+import type { Profile } from '../core/profile';
 import type { SfxName } from '../core/sfx';
 import type { Choice } from '../scenes/GameScene';
 
@@ -8,11 +9,14 @@ import type { Choice } from '../scenes/GameScene';
 /** [weapon or item id, level] */
 export type BuildPair = [string, number];
 
+/** Each lobby member's name and character, by slot. */
+export type Profiles = Record<number, Profile>;
+
 export type HostMsg =
-  | { t: 'welcome'; you: number; slots: number[] }
+  | { t: 'welcome'; you: number; slots: number[]; profiles: Profiles }
   | { t: 'reject'; reason: string }
-  | { t: 'lobby'; slots: number[] }
-  | { t: 'start'; seed: string; slots: number[] }
+  | { t: 'lobby'; slots: number[]; profiles: Profiles }
+  | { t: 'start'; seed: string; slots: number[]; profiles: Profiles }
   /** A player's weapons and items changed. */
   | { t: 'build'; slot: number; weapons: BuildPair[]; items: BuildPair[] }
   /** Level-up cards for the receiving player; `pending` counts this pick. */
@@ -25,9 +29,13 @@ export type HostMsg =
   | { t: 'toLobby' };
 
 export type ClientMsg =
-  /** The joiner's monkey (joiners move their own monkey; the host trusts it). */
+  /** The joiner's character (joiners move their own character; the host trusts it). */
   | { t: 'pos'; x: number; y: number; fx: number; fy: number; m: 0 | 1 }
-  | { t: 'pick'; index: number };
+  | { t: 'pick'; index: number }
+  /** Name or character changed in the lobby. */
+  | { t: 'profile'; name: string; character: string }
+  /** Cast the ultimate (the host checks the cooldown). */
+  | { t: 'ult' };
 
 // ------------------------------------------------------------------ effects relayed to joiners
 
@@ -51,7 +59,9 @@ export type FxEvent =
   /** aura pulse: slot, weapon index */
   | ['a', number, number]
   /** camera flash for everyone: duration */
-  | ['f', number];
+  | ['f', number]
+  /** lightning strike: x, y, radius, colour */
+  | ['l', number, number, number, number];
 
 // ------------------------------------------------------------------ binary snapshots
 
@@ -72,14 +82,17 @@ export interface SnapPlayer {
   invuln: number;
   /** One value per weapon: the orbit angle for orbit weapons, 0 otherwise. */
   phases: number[];
-  /** Fallen monkey: revive progress 0..1 and the HP fraction a revive restores. */
+  /** Fallen player: revive progress 0..1 and the HP fraction a revive restores. */
   revive: number;
   reviveHp: number;
+  /** Ultimate: seconds of cooldown left and seconds the effect has left. */
+  ultCd: number;
+  ultActive: number;
 }
 
 export interface SnapEntity {
   id: number;
-  /** Enemy: index into ENEMIES. Gem: 0 blue, 1 green, 2 red. Projectile: index into WEAPONS. */
+  /** Enemy: index into ENEMIES. Gem: 0 blue, 1 green, 2 red. Projectile: index into ATTACK_DEFS. */
   kind: number;
   /** Enemy: EF flags. Projectile: scale x 32. Gem: unused. Potion: 1 while blinking. */
   extra: number;
@@ -221,7 +234,9 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
     for (let k = 0; k < nw; k++) phases.push((u16() / 65535) * Math.PI * 2);
     const revive = u8() / 255;
     const reviveHp = u8() / 100;
-    players.push({ slot, flags, x, y, fx, fy, hp, maxHp, invuln, phases, revive, reviveHp });
+    const ultCd = u16() / 10;
+    const ultActive = u16() / 10;
+    players.push({ slot, flags, x, y, fx, fy, hp, maxHp, invuln, phases, revive, reviveHp, ultCd, ultActive });
   }
 
   const entities = (): SnapEntity[] => {
@@ -288,5 +303,7 @@ export function writeHeader(
     }
     w.u8(Math.round(Phaser.Math.Clamp(p.revive, 0, 1) * 255));
     w.u8(Math.round(p.reviveHp * 100));
+    w.u16(Math.min(65535, Math.ceil(p.ultCd * 10)));
+    w.u16(Math.min(65535, Math.ceil(p.ultActive * 10)));
   }
 }
