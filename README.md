@@ -13,7 +13,7 @@ Each character has its own four weapons (level-up cards only offer your characte
 
 Level-up cards can also offer:
 
-- **Modifications** (up to level 5, no slots) change every weapon that shares one of their tags. Projectile: Pierce, Splits, Chain. AoE: Increased AoE, Reduced AoE, Echo Strike. Duration: Increase Duration, Less Duration, Reiterate. A modification is offered once you own a weapon it changes. rsncle's Banana Throw and Coconut Orbit are tagged projectile, Tail Whip and Howler Aura AoE; yookers' weapons have no tags yet, and no weapon has the duration tag yet.
+- **Modifications** (up to level 5, no slots) change every weapon that shares one of their tags. Projectile: Pierce, Splits, Chain. AoE: Increased AoE, Reduced AoE, Echo Strike. Duration: Increase Duration, Less Duration, Reiterate. A modification is offered once you own a weapon it changes. rsncle's Banana Throw is tagged projectile, Coconut Orbit projectile and AoE, Tail Whip and Howler Aura AoE; yookers' weapons have no tags yet, and no weapon has the duration tag yet.
 - **Generic powerups** (up to level 20, no slots): Damage, Maximum Health, Ability Haste, Movement Speed, Health Regen, Damage Taken. The HUD shows your ultimate under your build: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. In co-op every teammate's ultimate is shown the same way next to their name and HP.
 
 After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing, shield blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate) with its level, damage, DPS, kills and share of their damage.
@@ -116,7 +116,7 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 - `strike`: `projectileCount` bolts every `cooldown`, each on a random enemy within `range` (or a random spot), hitting everything within `size`.
 - `shield`: blocks one hit, then recharges for `cooldown`; `reduction` is the fraction of other hits it absorbs.
 
-`levels` holds the changes for levels 2 to 5, each with card text and `add`, `mul` or `set` stat changes. Example, a bone that flies in a random direction:
+`levels` holds the changes for levels 2 to 5, each with card text and `add` (flat), `pct` (percent of the base value), `faster` (attack rate) or `set` stat changes. Percents and `faster` add up over levels: four `pct: { size: 0.15 }` levels are +60%, and four `faster: 0.4` levels divide the cooldown by 2.6. Example, a bone that flies in a random direction:
 
 ```ts
 {
@@ -126,7 +126,7 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
            size: 5, knockback: 6, spread: 0, range: 0, arc: 0, boomerang: false },
   levels: [
     { text: '+1 bone.', add: { projectileCount: 1 } },
-    { text: '+25% damage.', mul: { damage: 1.25 } },
+    { text: '+25% damage.', pct: { damage: 0.25 } },
     { text: '+1 bone.', add: { projectileCount: 1 } },
     { text: 'Bones return.', set: { boomerang: true } },
   ],
@@ -163,10 +163,10 @@ Where the spec left room, these are the calls taken. All are easy to change.
 - **Character weapon kits**: each character has exactly four weapons, which fills the four weapon slots; items are shared by everyone.
 - **Pierce** counts enemies hit before the projectile vanishes, so the starting banana hits one enemy. A boomerang projectile (none at the moment) turns around when its outbound pierce runs out or after 0.9 s, whichever comes first, and gets a fresh pierce for the return trip.
 - **Projectile modifications** resolve a hit in this order: split if the projectile still can (it is replaced by its splits, which fan out over 90 degrees and skip enemies it already hit), otherwise use up pierce, then chain to the closest unhit enemy within 140 px (a random direction if none). Orbiting coconuts never vanish, so they only get Pierce's damage bonus.
-- **Area modifications** add to the AREA stat (100% + 20% per Increased AoE level - 10% per Reduced AoE level) and scale radius or reach, like the AREA stat. Damage bonuses from modifications add up, then multiply with DAMAGE.
+- **Bonuses add up.** Area: a weapon's own size levels, the AREA stat and area modifications are one sum (Howler Aura: 100% + 15% per level after the first + 20% per Increased AoE level - 10% per Reduced AoE level), scaling radius or reach. Damage: a weapon's own damage levels and every modification's damage bonus are one sum, then multiplied by DAMAGE (the Damage powerup, +5% per level added up), the only damage multiplier. Coconut Orbit is tagged projectile and AoE, so area modifications grow the coconuts and both kinds of damage bonus count.
 - **Echo Strike** echoes have a 20 px radius before area bonuses. Echoes on one enemy in the same frame are added into one hit, so a big aura pulse does not flood the screen with numbers.
 - **Duration effects**: a new hit refreshes the stack that weapon applied; Reiterate copies keep the time left and are never refreshed. At most 30 stacks of one weapon sit on one enemy.
-- **Howler Aura** "deals damage 40% faster" means 40% more pulses per second (time between pulses divided by 1.4).
+- **Howler Aura** "deals damage 40% faster" means 40% more pulses per second per level, added up: level 5 pulses 2.6 times as often as level 1. Every "X% faster" or "X% more often" upgrade works this way. Ability Haste then shortens that cooldown by its own formula.
 - **Ability Haste** multiplies cooldowns by 100 / (100 + haste) on top of the COOLDOWN stat. Ultimates ignore both.
 - **Banana range** is 340 px. With nothing in range it holds fire and shoots the moment a target appears.
 - **Coconut Orbit and Howler Aura** use `cooldown` as the time between hits on the same enemy (orbit) or between pulses (aura), so Ability Haste speeds them up too.

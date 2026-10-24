@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { DEPTH, INNER, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
-import { hasteFactor, modsForWeapon, weaponStatsAt } from '../core/progression';
+import { applyLevelBonuses, hasteFactor, modsForWeapon, weaponLevelAt, type WeaponLevelStats } from '../core/progression';
 import { CHAIN_RANGE, ECHO_GAP, ECHO_RADIUS, SPLIT_ARC, weaponDef } from '../data';
 import type { ModEffect, WeaponDef, WeaponStats } from '../data/types';
 import type { Enemy } from '../entities/Enemy';
@@ -25,6 +25,9 @@ export interface WeaponInstance {
   owner: Player;
   def: WeaponDef;
   level: number;
+  /** This level's base stats and its percent bonuses, kept apart so they add up with the owner's bonuses. */
+  levelStats: WeaponLevelStats;
+  /** This level's stats with its own bonuses applied (before the owner's stats and modifications). */
   stats: WeaponStats;
   timer: number;
   /** Total damage dealt this run, shown on the end screen. */
@@ -124,12 +127,14 @@ export class Weapons {
 
   /** A weapon instance that is not equipped (ultimates use one to fire projectiles and count damage). */
   instance(def: WeaponDef): WeaponInstance {
+    const levelStats = weaponLevelAt(def, 1);
     return {
       uid: nextUid++,
       owner: this.owner,
       def,
       level: 1,
-      stats: weaponStatsAt(def, 1),
+      levelStats,
+      stats: applyLevelBonuses(levelStats),
       timer: 0.25,
       damage: 0,
       kills: 0,
@@ -149,8 +154,13 @@ export class Weapons {
   levelUp(id: string): void {
     const w = this.get(id);
     if (!w) return;
-    w.level++;
-    w.stats = weaponStatsAt(w.def, w.level);
+    this.setLevel(w, w.level + 1);
+  }
+
+  private setLevel(w: WeaponInstance, level: number): void {
+    w.level = level;
+    w.levelStats = weaponLevelAt(w.def, level);
+    w.stats = applyLevelBonuses(w.levelStats);
   }
 
   /** The owner's modifications changed: recompute what they add to every weapon. */
@@ -161,23 +171,27 @@ export class Weapons {
   eff(w: WeaponInstance): Effective {
     const p = this.owner.stats;
     const s = w.stats;
+    const { base, pct } = w.levelStats;
     const m = w.mod;
-    // Area bonuses add up: the AREA stat plus area modifications (only AoE weapons get those).
-    const area = Math.max(0.1, p.areaMult + m.area);
-    const damageMult = p.damageMult * (1 + m.damage);
+    // Percent bonuses add up into one sum per stat. Area: the weapon's own size levels, the AREA stat and area
+    // modifications (only AoE weapons get those). Damage: the weapon's own damage levels and modification
+    // bonuses; only DAMAGE (the Damage powerup) multiplies the result.
+    const area = Math.max(0.1, p.areaMult + (pct.size ?? 0) + m.area);
+    const damageMult = (1 + (pct.damage ?? 0) + m.damage) * p.damageMult;
     const effect = w.def.effect;
     return {
       ...s,
-      damage: s.damage * damageMult,
+      damage: base.damage * damageMult,
       cooldown: Math.max(0.05, s.cooldown * p.cooldownMult * hasteFactor(p.abilityHaste)),
-      size: s.size * area,
+      size: base.size * area,
       range: w.def.targeting === 'orbit' ? s.range * p.areaMult : s.range,
       pierce: s.pierce + m.pierce,
       split: m.split,
       splitDepth: m.splitDepth,
       chain: m.chain,
       echo: m.echo,
-      echoRadius: ECHO_RADIUS * Math.max(0.1, area + m.echoArea),
+      // Echoes grow with AREA and area modifications, not with the weapon's own size levels.
+      echoRadius: ECHO_RADIUS * Math.max(0.1, p.areaMult + m.area + m.echoArea),
       echoRepeats: m.echo > 0 ? Math.max(1, Math.round(m.echoRepeats)) : 0,
       effectDamage: effect ? effect.damage * damageMult : 0,
       effectDuration: effect ? effect.duration * Math.max(0.1, 1 + m.duration) : 0,
@@ -616,8 +630,7 @@ export class Weapons {
         const kx = en.x - p.x;
         const ky = en.y - p.y;
         const kd = Math.hypot(kx, ky) || 1;
-        this.game.enemies.hit(en, e.damage, kx / kd, ky / kd, e.knockback, w);
-        this.applyEffect(w, e, en);
+        this.areaHit(w, e, en, kx / kd, ky / kd);
       }
     }
   }
@@ -724,7 +737,10 @@ export class Weapons {
     pr.bounce(angle, CHAIN_RANGE / Math.max(1, pr.speed) + 0.1);
   }
 
-  /** A hit from the area part of a weapon. Also queues Echo Strike echoes when the weapon has them. */
+  /**
+   * A hit from an area weapon (sweeps, auras, stabs, breaths, strikes, orbiting objects). Applies duration effects
+   * and queues Echo Strike echoes when the weapon has them (only AoE-tagged weapons do).
+   */
   private areaHit(w: WeaponInstance, e: Effective, en: Enemy, dirX: number, dirY: number): void {
     const x = en.x;
     const y = en.y;
@@ -850,10 +866,7 @@ export class Weapons {
   sync(pairs: [string, number][]): void {
     for (const [id, level] of pairs) {
       const w = this.get(id) ?? this.add(id);
-      if (w.level !== level) {
-        w.level = level;
-        w.stats = weaponStatsAt(w.def, level);
-      }
+      if (w.level !== level) this.setLevel(w, level);
     }
   }
 

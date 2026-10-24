@@ -2,7 +2,7 @@ import type { WeaponDef } from './types';
 
 export const WEAPONS: WeaponDef[] = [
   // ---------------------------------------------------------------- rsncle, the banana monkey
-  // Level 1 is the base stats; `levels` are the changes for levels 2 to 5.
+  // Level 1 is the base stats; `levels` are the changes for levels 2 to 5. Percent changes add up (`pct`, `faster`).
   {
     id: 'banana',
     name: 'Banana Throw',
@@ -58,10 +58,10 @@ export const WEAPONS: WeaponDef[] = [
     },
     repeatDelay: 0.2,
     levels: [
-      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
-      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
-      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
-      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, mul: { size: 1.2, damage: 1.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, pct: { size: 0.2, damage: 0.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, pct: { size: 0.2, damage: 0.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, pct: { size: 0.2, damage: 0.2 } },
+      { text: '+1 repeat. +20% radius, +20% damage.', add: { repeat: 1 }, pct: { size: 0.2, damage: 0.2 } },
     ],
   },
   {
@@ -70,7 +70,7 @@ export const WEAPONS: WeaponDef[] = [
     description: 'Coconuts circle the monkey, damaging enemies they touch.',
     icon: 'icon_coconut',
     targeting: 'orbit',
-    tags: ['projectile'],
+    tags: ['projectile', 'aoe'],
     projectileAnim: 'coconut-spin',
     artRadius: 5,
     stats: {
@@ -88,10 +88,10 @@ export const WEAPONS: WeaponDef[] = [
       boomerang: false,
     },
     levels: [
-      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
-      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
-      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
-      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, mul: { speed: 1.25 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, pct: { speed: 0.25 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, pct: { speed: 0.25 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, pct: { speed: 0.25 } },
+      { text: '+1 coconut. Coconuts spin 25% faster.', add: { projectileCount: 1 }, pct: { speed: 0.25 } },
     ],
   },
   {
@@ -116,12 +116,12 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
     },
-    // "Deals damage 40% faster": 40% more pulses per second, so the time between pulses is divided by 1.4.
+    // "Deals damage 40% faster": 40% more pulses per second per level, added up (level 5: cooldown / 2.6).
     levels: [
-      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
-      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
-      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
-      { text: '+15% radius, +10% damage. Deals damage 40% faster.', mul: { size: 1.15, damage: 1.1, cooldown: 1 / 1.4 } },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', pct: { size: 0.15, damage: 0.1 }, faster: 0.4 },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', pct: { size: 0.15, damage: 0.1 }, faster: 0.4 },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', pct: { size: 0.15, damage: 0.1 }, faster: 0.4 },
+      { text: '+15% radius, +10% damage. Deals damage 40% faster.', pct: { size: 0.15, damage: 0.1 }, faster: 0.4 },
     ],
   },
   // ---------------------------------------------------------------- yookers, the storm knight

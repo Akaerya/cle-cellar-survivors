@@ -62,8 +62,15 @@ export interface EffectDef {
 export interface WeaponLevel {
   /** Shown on the level-up card. */
   text: string;
+  /** Flat amounts added to the base value. */
   add?: Partial<Record<NumericWeaponStat, number>>;
-  mul?: Partial<Record<NumericWeaponStat, number>>;
+  /**
+   * Percent of the base value added (0.15 = +15%). Percents add up over levels, so four +15% levels are +60%.
+   * Size and damage percents also go into the same sum as the AREA stat and modification bonuses.
+   */
+  pct?: Partial<Record<NumericWeaponStat, number>>;
+  /** Attacks this much more often (0.4 = 40% faster). Adds up over levels; the cooldown is divided by 1 + the total. */
+  faster?: number;
   set?: Partial<WeaponStats>;
 }
 

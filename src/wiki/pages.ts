@@ -102,10 +102,10 @@ const STAT_NOTES: Record<StatKey, string> = {
   armor: 'Subtracted from every hit (a hit always deals at least 1).',
   damageTaken: 'Multiplies the damage of every hit, after armor and shields (still at least 1).',
   pickupRadius: 'px. EXP gems inside it fly to you.',
-  damageMult: 'Multiplies all weapon damage, after the damage bonuses of modifications.',
+  damageMult: 'Multiplies all weapon damage. The only multiplier: damage bonuses from weapon levels and modifications add up first.',
   cooldownMult: 'Multiplies all weapon cooldowns (lower is faster, floor 10%).',
   abilityHaste: 'Cooldowns × 100 / (100 + haste): 20 haste is 16.7% shorter, 100 haste 50%. Works with COOLDOWN; not ultimates.',
-  areaMult: 'Multiplies weapon size, sweep, stab and breath reach, aura, orbit and blast radius. Area modifications add to it.',
+  areaMult: 'Scales weapon size, sweep, stab and breath reach, aura, orbit and blast radius. Weapon size levels and area modifications add to it.',
   expMult: 'Multiplies EXP from gems you pick up.',
 };
 
@@ -188,7 +188,7 @@ function weaponsPage(): Block[] {
     },
     {
       t: 'p',
-      text: 'TAGS decide which modifications change a weapon (see MODS). REPEATS: the attack is done again that many times right after each one, a moment apart (squeezed so all repeats land before the next attack).',
+      text: 'Percent changes add up over levels: four +15% levels are +60%, and four times 40% faster is 160% faster (the cooldown is divided by 2.6). TAGS decide which modifications change a weapon (see MODS). REPEATS: the attack is done again that many times right after each one, a moment apart (squeezed so all repeats land before the next attack).',
       color: COLOR.textDim,
     },
   ];
@@ -368,11 +368,11 @@ function modsPage(): Block[] {
     { t: 'h', text: 'AREA' },
     {
       t: 'p',
-      text: 'Area bonuses add up with each other and with the AREA stat: 2 levels of Increased AoE and 1 of Reduced AoE give 100% + 40% - 10% = 130% radius or reach. They change only the area part of a weapon.',
+      text: "Area bonuses add up: a weapon's own size levels, the AREA stat and area modifications go into one sum. Howler Aura at level 5 (+60%) with 2 levels of Increased AoE (+40%) and 1 of Reduced AoE (-10%) has 100% + 60% + 40% - 10% = 190% of its base radius. Area modifications change only the area part of a weapon: the reach of sweeps, stabs and breaths, the radius of auras and strikes, and the size of orbiting objects.",
     },
     {
       t: 'p',
-      text: `Echo Strike: every enemy an AOE weapon hits sends out an echo with a ${ECHO_RADIUS} px radius (scaled by area like the weapon, plus Echo Strike's own area bonus). It deals a share of the hit to everything inside, the enemy that was hit included. Echo damage never echoes again. Echoes landing on the same enemy in the same frame count as one hit.`,
+      text: `Echo Strike: every enemy an AOE weapon hits sends out an echo with a ${ECHO_RADIUS} px radius (scaled by the AREA stat, area modifications and Echo Strike's own area bonus, not by the weapon's size levels). It deals a share of the hit to everything inside, the enemy that was hit included. Echo damage never echoes again. Echoes landing on the same enemy in the same frame count as one hit.`,
     },
     { t: 'h', text: 'DURATION' },
     {
@@ -380,7 +380,10 @@ function modsPage(): Block[] {
       text: `Duration weapons leave a stack on every enemy they hit that deals damage each tick until it runs out; hitting again refreshes it. Reiterate: when a stack is applied or deals damage it may copy itself with the time it has left. Copies tick and reiterate too, but are never refreshed. At most ${MAX_EFFECT_STACKS} stacks of one weapon sit on one enemy.`,
     },
     { t: 'h', text: 'DAMAGE' },
-    { t: 'p', text: 'Damage bonuses from modifications add up with each other, then multiply with your DAMAGE stat.' },
+    {
+      t: 'p',
+      text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconut Orbit is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up), the only damage multiplier.",
+    },
   ];
   const weapons = CHARACTERS.flatMap((c) => c.weapons.map(weaponDef));
   for (const def of MODIFICATIONS) {

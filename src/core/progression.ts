@@ -1,6 +1,6 @@
 import { MAX_LEVEL } from '../constants';
 import { BASE_STATS } from '../data/player';
-import type { ItemDef, ModEffect, ModificationDef, ModKey, PlayerStats, StatKey, WeaponDef, WeaponLevel, WeaponStats } from '../data/types';
+import type { ItemDef, ModEffect, ModificationDef, ModKey, NumericWeaponStat, PlayerStats, StatKey, WeaponDef, WeaponStats } from '../data/types';
 
 /** EXP needed to go from `level` to `level + 1`. */
 export function expToNext(level: number): number {
@@ -8,20 +8,46 @@ export function expToNext(level: number): number {
   return 5 + 10 * 19 + 13 * (level - 20);
 }
 
-function applyLevel(s: WeaponStats, lv: WeaponLevel): void {
-  const o = s as unknown as Record<string, number>;
-  // Optional stats (repeat, reduction) count as 0 until a level gives them a value.
-  if (lv.add) for (const [k, v] of Object.entries(lv.add)) o[k] = (o[k] ?? 0) + v;
-  if (lv.mul) for (const [k, v] of Object.entries(lv.mul)) o[k] = (o[k] ?? 0) * v;
-  if (lv.set) Object.assign(s, lv.set);
+/** A weapon at one level, with its percent bonuses kept apart so they can add up with other bonuses. */
+export interface WeaponLevelStats {
+  /** Level-1 stats plus every flat change (`add`, `set`) up to this level. */
+  base: WeaponStats;
+  /** Percent bonuses summed over levels, by stat (0.6 = +60% of the base value). */
+  pct: Partial<Record<NumericWeaponStat, number>>;
+  /** Attack-rate bonus summed over levels (1.6 = 160% faster: cooldown / 2.6). */
+  faster: number;
 }
 
-/** Weapon stats at a given level (1..5), built from the level-1 stats and the per-level changes. */
-export function weaponStatsAt(def: WeaponDef, level: number): WeaponStats {
-  const s: WeaponStats = { ...def.stats };
+/** Sums a weapon's level changes up to `level` (1..5). Percents add up; nothing multiplies. */
+export function weaponLevelAt(def: WeaponDef, level: number): WeaponLevelStats {
+  const base: WeaponStats = { ...def.stats };
+  const o = base as unknown as Record<string, number>;
+  const pct: Partial<Record<NumericWeaponStat, number>> = {};
+  let faster = 0;
   const steps = Math.min(level - 1, def.levels.length);
-  for (let i = 0; i < steps; i++) applyLevel(s, def.levels[i]);
+  for (let i = 0; i < steps; i++) {
+    const lv = def.levels[i];
+    // Optional stats (repeat, reduction) count as 0 until a level gives them a value.
+    if (lv.add) for (const [k, v] of Object.entries(lv.add)) o[k] = (o[k] ?? 0) + v;
+    if (lv.pct) for (const [k, v] of Object.entries(lv.pct)) pct[k as NumericWeaponStat] = (pct[k as NumericWeaponStat] ?? 0) + v;
+    if (lv.faster) faster += lv.faster;
+    if (lv.set) Object.assign(base, lv.set);
+  }
+  return { base, pct, faster };
+}
+
+/** The stats of one level with its own bonuses applied: base x (1 + percent), cooldown / (1 + faster). */
+export function applyLevelBonuses(l: WeaponLevelStats): WeaponStats {
+  const s: WeaponStats = { ...l.base };
+  const o = s as unknown as Record<string, number>;
+  for (const [k, v] of Object.entries(l.pct)) o[k] = (o[k] ?? 0) * (1 + v);
+  s.cooldown = s.cooldown / (1 + l.faster);
   return s;
+}
+
+/** Weapon stats at a given level (1..5), before the owner's stats and modifications (what the wiki shows). */
+export function weaponStatsAt(def: WeaponDef, level: number): WeaponStats {
+  return applyLevelBonuses(weaponLevelAt(def, level));
 }
 
 /** Card text for reaching `level`: the description for a new weapon, else that level's change. */
