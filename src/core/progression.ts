@@ -60,6 +60,7 @@ export function weaponLevelText(def: WeaponDef, level: number): string {
 export function emptyModEffect(): Required<ModEffect> {
   return {
     pierce: 0,
+    projectiles: 0,
     damage: 0,
     split: 0,
     splitDepth: 0,

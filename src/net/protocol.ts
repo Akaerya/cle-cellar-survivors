@@ -63,7 +63,9 @@ export type FxEvent =
   /** lightning strike: x, y, radius, colour */
   | ['l', number, number, number, number]
   /** Echo Strike ring: x, y, radius, colour */
-  | ['e', number, number, number, number];
+  | ['e', number, number, number, number]
+  /** bomb explosion: x, y, radius, colour */
+  | ['x', number, number, number, number];
 
 // ------------------------------------------------------------------ binary snapshots
 

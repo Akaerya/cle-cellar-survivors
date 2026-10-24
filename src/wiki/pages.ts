@@ -23,7 +23,7 @@ import {
   SPAWN_TICK_MS,
   COLOR,
 } from '../constants';
-import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffectAt, weaponStatsAt } from '../core/progression';
+import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffectAt, weaponLevelAt, weaponStatsAt } from '../core/progression';
 import { NAME_MAX } from '../core/profile';
 import {
   BASE_STATS,
@@ -125,6 +125,8 @@ const TARGETING_NOTES: Record<Targeting, string> = {
   random: 'Fires in a random direction.',
   orbit:
     'COUNT objects circle you at RANGE px (scaled by AREA). Each enemy can be hit by this weapon once per COOLDOWN. SPEED is how fast they travel along the ring.',
+  bomb:
+    'Throws at the closest enemy within RANGE (holds fire while nothing is in range). The projectile flies at SPEED, passes over every other enemy and explodes on reaching that enemy, or the spot where it died, hitting everything within RADIUS px. RADIUS is scaled by AREA. It never hits anything on the way, so it cannot split or chain.',
   aura: 'Every COOLDOWN, hits everything within AREA px of you.',
   stab: `Thrusts at the closest enemy once it is within REACH + ${STAB_LEAD} px, hitting everything along a blade REACH px long and WIDTH px wide. Holds while nothing is close. REACH is scaled by AREA.`,
   breath: 'Every COOLDOWN, sprays a cone at the closest enemy within REACH px: everything inside the ARC (degrees) and REACH is hit. Holds while nothing is in reach. REACH is scaled by AREA.',
@@ -164,6 +166,7 @@ const COLUMNS: Record<Targeting, Col[]> = {
   breath: [C.damage, C.cooldown, C.reach, C.arc, C.knockback],
   strike: [C.damage, C.cooldown, C.bolts, C.radius, C.range, C.knockback],
   shield: [C.recharge, C.absorbs],
+  bomb: [C.damage, C.cooldown, C.count, C.radius, C.speed, C.range, C.knockback],
 };
 
 // ------------------------------------------------------------------ pages
@@ -200,6 +203,13 @@ function weaponsPage(): Block[] {
       const start = def.id === c.startingWeapon ? ' · STARTING WEAPON' : '';
       out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()}${start} · TAGS: ${tagList(def.tags)} · ${def.description}` });
       out.push({ t: 'p', text: TARGETING_NOTES[def.targeting], color: COLOR.textDim });
+      if (def.burst) {
+        out.push({
+          t: 'p',
+          text: `With more than one projectile (COUNT, or Additional Projectiles) they are thrown one at a time, spread evenly over ${pct(def.burst)} of the cooldown (after ABILITY HASTE): the first at the closest enemy, each of the others at a random enemy on your screen.`,
+          color: COLOR.textDim,
+        });
+      }
       if (def.effect) {
         const fx = def.effect;
         out.push({
@@ -342,6 +352,7 @@ function powerupsPage(): Block[] {
 function modSummary(e: Required<ModEffect>): string {
   const parts: string[] = [];
   if (e.pierce) parts.push(`+${num(e.pierce)} PIERCE`);
+  if (e.projectiles) parts.push(`+${num(e.projectiles)} PROJECTILE${e.projectiles === 1 ? '' : 'S'}`);
   if (e.split) parts.push(`SPLITS INTO ${num(e.split)}${e.splitDepth > 1 ? `, UP TO ${num(e.splitDepth)} TIMES` : ''}`);
   if (e.chain) parts.push(`+${num(e.chain)} BOUNCE${e.chain === 1 ? '' : 'S'}`);
   if (e.area) parts.push(`${signedPct(e.area)} AREA`);
@@ -354,6 +365,18 @@ function modSummary(e: Required<ModEffect>): string {
   return parts.join(', ');
 }
 
+/** Worked example for the AREA rule, from the current numbers (Howler Aura at max level, 2 Increased AoE, 1 Reduced AoE). */
+function areaExample(): string {
+  const howl = weaponLevelAt(weaponDef('howl'), MAX_LEVEL).pct.size ?? 0;
+  const more = MODIFICATIONS.find((m) => m.id === 'more_area');
+  const less = MODIFICATIONS.find((m) => m.id === 'less_area');
+  if (!more || !less) return '';
+  const inc = modEffectAt(more, 2).area;
+  const red = modEffectAt(less, 1).area;
+  const total = 1 + howl + inc + red;
+  return `Howler Aura at level ${MAX_LEVEL} (${signedPct(howl)}) with 2 levels of Increased AoE (${signedPct(inc)}) and 1 of Reduced AoE (${signedPct(red)}) has ${pct(total)} of its base radius.`;
+}
+
 function modsPage(): Block[] {
   const out: Block[] = [
     {
@@ -363,12 +386,12 @@ function modsPage(): Block[] {
     { t: 'h', text: 'PROJECTILES' },
     {
       t: 'p',
-      text: `On hitting an enemy a projectile first splits if it still can: it is replaced by its splits, which fan out over ${SPLIT_ARC} degrees from where it was going, skip the enemies it already hit and start with full pierce and bounces. Otherwise it uses up 1 pierce. Once pierce runs out it chains: it flies to the closest enemy within ${CHAIN_RANGE} px that it has not hit yet (a random direction when there is none), using up 1 bounce per hit. Projectiles that never vanish (orbiting coconuts) only get the damage bonus. At most ${MAX_PROJECTILES} projectiles fly at once; splits past that are lost.`,
+      text: `On hitting an enemy a projectile first splits if it still can: it is replaced by its splits, which fan out over ${SPLIT_ARC} degrees from where it was going, skip the enemies it already hit and start with full pierce and bounces. Otherwise it uses up 1 pierce. Once pierce runs out it chains: it flies to the closest enemy within ${CHAIN_RANGE} px that it has not hit yet (a random direction when there is none), using up 1 bounce per hit. Projectiles that never hit anything on the way (Coconuts) cannot split or chain; of Pierce they only get the damage bonus. Additional Projectiles adds to COUNT: spread weapons fan the extra projectiles out, Coconuts throws them one after another. At most ${MAX_PROJECTILES} projectiles fly at once; splits past that are lost.`,
     },
     { t: 'h', text: 'AREA' },
     {
       t: 'p',
-      text: "Area bonuses add up: a weapon's own size levels, the AREA stat and area modifications go into one sum. Howler Aura at level 5 (+60%) with 2 levels of Increased AoE (+40%) and 1 of Reduced AoE (-10%) has 100% + 60% + 40% - 10% = 190% of its base radius. Area modifications change only the area part of a weapon: the reach of sweeps, stabs and breaths, the radius of auras and strikes, and the size of orbiting objects.",
+      text: `Area bonuses add up: a weapon's own size levels, the AREA stat and area modifications go into one sum. ${areaExample()} Area modifications change only the area part of a weapon: the reach of sweeps, stabs and breaths, the radius of auras, strikes and bomb blasts, and the size of orbiting objects.`,
     },
     {
       t: 'p',
@@ -382,7 +405,7 @@ function modsPage(): Block[] {
     { t: 'h', text: 'DAMAGE' },
     {
       t: 'p',
-      text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconut Orbit is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up), the only damage multiplier.",
+      text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconuts is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up), the only damage multiplier.",
     },
   ];
   const weapons = CHARACTERS.flatMap((c) => c.weapons.map(weaponDef));
@@ -390,11 +413,13 @@ function modsPage(): Block[] {
     out.push({ t: 'gap', h: 6 });
     out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `TAGS: ${tagList(def.tags)} · ${def.description}` });
     // Orbiting objects never vanish, so pierce, split and chain do nothing for them; only the other bonuses apply.
+    // Weapons with infinite pierce never use up pierce, split or chain; only the modification's other bonuses apply.
     const top = modEffectAt(def, def.levels.length);
-    const forOrbit = top.damage || top.area || top.echo || top.duration || top.reiterate;
+    const passThrough = top.pierce || top.split || top.chain;
+    const otherwise = top.projectiles || top.damage || top.area || top.echo || top.duration || top.reiterate;
     const changes = weapons
-      .filter((w) => w.tags?.some((t) => def.tags.includes(t)) && (w.targeting !== 'orbit' || forOrbit))
-      .map((w) => (w.targeting === 'orbit' && (top.pierce || top.split || top.chain) ? `${w.name.toUpperCase()} (DAMAGE ONLY)` : w.name.toUpperCase()));
+      .filter((w) => w.tags?.some((t) => def.tags.includes(t)) && (w.stats.pierce !== Infinity || otherwise))
+      .map((w) => (w.stats.pierce === Infinity && passThrough ? `${w.name.toUpperCase()} (DAMAGE ONLY)` : w.name.toUpperCase()));
     out.push({
       t: 'p',
       text: changes.length ? `CHANGES: ${changes.join(', ')}.` : 'NO WEAPON HAS THIS TAG YET, SO IT IS NEVER OFFERED.',

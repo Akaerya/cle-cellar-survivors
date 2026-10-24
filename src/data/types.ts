@@ -3,7 +3,7 @@
  * that satisfies one of these types; engine code reads them generically.
  */
 
-export type Targeting = 'nearest' | 'facing' | 'random' | 'orbit' | 'aura' | 'stab' | 'breath' | 'strike' | 'shield';
+export type Targeting = 'nearest' | 'facing' | 'random' | 'orbit' | 'aura' | 'stab' | 'breath' | 'strike' | 'shield' | 'bomb';
 
 /**
  * Ability tags. A modification (data/modifications.ts) changes every weapon that carries one of its tags.
@@ -22,12 +22,12 @@ export interface WeaponStats {
   projectileCount: number;
   /** px/s. For orbit weapons this is the speed along the ring. 0 with `facing` means a melee sweep. */
   speed: number;
-  /** Enemies hit before the projectile vanishes. Use Infinity for sweeps, orbits and auras. */
+  /** Enemies hit before the projectile vanishes. Use Infinity for sweeps, orbits, auras and bombs. */
   pierce: number;
-  /** Seconds a projectile lives (for sweeps: how long the slash is drawn). */
+  /** Seconds a projectile lives (for sweeps: how long the slash is drawn; for bombs: longest flight before it explodes anyway). */
   lifetime: number;
   /**
-   * px radius of the projectile, sweep or aura; reach of a stab or breath; blast radius of a strike.
+   * px radius of the projectile, sweep or aura; reach of a stab or breath; blast radius of a strike or bomb.
    * Scaled by the player's area multiplier.
    */
   size: number;
@@ -35,7 +35,7 @@ export interface WeaponStats {
   knockback: number;
   /** Degrees between projectiles in one volley. */
   spread: number;
-  /** `nearest`: max distance to a target. `orbit`: ring radius (scaled by area). `strike`: px around the player bolts land in. */
+  /** `nearest`, `bomb`: max distance to a target. `orbit`: ring radius (scaled by area). `strike`: px around the player bolts land in. */
   range: number;
   /** `facing` sweeps and `breath`: arc width in degrees. `stab`: blade width in px. */
   arc: number;
@@ -95,6 +95,11 @@ export interface WeaponDef {
   levels: WeaponLevel[];
   /** Seconds between an attack and each of its repeats (`stats.repeat`). */
   repeatDelay?: number;
+  /**
+   * `bomb`: with more than one projectile, they are thrown one at a time, spread evenly over this fraction of the
+   * cooldown, instead of all at once. The first goes at the closest enemy, the rest at random enemies on screen.
+   */
+  burst?: number;
   /** Timed effect each hit leaves on the enemy. Give the weapon the `duration` tag. */
   effect?: EffectDef;
 }
@@ -106,6 +111,8 @@ export interface WeaponDef {
 export interface ModEffect {
   /** Extra enemies a projectile hits before vanishing. */
   pierce?: number;
+  /** Extra projectiles each time the weapon fires. */
+  projectiles?: number;
   /** Fraction added to damage (0.15 = +15%). Bonuses from different modifications add up. */
   damage?: number;
   /** Projectiles split into this many on hitting an enemy (0 = no split). */

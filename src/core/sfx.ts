@@ -23,7 +23,8 @@ export type SfxName =
   | 'zap'
   | 'thunder'
   | 'block'
-  | 'ultimate';
+  | 'ultimate'
+  | 'boom';
 
 const THROTTLE_MS: Partial<Record<SfxName, number>> = {
   throw: 60,
@@ -36,6 +37,7 @@ const THROTTLE_MS: Partial<Record<SfxName, number>> = {
   zap: 90,
   thunder: 70,
   block: 100,
+  boom: 70,
 };
 
 class SfxEngine {
@@ -157,6 +159,10 @@ class SfxEngine {
       case 'ultimate':
         [262, 392, 523, 784].forEach((f, i) => this.tone(t + i * 0.06, f, f * 1.5, 0.35, 'sawtooth', 0.05));
         this.noiseBurst(t, 0.5, 0.08, 'bandpass', 600, 3000);
+        break;
+      case 'boom':
+        this.noiseBurst(t, 0.28, 0.13, 'lowpass', 1600, 90);
+        this.tone(t, 120, 45, 0.22, 'sine', 0.09);
         break;
       case 'revive':
         [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(t + i * 0.08, f, f, 0.18, 'triangle', 0.07));

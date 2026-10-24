@@ -452,11 +452,16 @@ export class GameScene extends Phaser.Scene {
     return this.livePlayers()[0] ?? p;
   }
 
-  private nearView(p: Player, x: number, y: number): boolean {
+  /** True when (x, y) is on the screen of player `p` (the camera stops at the arena edges), widened by `margin` px. */
+  onScreen(p: Player, x: number, y: number, margin = 0): boolean {
     const t = this.viewTarget(p);
     const cx = Phaser.Math.Clamp(t.x, VIEW_W / 2, ARENA_SIZE - VIEW_W / 2);
     const cy = Phaser.Math.Clamp(t.y, VIEW_H / 2, ARENA_SIZE - VIEW_H / 2);
-    return Math.abs(x - cx) < VIEW_W / 2 + CULL_MARGIN && Math.abs(y - cy) < VIEW_H / 2 + CULL_MARGIN;
+    return Math.abs(x - cx) < VIEW_W / 2 + margin && Math.abs(y - cy) < VIEW_H / 2 + margin;
+  }
+
+  private nearView(p: Player, x: number, y: number): boolean {
+    return this.onScreen(p, x, y, CULL_MARGIN);
   }
 
   // ------------------------------------------------------------------ combat
@@ -1045,6 +1050,7 @@ export class GameScene extends Phaser.Scene {
           case 'r':
           case 'l':
           case 'e':
+          case 'x':
             return this.nearView(p, ev[1], ev[2]);
           case 's':
             if (sounds.has(ev[1])) return false;
@@ -1202,6 +1208,9 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'e':
         this.fx.echo(ev[1], ev[2], ev[3], ev[4]);
+        break;
+      case 'x':
+        this.fx.blast(ev[1], ev[2], ev[3], ev[4]);
         break;
     }
   }

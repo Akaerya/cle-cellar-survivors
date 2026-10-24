@@ -189,6 +189,27 @@ export class Fx {
     this.emitter(color).explode(5, x, y);
   }
 
+  /** A bomb going off: a bright flash filling `radius` px, a shock ring and some debris. */
+  blast(x: number, y: number, radius: number, color: number): void {
+    this.relay?.(['x', Math.round(x), Math.round(y), Math.round(radius), color]);
+    const g = this.scene.add.graphics().setDepth(DEPTH.fx);
+    const state = { k: 0 };
+    const draw = () => {
+      const a = 1 - state.k;
+      g.clear();
+      g.fillStyle(0xffffff, 0.35 * a * a);
+      g.fillCircle(x, y, radius * (0.4 + 0.3 * state.k));
+      g.fillStyle(color, 0.3 * a);
+      g.fillCircle(x, y, radius * (0.6 + 0.4 * state.k));
+      g.lineStyle(2, color, 0.9 * a);
+      g.strokeCircle(x, y, radius * (0.7 + 0.3 * state.k));
+    };
+    draw();
+    this.scene.tweens.add({ targets: state, k: 1, duration: 280, ease: 'Quad.easeOut', onUpdate: draw, onComplete: () => g.destroy() });
+    this.emitter(color).explode(8, x, y);
+    this.emitter(0x4a2c16).explode(4, x, y);
+  }
+
   /** Expanding ring, e.g. on level up. */
   ring(x: number, y: number, color: number, radius: number, duration = 400): void {
     this.relay?.(['r', Math.round(x), Math.round(y), color, radius, duration]);

@@ -47,6 +47,10 @@ export interface WeaponInstance {
   /** Repeats of the last attack still to come, and seconds until the next one. */
   repeatsLeft: number;
   repeatTimer: number;
+  /** Bombs with `burst`: projectiles of the last throw still to come, seconds until the next, and the gap between them. */
+  burstLeft: number;
+  burstTimer: number;
+  burstGap: number;
 }
 
 /** Stats after the owner's multipliers (damage, cooldown, area) and modifications. */
@@ -148,6 +152,9 @@ export class Weapons {
       mod: modsForWeapon(def, this.owner.mods),
       repeatsLeft: 0,
       repeatTimer: 0,
+      burstLeft: 0,
+      burstTimer: 0,
+      burstGap: 0,
     };
   }
 
@@ -186,6 +193,7 @@ export class Weapons {
       size: base.size * area,
       range: w.def.targeting === 'orbit' ? s.range * p.areaMult : s.range,
       pierce: s.pierce + m.pierce,
+      projectileCount: s.projectileCount + m.projectiles,
       split: m.split,
       splitDepth: m.splitDepth,
       chain: m.chain,
@@ -210,6 +218,7 @@ export class Weapons {
         case 'stab':
         case 'breath':
         case 'strike':
+        case 'bomb':
           if (firing) this.tickShooter(w, e, dt);
           break;
         case 'shield':
@@ -227,7 +236,7 @@ export class Weapons {
     if (firing) this.processEchoes();
   }
 
-  /** Projectiles of every player: lifetime, boomerang steering, and the arena wall. */
+  /** Projectiles of every player: lifetime, boomerang and bomb steering, and the arena wall. Bombs explode instead of vanishing. */
   static updateProjectiles(group: Phaser.Physics.Arcade.Group, dt: number): void {
     const children = group.getChildren() as Projectile[];
     for (let i = 0; i < children.length; i++) {
@@ -236,11 +245,26 @@ export class Weapons {
       const o = pr.weapon.owner;
       const alive = pr.step(dt, o.x, o.y);
       const hitWall = pr.x < INNER.left || pr.x > INNER.right || pr.y < INNER.top || pr.y > INNER.bottom;
-      if (!alive || hitWall) Weapons.release(pr);
+      if (pr.bomb) {
+        if (pr.arrived || !alive || hitWall) o.weapons.explode(pr);
+      } else if (!alive || hitWall) Weapons.release(pr);
     }
   }
 
   private tickShooter(w: WeaponInstance, e: Effective, dt: number): void {
+    if (w.burstLeft > 0) {
+      w.burstTimer -= dt;
+      while (w.burstLeft > 0 && w.burstTimer <= 0) {
+        w.burstLeft--;
+        w.burstTimer += w.burstGap;
+        const p = this.owner;
+        const target = this.randomOnScreen() ?? this.game.enemies.nearest(p.x, p.y, e.range);
+        if (target) {
+          this.throwBomb(w, e, target);
+          this.game.playSfx('throw', p.x, p.y);
+        }
+      }
+    }
     if (w.repeatsLeft > 0) {
       w.repeatTimer -= dt;
       if (w.repeatTimer <= 0) {
@@ -292,6 +316,12 @@ export class Weapons {
     } else if (w.def.targeting === 'strike') {
       this.strike(w, e);
       fired = true;
+    } else if (w.def.targeting === 'bomb') {
+      const target = this.game.enemies.nearest(p.x, p.y, e.range);
+      if (target) {
+        this.throwBombs(w, e, target);
+        fired = true;
+      }
     } else {
       const base = Math.atan2(p.facing.y, p.facing.x);
       if (e.speed > 0) this.volley(w, e, base);
@@ -311,6 +341,62 @@ export class Weapons {
       pr.fire(w, p.x, p.y - 2, angle, e);
     }
     this.game.playSfx('throw', p.x, p.y);
+  }
+
+  /**
+   * Bomb weapons: the first projectile goes at `first` (the closest enemy). With `burst`, the others follow one at a
+   * time, spread evenly over that fraction of the cooldown, each at a random enemy on screen; without it they all go now.
+   */
+  private throwBombs(w: WeaponInstance, e: Effective, first: Enemy): void {
+    const p = this.owner;
+    this.throwBomb(w, e, first);
+    const n = Math.max(1, Math.round(e.projectileCount));
+    if (n > 1 && w.def.burst) {
+      w.burstLeft = n - 1;
+      w.burstGap = (w.def.burst * e.cooldown) / n;
+      w.burstTimer = w.burstGap;
+    } else {
+      for (let i = 1; i < n; i++) this.throwBomb(w, e, this.randomOnScreen() ?? first);
+    }
+    this.game.playSfx('throw', p.x, p.y);
+  }
+
+  /** One bomb at `target`. It flies at art size, touches nothing on the way, and explodes on reaching the target. */
+  private throwBomb(w: WeaponInstance, e: Effective, target: Enemy): void {
+    const p = this.owner;
+    const pr = this.projectiles.get(p.x, p.y) as Projectile | null;
+    if (!pr) return;
+    const angle = Math.atan2(target.y - p.y, target.x - p.x);
+    pr.fire(w, p.x, p.y - 2, angle, { ...e, size: w.def.artRadius ?? 5, split: 0, chain: 0 });
+    pr.aim(target);
+  }
+
+  /** A random living enemy on the owner's screen, or null when there is none. */
+  private randomOnScreen(): Enemy | null {
+    const list: Enemy[] = [];
+    for (const en of this.game.enemies.active) if (en.active && this.game.onScreen(this.owner, en.x, en.y)) list.push(en);
+    return list.length > 0 ? this.game.rng.pick(list) : null;
+  }
+
+  /** A bomb explodes where it is: everything within the weapon's area is hit (an area hit, so AoE modifications apply). */
+  explode(pr: Projectile): void {
+    const w = pr.weapon;
+    const e = this.eff(w);
+    const x = pr.x;
+    const y = pr.y;
+    Weapons.release(pr);
+    this.query.length = 0;
+    this.game.enemies.grid.query(x, y, e.size + 16, this.query);
+    for (const en of this.query) {
+      if (!en.active) continue;
+      const dx = en.x - x;
+      const dy = en.y - y;
+      const d = Math.hypot(dx, dy);
+      if (d > e.size + en.radius) continue;
+      this.areaHit(w, e, en, dx / (d || 1), dy / (d || 1));
+    }
+    this.game.fx.blast(x, y, e.size, w.def.color ?? 0xffffff);
+    this.game.playSfx('boom', x, y);
   }
 
   /** Fires one projectile of `w` from anywhere (ultimates). Returns false when the pool is empty. */
@@ -678,7 +764,8 @@ export class Weapons {
    * use up pierce; once pierce is gone a boomerang turns around, anything else chains while it has bounces.
    */
   onProjectileHit(pr: Projectile, en: Enemy): void {
-    if (!pr.active || !en.active || pr.hit.has(en)) return;
+    // Bombs touch nothing on the way; they explode on reaching their target (see updateProjectiles).
+    if (pr.bomb || !pr.active || !en.active || pr.hit.has(en)) return;
     pr.hit.add(en);
     const body = pr.body as Phaser.Physics.Arcade.Body;
     const v = Math.hypot(body.velocity.x, body.velocity.y);
@@ -894,6 +981,7 @@ export class Weapons {
       w.gfx?.clear();
       w.slashes.length = 0;
       w.repeatsLeft = 0;
+      w.burstLeft = 0;
     }
     this.echoes.length = 0;
   }

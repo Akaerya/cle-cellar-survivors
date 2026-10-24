@@ -8,6 +8,8 @@ import type { WeaponInstance } from '../systems/Weapons';
 /** Boomerang bananas slow to a stop over this many seconds, then fly back. */
 const BOOMERANG_OUT = 0.9;
 const BOOMERANG_RETURN_ACCEL = 0.45; // seconds to reach full return speed
+/** Bombs whose target died explode once they are this close (px) to where it was last seen. */
+const BOMB_LOST_REACH = 4;
 
 /** What one shot needs to know. Split, split depth and chain come from modifications (0 without them). */
 export interface ShotStats {
@@ -44,6 +46,17 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
   splitsLeft = 0;
   /** Bounces left once pierce is used up (Chain modification). */
   bouncesLeft = 0;
+  /**
+   * Bomb weapons: the projectile homes in on `target` and touches nothing else on the way. It explodes on reaching
+   * the target, or the spot where the target was last seen if it died (its spawn id changes when the pool reuses it).
+   */
+  bomb = false;
+  target: Enemy | null = null;
+  targetId = 0;
+  targetX = 0;
+  targetY = 0;
+  /** Bomb: reached its target this frame and should explode. */
+  arrived = false;
   /** Enemies hit on the current pass. Cleared when a boomerang turns around. */
   readonly hit = new Set<Enemy>();
   /** Identifies this shot to network clients (pooled objects are reused). */
@@ -85,9 +98,22 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.splitCount = Math.round(o.split ?? 0);
     this.splitsLeft = this.splitCount >= 2 ? Math.max(1, Math.round(o.splitDepth ?? 1)) : 0;
     this.bouncesLeft = Math.round(o.chain ?? 0);
+    this.bomb = false;
+    this.target = null;
+    this.arrived = false;
     this.hit.clear();
     this.setDepth(DEPTH.projectiles);
     body.setVelocity(this.dirX * this.speed, this.dirY * this.speed);
+  }
+
+  /** Bomb: home in on `target` from now on (call right after `fire`). */
+  aim(target: Enemy): void {
+    this.bomb = true;
+    this.target = target;
+    this.targetId = target.netId;
+    this.targetX = target.x;
+    this.targetY = target.y;
+    this.arrived = false;
   }
 
   /** Chain: flies off toward `angle`, with at least `minLife` seconds left to get there. */
@@ -112,6 +138,26 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.age += dt;
     if (this.age >= this.life) return false;
     const body = this.body as Phaser.Physics.Arcade.Body;
+    if (this.bomb) {
+      const t = this.target;
+      let reach = BOMB_LOST_REACH;
+      if (t && t.active && t.netId === this.targetId) {
+        this.targetX = t.x;
+        this.targetY = t.y;
+        reach = t.radius + body.halfWidth;
+      }
+      const dx = this.targetX - this.x;
+      const dy = this.targetY - this.y;
+      const d = Math.hypot(dx, dy);
+      if (d <= reach) {
+        this.arrived = true;
+        return true;
+      }
+      this.dirX = dx / d;
+      this.dirY = dy / d;
+      body.setVelocity(this.dirX * this.speed, this.dirY * this.speed);
+      return true;
+    }
     if (!this.boomerang) return true;
 
     if (!this.returning) {
