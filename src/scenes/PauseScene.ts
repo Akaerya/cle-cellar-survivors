@@ -4,9 +4,13 @@ import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { formatTime } from '../core/progression';
 import { sfx } from '../core/sfx';
 import { Button, Menu, drawPanel, onKey, text } from '../ui/widgets';
+import { leaveSession } from '../net/flow';
 import type { GameScene } from './GameScene';
 
-/** Resume, Restart, Quit to title, plus a look at the current build and stats. */
+/**
+ * Resume, Restart, Quit to title, plus a look at the current build and stats.
+ * In co-op the run keeps going underneath (it cannot pause for everyone) and there is no restart.
+ */
 export class PauseScene extends Phaser.Scene {
   constructor() {
     super(SCENES.pause);
@@ -23,7 +27,7 @@ export class PauseScene extends Phaser.Scene {
     const ph = 252;
     const g = this.add.graphics();
     drawPanel(g, px, py, pw, ph);
-    text(this, VIEW_W / 2, py + 22, 'PAUSED', { scale: 3, origin: [0.5, 0.5], color: COLOR.gold });
+    text(this, VIEW_W / 2, py + 22, run.coop ? 'MENU' : 'PAUSED', { scale: 3, origin: [0.5, 0.5], color: COLOR.gold });
     text(this, VIEW_W / 2, py + 44, `${formatTime(run.runTime)} · LEVEL ${run.level} · ${run.kills} KILLS`, {
       origin: [0.5, 0.5],
       color: COLOR.textDim,
@@ -31,18 +35,29 @@ export class PauseScene extends Phaser.Scene {
 
     const resume = () => {
       this.scene.stop();
-      this.scene.resume(SCENES.game);
+      if (!run.coop) this.scene.resume(SCENES.game);
     };
     const bx = px + 20;
-    const buttons = [
-      new Button(this, bx, py + 70, 150, 24, 'RESUME', resume),
-      new Button(this, bx, py + 102, 150, 24, 'RESTART', () => this.scene.start(SCENES.game, {})),
-      new Button(this, bx, py + 134, 150, 24, 'QUIT TO TITLE', () => {
-        this.scene.stop(SCENES.ui);
-        this.scene.stop(SCENES.game);
-        this.scene.start(SCENES.title);
-      }),
-    ];
+    const buttons = run.coop
+      ? [
+          new Button(this, bx, py + 70, 150, 24, 'RESUME', resume),
+          new Button(this, bx, py + 102, 150, 24, run.mode === 'host' ? 'END GAME' : 'LEAVE GAME', () =>
+            leaveSession(this.game, run.net),
+          ),
+        ]
+      : [
+          new Button(this, bx, py + 70, 150, 24, 'RESUME', resume),
+          new Button(this, bx, py + 102, 150, 24, 'RESTART', () => this.scene.start(SCENES.game, {})),
+          new Button(this, bx, py + 134, 150, 24, 'QUIT TO TITLE', () => {
+            this.scene.stop(SCENES.ui);
+            this.scene.stop(SCENES.game);
+            this.scene.start(SCENES.title);
+          }),
+        ];
+    if (run.coop) {
+      text(this, bx, py + 136, 'THE RUN KEEPS GOING', { color: COLOR.textDim });
+      text(this, bx, py + 148, 'WHILE THIS MENU IS OPEN', { color: COLOR.textDim });
+    }
     new Menu(this, buttons);
     onKey(this, 'keydown-ESC', resume);
     onKey(this, 'keydown-P', resume);

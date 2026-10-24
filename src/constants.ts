@@ -27,6 +27,12 @@ export const INVULN_SECONDS = 0.5;
 export const SPAWN_TICK_MS = 500;
 export const FALLBACK_HEAL = 30;
 
+/** Co-op: players per run, and how each monkey is told apart (P1..P4). */
+export const MAX_PLAYERS = 4;
+export const PLAYER_COLORS = [0xf7d84a, 0x6ec6ff, 0xff7a8a, 0x7be38a] as const;
+/** Multiplied into the monkey sprite; P1 keeps the original colours. */
+export const PLAYER_TINTS = [0xffffff, 0xbfe2ff, 0xffc4c9, 0xc8f5c9] as const;
+
 /** Enemies further than this many screens away (per axis) are moved back near the edge. */
 export const DESPAWN_SCREENS = 1.5;
 
@@ -73,4 +79,5 @@ export const SCENES = {
   levelUp: 'LevelUp',
   pause: 'Pause',
   gameOver: 'GameOver',
+  lobby: 'Lobby',
 } as const;

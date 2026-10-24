@@ -10,16 +10,36 @@ import {
   RUN_SECONDS,
   SCENES,
   SPAWN_TICK_MS,
+  VIEW_H,
+  VIEW_W,
 } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry, type RunSummary } from '../core/events';
-import { computeStats, expToNext, type OwnedItem } from '../core/progression';
+import { computeStats, expToNext } from '../core/progression';
 import { Rng, seedFromUrl } from '../core/rng';
-import { sfx } from '../core/sfx';
-import { ITEMS, STARTING_WEAPON, WEAPONS, itemDef } from '../data';
+import { sfx, type SfxName } from '../core/sfx';
+import { ENEMIES, ITEMS, STARTING_WEAPON, WEAPONS, itemDef } from '../data';
 import type { Enemy } from '../entities/Enemy';
 import type { Gem } from '../entities/Gem';
 import { Player } from '../entities/Player';
 import type { Projectile } from '../entities/Projectile';
+import { Mirror, SNAPSHOT_HZ } from '../net/Mirror';
+import { NET_EV, netSession, type NetSession } from '../net/Net';
+import {
+  EF,
+  PF,
+  STATE_CODES,
+  Writer,
+  decodeSnapshot,
+  writeEntity,
+  writeEvents,
+  writeHeader,
+  type BuildPair,
+  type ClientMsg,
+  type FxEvent,
+  type HostMsg,
+  type SnapPlayer,
+  type Snapshot,
+} from '../net/protocol';
 import { buildArena } from '../systems/Arena';
 import { Enemies } from '../systems/Enemies';
 import { Fx } from '../systems/Fx';
@@ -29,6 +49,9 @@ import { Weapons } from '../systems/Weapons';
 import { onKey } from '../ui/widgets';
 
 export type RunState = 'playing' | 'dying' | 'victory' | 'ended';
+
+/** solo: no network. host: runs the simulation for everyone. client: draws what the host sends. */
+export type RunMode = 'solo' | 'host' | 'client';
 
 export interface Choice {
   kind: 'weapon' | 'item' | 'heal';
@@ -54,16 +77,39 @@ export interface HudSnapshot {
   debug: boolean;
 }
 
-/** The run itself: owns the monkey, the systems, progression, and the run clock. */
+/** Where each monkey starts, by slot. */
+const SPAWN_OFFSETS = [
+  [0, 0],
+  [28, 0],
+  [-28, 0],
+  [0, 26],
+] as const;
+/** Joiners report their monkey this often. */
+const POS_HZ = 30;
+/** Entities further than this past a joiner's view are not sent to them. */
+const CULL_MARGIN = 96;
+/** Effects queued for one snapshot beyond this are dropped (only under extreme load). */
+const MAX_EVENTS = 400;
+
+/**
+ * The run itself: owns the monkeys, the systems, progression, and the run clock.
+ * In co-op the host simulates everything and streams snapshots; joiners move their own monkey
+ * and draw the rest from the snapshots.
+ */
 export class GameScene extends Phaser.Scene {
+  mode: RunMode = 'solo';
+  net: NetSession | null = null;
   rng!: Rng;
+  /** Every monkey in the run, indexed by slot. */
+  players: Player[] = [];
+  /** The monkey this browser controls. */
   player!: Player;
   fx!: Fx;
   enemies!: Enemies;
   gems!: Gems;
-  weapons!: Weapons;
+  projectiles!: Phaser.Physics.Arcade.Group;
   spawner!: Spawner;
-  items: OwnedItem[] = [];
+  mirror: Mirror | null = null;
 
   state: RunState = 'playing';
   runTime = 0;
@@ -71,8 +117,19 @@ export class GameScene extends Phaser.Scene {
   level = 1;
   exp = 0;
   expNeed = expToNext(1);
-  pendingLevelUps = 0;
   debug = false;
+  /** Co-op: the run is held while players pick level-up cards. */
+  frozen = false;
+  /** Level-up cards on offer to the local player. */
+  offer: { choices: Choice[]; pending: number } | null = null;
+  /** Host: cards on offer to each joiner, by slot. */
+  private remoteOffers = new Map<number, Choice[]>();
+  private inLevelUp = false;
+  private outbox: FxEvent[] = [];
+  private writer = new Writer();
+  private snapTimer = 0;
+  private posTimer = 0;
+  private startCount = 1;
 
   private keys!: {
     up: Phaser.Input.Keyboard.Key[];
@@ -88,32 +145,64 @@ export class GameScene extends Phaser.Scene {
     super(SCENES.game);
   }
 
+  get coop(): boolean {
+    return this.mode !== 'solo';
+  }
+
+  /** Players still connected (alive or dead): drives enemy HP scaling. */
+  get playerCount(): number {
+    return Math.max(1, this.players.filter((p) => p && !p.gone).length);
+  }
+
+  livePlayers(): Player[] {
+    return this.players.filter((p) => p && p.alive);
+  }
+
   init(): void {
     // The scene object is reused across restarts, so every run field is reset here.
-    this.items = [];
+    this.players = [];
+    this.mirror = null;
     this.state = 'playing';
     this.runTime = 0;
     this.kills = 0;
     this.level = 1;
     this.exp = 0;
     this.expNeed = expToNext(1);
-    this.pendingLevelUps = 0;
     this.lastSecond = -1;
     this.debugTimer = 0;
+    this.frozen = false;
+    this.offer = null;
+    this.remoteOffers.clear();
+    this.inLevelUp = false;
+    this.outbox = [];
+    this.snapTimer = 0;
+    this.posTimer = 0;
   }
 
-  create(data: { seed?: string }): void {
+  create(data: { seed?: string; slots?: number[] }): void {
+    const net = data?.slots ? netSession() : null;
+    this.net = net;
+    this.mode = !net ? 'solo' : net.isHost ? 'host' : 'client';
+    const slots = net ? data.slots! : [0];
+    this.startCount = slots.length;
+
     this.rng = new Rng(data?.seed ?? seedFromUrl());
     this.physics.world.setBounds(0, 0, ARENA_SIZE, ARENA_SIZE);
 
     const arena = buildArena(this, this.rng);
-    this.player = new Player(this, ARENA_SIZE / 2, ARENA_SIZE / 2);
+    this.projectiles = Weapons.createProjectileGroup(this);
+    for (const slot of slots) {
+      const [ox, oy] = this.coop ? SPAWN_OFFSETS[slot] : SPAWN_OFFSETS[0];
+      const p = new Player(this, ARENA_SIZE / 2 + ox, ARENA_SIZE / 2 + oy, slot, this.coop);
+      p.weapons = new Weapons(this, p, this.projectiles);
+      p.weapons.add(STARTING_WEAPON);
+      this.players[slot] = p;
+    }
+    this.player = this.players[net?.mySlot ?? 0];
     this.fx = new Fx(this);
     this.enemies = new Enemies(this);
     this.gems = new Gems(this);
-    this.weapons = new Weapons(this);
     this.spawner = new Spawner(this);
-    this.weapons.add(STARTING_WEAPON);
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, ARENA_SIZE, ARENA_SIZE);
@@ -121,18 +210,26 @@ export class GameScene extends Phaser.Scene {
     cam.setRoundPixels(true);
     cam.setBackgroundColor(0x120d18);
 
-    // Physics: walls block the monkey and enemies; overlaps drive damage and pickups.
-    this.physics.add.collider(this.player, arena.walls);
-    this.physics.add.collider(this.enemies.group, arena.walls);
-    this.physics.add.overlap(this.player, this.enemies.group, (_p, e) => this.onTouchEnemy(e as Enemy));
-    this.physics.add.overlap(this.weapons.projectiles, this.enemies.group, (p, e) =>
-      this.weapons.onProjectileHit(p as Projectile, e as Enemy),
-    );
-    this.physics.add.overlap(this.player, this.gems.group, (_p, g) => this.gems.collect(g as Gem));
-
-    // Scene clock: pausing this scene pauses the spawner too.
-    this.time.addEvent({ delay: SPAWN_TICK_MS, loop: true, callback: () => this.spawner.tick() });
-    this.spawner.tick();
+    if (this.mode === 'client') {
+      // Joiners only move their own monkey; the host decides every hit.
+      this.physics.add.collider(this.player, arena.walls);
+      this.mirror = new Mirror(this);
+    } else {
+      // Physics: walls block the monkeys and enemies; overlaps drive damage and pickups.
+      this.physics.add.collider(this.enemies.group, arena.walls);
+      this.physics.add.overlap(this.projectiles, this.enemies.group, (pr, e) =>
+        this.onProjectileHit(pr as Projectile, e as Enemy),
+      );
+      for (const p of this.players.filter(Boolean)) {
+        this.physics.add.collider(p, arena.walls);
+        this.physics.add.overlap(p, this.enemies.group, (_p, e) => this.onTouchEnemy(p, e as Enemy));
+        this.physics.add.overlap(p, this.gems.group, (_p, g) => this.gems.collect(g as Gem, p));
+      }
+      // Scene clock: pausing this scene pauses the spawner too.
+      this.time.addEvent({ delay: SPAWN_TICK_MS, loop: true, callback: () => this.spawner.tick() });
+      this.spawner.tick();
+    }
+    if (this.mode === 'host') this.fx.relay = (ev) => this.relay(ev);
 
     const kb = this.input.keyboard!;
     const K = Phaser.Input.Keyboard.KeyCodes;
@@ -150,21 +247,40 @@ export class GameScene extends Phaser.Scene {
 
     this.hpBar = this.add.graphics().setDepth(DEPTH.hpBar);
 
-    // Pause automatically when the window loses focus.
-    const onBlur = () => this.openPause();
+    // Solo pauses automatically when the window loses focus; co-op cannot pause for everyone.
+    const onBlur = () => {
+      if (!this.coop) this.openPause();
+    };
     this.game.events.on(Phaser.Core.Events.BLUR, onBlur);
 
     const listen: [string, (...a: any[]) => void][] = [
-      [DEBUG_EV.spawn, () => this.spawner.spawnBurst(50)],
-      [DEBUG_EV.addExp, () => this.addExp((this.expNeed - this.exp) / this.player.stats.expMult)],
-      [DEBUG_EV.skipMinute, () => (this.runTime = Math.min(RUN_SECONDS - 1, this.runTime + 60))],
-      [DEBUG_EV.god, () => (this.player.god = !this.player.god)],
+      [DEBUG_EV.spawn, () => this.mode !== 'client' && this.spawner.spawnBurst(50)],
+      [DEBUG_EV.addExp, () => this.mode !== 'client' && this.addExp(this.expNeed - this.exp)],
+      [DEBUG_EV.skipMinute, () => this.mode !== 'client' && (this.runTime = Math.min(RUN_SECONDS - 1, this.runTime + 60))],
+      [DEBUG_EV.god, () => this.mode !== 'client' && (this.player.god = !this.player.god)],
       [DEBUG_EV.toggle, () => this.toggleDebug()],
     ];
     for (const [ev, fn] of listen) this.events.on(ev, fn);
+
+    const netListen: [string, (...a: any[]) => void][] = [];
+    if (net) {
+      if (this.mode === 'host') {
+        netListen.push([NET_EV.clientMsg, (slot: number, msg: ClientMsg) => this.onClientMsg(slot, msg)]);
+        netListen.push([NET_EV.peerLeft, (slot: number) => this.onPeerLeft(slot)]);
+        // Joiners that dropped while the run was loading.
+        for (const slot of slots) if (slot !== 0 && !net.remoteSlots.includes(slot)) this.onPeerLeft(slot);
+      } else {
+        netListen.push([NET_EV.snapshot, (buf: ArrayBuffer) => this.onSnapshot(decodeSnapshot(buf))]);
+        netListen.push([NET_EV.hostMsg, (msg: HostMsg) => this.onHostMsg(msg)]);
+      }
+      for (const [ev, fn] of netListen) net.events.on(ev, fn);
+    }
+
     this.events.once('shutdown', () => {
       for (const [ev, fn] of listen) this.events.off(ev, fn);
+      if (net) for (const [ev, fn] of netListen) net.events.off(ev, fn);
       this.game.events.off(Phaser.Core.Events.BLUR, onBlur);
+      this.fx.relay = null;
     });
 
     if (this.debug) this.applyDebugDraw();
@@ -182,53 +298,130 @@ export class GameScene extends Phaser.Scene {
     const dt = Math.min(deltaMs, 50) / 1000;
     if (this.state === 'ended') return;
 
+    // Input. In co-op the pause menu does not stop the run, so it just lets go of the controls.
     const k = this.keys;
     const down = (list: Phaser.Input.Keyboard.Key[]) => list.some((key) => key.isDown);
-    const ix = (down(k.right) ? 1 : 0) - (down(k.left) ? 1 : 0);
-    const iy = (down(k.down) ? 1 : 0) - (down(k.up) ? 1 : 0);
+    const held = !this.frozen && !this.scene.isActive(SCENES.pause);
+    const ix = held ? (down(k.right) ? 1 : 0) - (down(k.left) ? 1 : 0) : 0;
+    const iy = held ? (down(k.down) ? 1 : 0) - (down(k.up) ? 1 : 0) : 0;
     this.player.steer(ix, iy, dt);
 
-    const playing = this.state === 'playing';
-    if (playing) {
-      this.runTime += dt;
-      this.spawner.checkEvents(this.runTime);
-      if (this.runTime >= RUN_SECONDS) this.victory();
+    if (this.mode === 'client') {
+      this.updateClient(dt);
+      return;
     }
 
-    this.enemies.update(dt, this.time.now, this.player.x, this.player.y, this.state === 'dying');
-    this.weapons.update(dt, this.state === 'playing');
-    this.gems.update(dt);
-    this.fx.update(dt);
-    this.drawHpBar();
+    for (const p of this.players) {
+      if (!p || p === this.player || p.gone) continue;
+      p.follow(dt);
+    }
 
+    if (!this.frozen) {
+      const playing = this.state === 'playing';
+      for (const p of this.players) p?.regenerate(dt);
+      if (playing) {
+        this.runTime += dt;
+        this.spawner.checkEvents(this.runTime);
+        if (this.runTime >= RUN_SECONDS) this.victory();
+      }
+
+      this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying');
+      for (const p of this.players) if (p?.alive) p.weapons.update(dt, this.state === 'playing');
+      Weapons.updateProjectiles(this.projectiles, dt);
+      this.gems.update(dt);
+    }
+    this.fx.update(dt);
+    this.drawHpBars();
+    this.emitTime();
+    this.updateDebug(dt);
+
+    if (this.mode === 'host') {
+      this.snapTimer -= dt;
+      if (this.snapTimer <= 0) {
+        this.snapTimer += 1 / SNAPSHOT_HZ;
+        if (this.snapTimer < 0) this.snapTimer = 0;
+        this.sendSnapshots();
+      }
+    }
+
+    if (!this.inLevelUp && this.state === 'playing' && this.livePlayers().some((p) => p.pendingLevelUps > 0)) {
+      this.beginLevelUp();
+    }
+  }
+
+  private emitTime(): void {
     const sec = Math.floor(this.runTime);
     if (sec !== this.lastSecond) {
       this.lastSecond = sec;
       this.events.emit(EV.timeChanged, this.runTime);
     }
+  }
 
-    if (this.debug) {
-      this.debugTimer -= dt;
-      if (this.debugTimer <= 0) {
-        this.debugTimer = 0.25;
-        this.events.emit(EV.debugStats, this.debugStats());
-      }
+  private updateDebug(dt: number): void {
+    if (!this.debug) return;
+    this.debugTimer -= dt;
+    if (this.debugTimer <= 0) {
+      this.debugTimer = 0.25;
+      this.events.emit(EV.debugStats, this.debugStats());
     }
+  }
 
-    if (this.pendingLevelUps > 0 && this.state === 'playing') this.openLevelUp();
+  // ------------------------------------------------------------------ effects and sound
+
+  /** Co-op host: queues an effect for the joiners' next snapshot. */
+  relay(ev: FxEvent): void {
+    if (this.mode === 'host' && this.outbox.length < MAX_EVENTS) this.outbox.push(ev);
+  }
+
+  /** Plays a sound here (if it happened near this monkey) and relays it to joiners. */
+  playSfx(name: SfxName, x?: number, y?: number): void {
+    if (x === undefined || y === undefined) {
+      sfx.play(name);
+      this.relay(['s', name]);
+      return;
+    }
+    if (this.nearView(this.player, x, y)) sfx.play(name);
+    this.relay(['s', name, Math.round(x), Math.round(y)]);
+  }
+
+  banner(text: string, color: number): void {
+    this.events.emit(EV.banner, text, color);
+    this.relay(['b', text, color]);
+  }
+
+  /** The monkey whose view a player sees: their own, or a living teammate's once they fall. */
+  viewTarget(p: Player): Player {
+    if (!p.dead || !this.coop) return p;
+    return this.livePlayers()[0] ?? p;
+  }
+
+  private nearView(p: Player, x: number, y: number): boolean {
+    const t = this.viewTarget(p);
+    const cx = Phaser.Math.Clamp(t.x, VIEW_W / 2, ARENA_SIZE - VIEW_W / 2);
+    const cy = Phaser.Math.Clamp(t.y, VIEW_H / 2, ARENA_SIZE - VIEW_H / 2);
+    return Math.abs(x - cx) < VIEW_W / 2 + CULL_MARGIN && Math.abs(y - cy) < VIEW_H / 2 + CULL_MARGIN;
   }
 
   // ------------------------------------------------------------------ combat
 
-  private onTouchEnemy(e: Enemy): void {
-    if (this.state !== 'playing' || !e.active) return;
-    const dmg = this.player.takeHit(e.def.damage);
+  private onProjectileHit(pr: Projectile, e: Enemy): void {
+    pr.weapon.owner.weapons.onProjectileHit(pr, e);
+  }
+
+  private onTouchEnemy(p: Player, e: Enemy): void {
+    if (this.state !== 'playing' || this.frozen || !e.active || !p.alive) return;
+    const dmg = p.takeHit(e.def.damage);
     if (dmg <= 0) return;
+    this.relay(['h', p.slot, dmg]);
+    if (p === this.player) this.onLocalHurt(dmg);
+    if (p.hp <= 0) this.die(p);
+  }
+
+  private onLocalHurt(dmg: number): void {
     sfx.play('hurt');
     this.cameras.main.shake(110, 0.006);
     this.events.emit(EV.playerHurt, dmg);
     this.events.emit(EV.hpChanged, this.player.hp, this.player.stats.maxHp);
-    if (this.player.hp <= 0) this.die();
   }
 
   onEnemyKilled(): void {
@@ -236,13 +429,14 @@ export class GameScene extends Phaser.Scene {
     this.events.emit(EV.killsChanged, this.kills);
   }
 
+  /** Shared EXP: every level gained gives each living monkey one pick. */
   addExp(value: number): void {
-    this.exp += value * this.player.stats.expMult;
+    this.exp += value;
     let leveled = false;
     while (this.exp >= this.expNeed) {
       this.exp -= this.expNeed;
       this.level++;
-      this.pendingLevelUps++;
+      for (const p of this.livePlayers()) p.pendingLevelUps++;
       this.expNeed = expToNext(this.level);
       leveled = true;
     }
@@ -252,21 +446,85 @@ export class GameScene extends Phaser.Scene {
 
   // ------------------------------------------------------------------ level-ups
 
-  private openLevelUp(): void {
-    if (this.scene.isActive(SCENES.levelUp)) return;
-    sfx.play('levelup');
-    this.fx.ring(this.player.x, this.player.y, COLOR.gold, 70, 450);
-    this.scene.pause();
-    this.scene.launch(SCENES.levelUp);
+  private beginLevelUp(): void {
+    this.inLevelUp = true;
+    this.playSfx('levelup');
+    for (const p of this.livePlayers()) this.fx.ring(p.x, p.y, COLOR.gold, 70, 450);
+    if (this.mode === 'solo') {
+      this.scene.pause();
+    } else {
+      if (this.scene.isActive(SCENES.pause)) this.scene.stop(SCENES.pause);
+      this.setFrozen(true);
+      for (const p of this.livePlayers()) if (p !== this.player && p.pendingLevelUps > 0) this.offerTo(p);
+    }
+    if (this.player.pendingLevelUps > 0) this.offerTo(this.player);
+    if (!this.scene.isActive(SCENES.levelUp)) this.scene.launch(SCENES.levelUp);
+  }
+
+  private offerTo(p: Player): void {
+    const choices = this.rollChoices(p);
+    if (p === this.player) {
+      this.offer = { choices, pending: p.pendingLevelUps };
+      this.events.emit(EV.levelUpOffer);
+    } else {
+      this.remoteOffers.set(p.slot, choices);
+      this.net?.sendTo(p.slot, { t: 'choices', choices, pending: p.pendingLevelUps });
+    }
+  }
+
+  /** The local player picked card `index` of the current offer. */
+  chooseCard(index: number): void {
+    const offer = this.offer;
+    if (!offer) return;
+    this.offer = null;
+    if (this.mode === 'client') {
+      this.net?.sendHost({ t: 'pick', index });
+      return;
+    }
+    const c = offer.choices[index];
+    if (!c) return;
+    this.applyChoice(this.player, c);
+    this.afterPick(this.player);
+  }
+
+  private afterPick(p: Player): void {
+    if (p.pendingLevelUps > 0 && p.alive) {
+      this.offerTo(p);
+      return;
+    }
+    if (p === this.player) this.events.emit(EV.levelUpWaiting);
+    else this.net?.sendTo(p.slot, { t: 'choicesDone' });
+    this.checkLevelUpOver();
+  }
+
+  private checkLevelUpOver(): void {
+    if (!this.inLevelUp) return;
+    if (this.livePlayers().some((p) => p.pendingLevelUps > 0)) return;
+    this.inLevelUp = false;
+    this.remoteOffers.clear();
+    this.offer = null;
+    if (this.mode === 'host') {
+      this.setFrozen(false);
+      this.net?.broadcast({ t: 'levelUpOver' });
+    }
+    this.events.emit(EV.levelUpOver);
+  }
+
+  /** Co-op stand-in for pausing: the scene keeps running so the network keeps flowing. */
+  private setFrozen(on: boolean): void {
+    this.frozen = on;
+    this.time.paused = on;
+    if (on) this.physics.world.pause();
+    else this.physics.world.resume();
   }
 
   /** Up to 3 random cards from new weapons/items and upgrades of owned ones, respecting slot limits. */
-  rollChoices(): Choice[] {
+  rollChoices(p: Player): Choice[] {
     const pool: Choice[] = [];
-    const weaponSlotsFull = this.weapons.list.length >= MAX_WEAPONS;
-    const itemSlotsFull = this.items.length >= MAX_ITEMS;
+    const weaponSlotsFull = p.weapons.list.length >= MAX_WEAPONS;
+    const itemSlotsFull = p.items.length >= MAX_ITEMS;
     for (const def of WEAPONS) {
-      const owned = this.weapons.get(def.id);
+      const owned = p.weapons.get(def.id);
       if (owned) {
         if (owned.level < MAX_LEVEL) {
           pool.push({
@@ -284,7 +542,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
     for (const def of ITEMS) {
-      const owned = this.items.find((i) => i.def.id === def.id);
+      const owned = p.items.find((i) => i.def.id === def.id);
       if (owned) {
         if (owned.level < MAX_LEVEL) {
           pool.push({ kind: 'item', id: def.id, name: def.name, icon: def.icon, level: owned.level + 1, isNew: false, text: def.levelText });
@@ -309,29 +567,32 @@ export class GameScene extends Phaser.Scene {
     return this.rng.shuffled(pool).slice(0, 3);
   }
 
-  applyChoice(c: Choice): void {
+  applyChoice(p: Player, c: Choice): void {
     if (c.kind === 'weapon') {
-      if (this.weapons.get(c.id)) this.weapons.levelUp(c.id);
-      else this.weapons.add(c.id);
+      if (p.weapons.get(c.id)) p.weapons.levelUp(c.id);
+      else p.weapons.add(c.id);
     } else if (c.kind === 'item') {
-      const owned = this.items.find((i) => i.def.id === c.id);
+      const owned = p.items.find((i) => i.def.id === c.id);
       if (owned) owned.level++;
-      else this.items.push({ def: itemDef(c.id), level: 1 });
-      this.player.setStats(computeStats(this.items));
+      else p.items.push({ def: itemDef(c.id), level: 1 });
+      p.setStats(computeStats(p.items));
     } else {
-      this.player.heal(FALLBACK_HEAL);
+      p.heal(FALLBACK_HEAL);
     }
-    this.pendingLevelUps = Math.max(0, this.pendingLevelUps - 1);
-    this.events.emit(EV.buildChanged, this.buildWeapons(), this.buildItems());
-    this.events.emit(EV.hpChanged, this.player.hp, this.player.stats.maxHp);
+    p.pendingLevelUps = Math.max(0, p.pendingLevelUps - 1);
+    if (this.mode === 'host') this.net?.broadcast(this.buildMsg(p));
+    if (p === this.player) {
+      this.events.emit(EV.buildChanged, this.buildWeapons(), this.buildItems());
+      this.events.emit(EV.hpChanged, this.player.hp, this.player.stats.maxHp);
+    }
   }
 
-  buildWeapons(): BuildEntry[] {
-    return this.weapons.list.map((w) => ({ id: w.def.id, name: w.def.name, icon: w.def.icon, level: w.level, damage: Math.round(w.damage) }));
+  buildWeapons(p: Player = this.player): BuildEntry[] {
+    return p.weapons.list.map((w) => ({ id: w.def.id, name: w.def.name, icon: w.def.icon, level: w.level, damage: Math.round(w.damage) }));
   }
 
-  buildItems(): BuildEntry[] {
-    return this.items.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level }));
+  buildItems(p: Player = this.player): BuildEntry[] {
+    return p.items.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level }));
   }
 
   hudSnapshot(): HudSnapshot {
@@ -353,74 +614,394 @@ export class GameScene extends Phaser.Scene {
 
   openPause(): void {
     if (this.state !== 'playing' || !this.scene.isActive() || this.scene.isActive(SCENES.levelUp)) return;
+    if (this.scene.isActive(SCENES.pause)) return;
     sfx.play('pause');
-    this.scene.pause();
+    if (!this.coop) this.scene.pause();
     this.scene.launch(SCENES.pause);
   }
 
-  private die(): void {
+  private die(p: Player): void {
+    p.fallOver();
+    p.weapons.clearVisuals();
+    this.playSfx('death', p.x, p.y);
+    if (p === this.player) this.onLocalDeath();
+    if (this.livePlayers().length > 0) {
+      if (this.coop) this.banner(`P${p.slot + 1} IS DOWN`, COLOR.bad);
+      return;
+    }
     this.state = 'dying';
-    this.player.dead = true;
-    this.player.play('monkey-hurt', true);
-    sfx.play('death');
-    this.cameras.main.shake(300, 0.012);
-    this.weapons.clearVisuals();
-    this.tweens.add({ targets: this.player, alpha: 0.25, angle: 90, duration: 900, ease: 'Quad.easeIn' });
+    for (const q of this.players) q?.weapons.clearVisuals();
     this.time.delayedCall(1300, () => this.endRun(false));
+  }
+
+  private onLocalDeath(): void {
+    this.cameras.main.shake(300, 0.012);
+    this.events.emit(EV.hpChanged, 0, this.player.stats.maxHp);
+    const mate = this.viewTarget(this.player);
+    if (mate !== this.player) this.time.delayedCall(1200, () => this.cameras.main.startFollow(this.viewTarget(this.player), true, 0.1, 0.1));
   }
 
   private victory(): void {
     this.state = 'victory';
     this.runTime = RUN_SECONDS;
-    sfx.play('victory');
+    this.playSfx('victory');
     this.cameras.main.flash(900, 255, 236, 190);
-    this.weapons.clearVisuals();
+    this.relay(['f', 900]);
+    for (const p of this.players) p?.weapons.clearVisuals();
     let puffs = 0;
     for (const e of this.enemies.active.slice()) {
       if (!e.active) continue;
       if (puffs++ < 120) this.fx.puff(e.x, e.y, 0xffe6a0, 6);
       this.enemies.kill(e, false);
     }
-    this.events.emit(EV.banner, 'DAWN BREAKS', COLOR.gold);
+    this.banner('DAWN BREAKS', COLOR.gold);
     this.time.delayedCall(2200, () => this.endRun(true));
   }
 
-  private endRun(victory: boolean): void {
-    if (this.state === 'ended') return;
-    this.state = 'ended';
-    const summary: RunSummary = {
+  private summaryFor(p: Player, victory: boolean): RunSummary {
+    return {
       victory,
       time: this.runTime,
       level: this.level,
       kills: this.kills,
-      weapons: this.buildWeapons(),
-      items: this.buildItems(),
+      weapons: this.buildWeapons(p),
+      items: this.buildItems(p),
       seed: this.rng.seed,
+      coopPlayers: this.coop ? this.startCount : undefined,
     };
+  }
+
+  private endRun(victory: boolean, summary?: RunSummary): void {
+    if (this.state === 'ended') return;
+    if (this.mode === 'host') {
+      // Final snapshot so joiners see the last moment, then everyone's own end screen.
+      this.sendSnapshots();
+      for (const p of this.players) {
+        if (p && p !== this.player && !p.gone) this.net?.sendTo(p.slot, { t: 'end', summary: this.summaryFor(p, victory) });
+      }
+    }
+    this.state = 'ended';
     this.events.emit(EV.runEnded);
     this.scene.stop(SCENES.ui);
+    if (this.scene.isActive(SCENES.levelUp)) this.scene.stop(SCENES.levelUp);
+    if (this.scene.isActive(SCENES.pause)) this.scene.stop(SCENES.pause);
     this.scene.pause();
-    this.scene.launch(SCENES.gameOver, summary);
+    this.scene.launch(SCENES.gameOver, summary ?? this.summaryFor(this.player, victory));
+  }
+
+  // ------------------------------------------------------------------ co-op: host side
+
+  private onClientMsg(slot: number, msg: ClientMsg): void {
+    const p = this.players[slot];
+    if (!p || p.gone) return;
+    if (msg.t === 'pos') {
+      p.netX = Phaser.Math.Clamp(Number(msg.x) || 0, 0, ARENA_SIZE);
+      p.netY = Phaser.Math.Clamp(Number(msg.y) || 0, 0, ARENA_SIZE);
+      if (msg.fx || msg.fy) p.facing.set(msg.fx, msg.fy).normalize();
+      p.moving = msg.m === 1 && p.alive;
+    } else if (msg.t === 'pick') {
+      const offer = this.remoteOffers.get(slot);
+      const c = offer?.[msg.index];
+      if (!c || !this.inLevelUp) return;
+      this.remoteOffers.delete(slot);
+      this.applyChoice(p, c);
+      this.afterPick(p);
+    }
+  }
+
+  private onPeerLeft(slot: number): void {
+    const p = this.players[slot];
+    if (!p || p.gone) return;
+    p.leave();
+    p.weapons.destroy();
+    p.pendingLevelUps = 0;
+    this.remoteOffers.delete(slot);
+    if (this.state === 'ended') return;
+    this.banner(`P${slot + 1} LEFT THE GAME`, COLOR.textDim);
+    this.checkLevelUpOver();
+  }
+
+  private buildMsg(p: Player): HostMsg {
+    return {
+      t: 'build',
+      slot: p.slot,
+      weapons: p.weapons.list.map((w): BuildPair => [w.def.id, w.level]),
+      items: p.items.map((i): BuildPair => [i.def.id, i.level]),
+    };
+  }
+
+  private sendSnapshots(): void {
+    const net = this.net;
+    if (!net) return;
+    const events = this.outbox;
+    this.outbox = [];
+    const players: SnapPlayer[] = [];
+    for (const p of this.players) {
+      if (!p) continue;
+      players.push({
+        slot: p.slot,
+        flags: (p.dead ? PF.dead : 0) | (p.gone ? PF.gone : 0) | (p.moving ? PF.moving : 0) | (p.god ? PF.god : 0),
+        x: p.x,
+        y: p.y,
+        fx: p.facing.x,
+        fy: p.facing.y,
+        hp: p.hp,
+        maxHp: p.stats.maxHp,
+        invuln: Math.max(0, p.invuln),
+        phases: p.weapons.phases(),
+      });
+    }
+    const header = {
+      runTime: this.runTime,
+      state: STATE_CODES.indexOf(this.state),
+      frozen: this.frozen,
+      kills: this.kills,
+      level: this.level,
+      exp: this.exp,
+      need: this.expNeed,
+    };
+    const now = this.time.now;
+    const enemyKind = new Map(ENEMIES.map((d, i) => [d, i]));
+    const weaponKind = new Map(WEAPONS.map((d, i) => [d, i]));
+
+    for (const slot of net.remoteSlots) {
+      const p = this.players[slot];
+      if (!p || p.gone) continue;
+      const w = this.writer.reset();
+      writeHeader(w, header, players);
+
+      let at = w.o;
+      let n = 0;
+      w.u16(0);
+      for (const e of this.enemies.active) {
+        if (!e.active || !this.nearView(p, e.x, e.y)) continue;
+        const flags = (e.flipX ? EF.flip : 0) | (e.flashUntil > now ? EF.flash : 0);
+        writeEntity(w, e.netId, enemyKind.get(e.def) ?? 0, flags, e.x, e.y);
+        n++;
+      }
+      w.patchU16(at, n);
+
+      at = w.o;
+      n = 0;
+      w.u16(0);
+      for (const g of this.gems.group.getChildren() as Gem[]) {
+        if (!g.active || !this.nearView(p, g.x, g.y)) continue;
+        writeEntity(w, g.netId, g.color === 'red' ? 2 : g.color === 'green' ? 1 : 0, 0, g.x, g.y);
+        n++;
+      }
+      w.patchU16(at, n);
+
+      at = w.o;
+      n = 0;
+      w.u16(0);
+      for (const pr of this.projectiles.getChildren() as Projectile[]) {
+        if (!pr.active || !this.nearView(p, pr.x, pr.y)) continue;
+        writeEntity(w, pr.netId, weaponKind.get(pr.weapon.def) ?? 0, Math.min(255, Math.round(pr.scaleX * 32)), pr.x, pr.y);
+        n++;
+      }
+      w.patchU16(at, n);
+
+      // Effects: only those near this player, and each sound at most once per snapshot.
+      const sounds = new Set<string>();
+      const mine = events.filter((ev) => {
+        switch (ev[0]) {
+          case 'n':
+          case 'p':
+          case 'r':
+            return this.nearView(p, ev[1], ev[2]);
+          case 's':
+            if (sounds.has(ev[1])) return false;
+            if (ev[2] !== undefined && !this.nearView(p, ev[2], ev[3]!)) return false;
+            sounds.add(ev[1]);
+            return true;
+          default:
+            return true;
+        }
+      });
+      writeEvents(w, mine);
+      net.sendSnapshot(slot, w.copy());
+    }
+  }
+
+  // ------------------------------------------------------------------ co-op: joiner side
+
+  private updateClient(dt: number): void {
+    for (const p of this.players) {
+      if (!p || p.gone) continue;
+      if (p !== this.player) p.follow(dt);
+      if (!p.dead) p.weapons.update(dt, false);
+    }
+    this.mirror!.update(dt);
+    this.fx.update(dt);
+    this.drawHpBars();
+    this.emitTime();
+    this.updateDebug(dt);
+
+    this.posTimer -= dt;
+    if (this.posTimer <= 0 && this.state !== 'ended') {
+      this.posTimer = 1 / POS_HZ;
+      const p = this.player;
+      this.net?.sendHost({
+        t: 'pos',
+        x: Math.round(p.x * 10) / 10,
+        y: Math.round(p.y * 10) / 10,
+        fx: Math.round(p.facing.x * 100) / 100,
+        fy: Math.round(p.facing.y * 100) / 100,
+        m: p.moving ? 1 : 0,
+      });
+    }
+  }
+
+  private onSnapshot(s: Snapshot): void {
+    if (this.state === 'ended') return;
+    this.runTime = s.runTime;
+    this.frozen = s.frozen;
+    if (s.kills !== this.kills) {
+      this.kills = s.kills;
+      this.events.emit(EV.killsChanged, this.kills);
+    }
+    if (s.level !== this.level || s.exp !== this.exp || s.need !== this.expNeed) {
+      const leveled = s.level > this.level;
+      this.level = s.level;
+      this.exp = s.exp;
+      this.expNeed = s.need;
+      this.events.emit(EV.expChanged, this.exp, this.expNeed, this.level);
+      if (leveled) this.events.emit(EV.levelUp, this.level);
+    }
+    const state = STATE_CODES[s.state] ?? 'playing';
+    if (state !== this.state && state !== 'ended') {
+      this.state = state;
+      if (state !== 'playing') for (const p of this.players) p?.weapons.clearVisuals();
+    }
+
+    for (const sp of s.players) {
+      const p = this.players[sp.slot];
+      if (!p) continue;
+      if (sp.flags & PF.gone) {
+        if (!p.gone) {
+          p.leave();
+          p.weapons.destroy();
+        }
+        continue;
+      }
+      const hpChanged = p.hp !== sp.hp || p.stats.maxHp !== sp.maxHp;
+      p.hp = sp.hp;
+      p.stats.maxHp = sp.maxHp;
+      p.god = (sp.flags & PF.god) !== 0;
+      if (p !== this.player) {
+        p.netX = sp.x;
+        p.netY = sp.y;
+        if (sp.fx || sp.fy) p.facing.set(sp.fx, sp.fy);
+        p.moving = (sp.flags & PF.moving) !== 0;
+      }
+      p.weapons.setPhases(sp.phases);
+      if (sp.flags & PF.dead && !p.dead) {
+        p.fallOver();
+        p.weapons.clearVisuals();
+        if (p === this.player) this.onLocalDeath();
+      }
+      if (p === this.player && hpChanged) this.events.emit(EV.hpChanged, p.hp, p.stats.maxHp);
+    }
+
+    const m = this.mirror!;
+    m.enemies.apply(s.enemies);
+    m.gems.apply(s.gems);
+    m.projectiles.apply(s.projectiles);
+
+    for (const ev of s.events) this.replay(ev);
+  }
+
+  private replay(ev: FxEvent): void {
+    switch (ev[0]) {
+      case 'n':
+        this.fx.damageNumber(ev[1], ev[2], ev[3], ev[4] === 1);
+        break;
+      case 'p':
+        this.fx.puff(ev[1], ev[2], ev[3], ev[4]);
+        break;
+      case 'r':
+        this.fx.ring(ev[1], ev[2], ev[3], ev[4], ev[5]);
+        break;
+      case 's':
+        sfx.play(ev[1]);
+        break;
+      case 'b':
+        this.events.emit(EV.banner, ev[1], ev[2]);
+        break;
+      case 'h': {
+        const p = this.players[ev[1]];
+        if (!p) break;
+        p.showHurt();
+        if (p === this.player) this.onLocalHurt(ev[2]);
+        break;
+      }
+      case 'w':
+        this.players[ev[1]]?.weapons.addSlash(ev[2], ev[3], ev[4], ev[5], ev[6]);
+        break;
+      case 'a':
+        this.players[ev[1]]?.weapons.pulse(ev[2]);
+        break;
+      case 'f':
+        this.cameras.main.flash(ev[1], 255, 236, 190);
+        break;
+    }
+  }
+
+  private onHostMsg(msg: HostMsg): void {
+    switch (msg.t) {
+      case 'build': {
+        const p = this.players[msg.slot];
+        if (!p || p.gone) break;
+        p.weapons.sync(msg.weapons);
+        p.items = msg.items.map(([id, level]) => ({ def: itemDef(id), level }));
+        const hp = p.hp;
+        p.setStats(computeStats(p.items));
+        p.hp = hp; // HP comes from the host
+        if (p === this.player) this.events.emit(EV.buildChanged, this.buildWeapons(), this.buildItems());
+        break;
+      }
+      case 'choices':
+        this.offer = { choices: msg.choices, pending: msg.pending };
+        this.inLevelUp = true;
+        if (!this.scene.isActive(SCENES.levelUp)) {
+          if (this.scene.isActive(SCENES.pause)) this.scene.stop(SCENES.pause);
+          sfx.play('levelup');
+          this.scene.launch(SCENES.levelUp);
+        } else this.events.emit(EV.levelUpOffer);
+        break;
+      case 'choicesDone':
+        this.events.emit(EV.levelUpWaiting);
+        break;
+      case 'levelUpOver':
+        this.inLevelUp = false;
+        this.offer = null;
+        this.events.emit(EV.levelUpOver);
+        break;
+      case 'end':
+        this.endRun(msg.summary.victory, msg.summary);
+        break;
+    }
   }
 
   // ------------------------------------------------------------------ HUD bits in world space
 
-  private drawHpBar(): void {
+  private drawHpBars(): void {
     const g = this.hpBar;
     g.clear();
-    if (this.player.dead) return;
-    const p = this.player;
-    const w = 18;
-    const x = Math.round(p.x - w / 2);
-    const y = Math.round(p.y + 12);
-    const frac = Phaser.Math.Clamp(p.hp / p.stats.maxHp, 0, 1);
-    const low = frac < 0.3 && Math.floor(this.time.now / 180) % 2 === 0;
-    g.fillStyle(COLOR.ink, 1);
-    g.fillRect(x - 1, y - 1, w + 2, 4);
-    g.fillStyle(COLOR.hpDark, 1);
-    g.fillRect(x, y, w, 2);
-    g.fillStyle(low ? 0xffffff : COLOR.hp, 1);
-    g.fillRect(x, y, Math.ceil(w * frac), 2);
+    for (const p of this.players) {
+      if (!p || !p.alive) continue;
+      const w = 18;
+      const x = Math.round(p.x - w / 2);
+      const y = Math.round(p.y + 12);
+      const frac = Phaser.Math.Clamp(p.hp / p.stats.maxHp, 0, 1);
+      const low = frac < 0.3 && Math.floor(this.time.now / 180) % 2 === 0;
+      g.fillStyle(COLOR.ink, 1);
+      g.fillRect(x - 1, y - 1, w + 2, 4);
+      g.fillStyle(COLOR.hpDark, 1);
+      g.fillRect(x, y, w, 2);
+      g.fillStyle(low ? 0xffffff : COLOR.hp, 1);
+      g.fillRect(x, y, Math.ceil(w * frac), 2);
+    }
   }
 
   // ------------------------------------------------------------------ debug
@@ -443,18 +1024,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   debugStats() {
+    const m = this.mirror;
     return {
       fps: Math.round(this.game.loop.actualFps),
-      enemies: this.enemies.live,
+      enemies: m ? m.enemies.count : this.enemies.live,
       target: this.spawner.target,
-      projectiles: this.weapons.activeProjectiles,
-      gems: this.gems.live,
+      projectiles: m ? m.projectiles.count : this.projectiles.countActive(true),
+      gems: m ? m.gems.count : this.gems.live,
       numbers: this.fx.activeNumbers,
       bodies: this.physics.world.bodies.size,
       minute: Math.floor(this.runTime / 60),
       seed: this.rng.seed,
       god: this.player.god,
+      mode: this.mode,
     };
   }
 }
-

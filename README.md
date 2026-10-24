@@ -32,6 +32,20 @@ URL options:
 | `?play` | Skip the title screen. |
 | `?canvas` | Force Phaser's canvas renderer (deprecated in v4; only for machines without WebGL). |
 
+## Co-op (up to 4 players)
+
+Title screen > **HOST CO-OP** gives a 5-character invite code and a **COPY LINK** button (`?join=CODE`). Friends press **JOIN CO-OP** and type or paste the code, or just open the link. The host presses **START** when everyone is in.
+
+- **Networking**: peer to peer over WebRTC with [PeerJS](https://peerjs.com). PeerJS's free public broker only introduces the browsers (the invite code is the host's peer id); game traffic goes directly between them. No server of our own is needed, so it still deploys to GitHub Pages.
+- **Host-authoritative**: the host's browser simulates enemies, weapons, damage and gems and sends each joiner a binary snapshot 20 times a second (only what is near their screen), plus effects and sounds. Joiners move their own monkey locally and report its position, so movement has no input lag.
+- **Shared EXP**: one EXP bar and level for the team. Each level gives every living monkey its own card pick; the run is held until everyone has chosen. A gem goes to whichever monkey's pickup radius it enters, using that monkey's EXP Gain.
+- **Enemy HP** is multiplied by `1 + 0.75 x (players - 1)` (`HP_SCALE_PER_EXTRA_PLAYER` in `data/waves.ts`). Enemies chase the nearest living monkey and spawn around a random one.
+- A fallen monkey spectates a teammate; the run ends when all are down. Players who disconnect are removed; if the host leaves, the run ends for everyone.
+- The co-op menu (Esc) does not pause the run, and the game does not auto-pause on blur. Browsers stop animating hidden tabs, so the host should keep the game tab visible.
+- After a run the host can play again with the same group or go back to the lobby so others can join.
+
+Code lives in `src/net/` (session, message and snapshot format, the joiner-side renderer) and `scenes/LobbyScene.ts`.
+
 ## Controls
 
 WASD or arrow keys to move. Weapons fire on their own. Esc or P pauses (the game also pauses when the window loses focus). M mutes. F3 opens the debug overlay. Level-up cards: 1, 2, 3, arrows and Enter, or click.
