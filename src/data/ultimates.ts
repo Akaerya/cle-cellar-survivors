@@ -83,7 +83,7 @@ export const ULTIMATES: UltimateDef[] = [
     cooldown: 150,
     interval: 1,
     count: 1,
-    radius: 65,
+    radius: 150,
     color: 0xffb8e6,
     attack: {
       id: 'beginning_you_and_i',
