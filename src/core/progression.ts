@@ -95,12 +95,45 @@ export interface OwnedMod {
 export function modsForWeapon(def: WeaponDef, mods: OwnedMod[]): Required<ModEffect> {
   const out = emptyModEffect();
   const tags = def.tags ?? [];
+  const damageTags = def.damageTags ?? tags;
   for (const m of mods) {
     if (!m.def.tags.some((t) => tags.includes(t))) continue;
     const e = modEffectAt(m.def, m.level);
-    for (const k in out) out[k as ModKey] += e[k as ModKey];
+    const addsDamage = m.def.tags.some((t) => damageTags.includes(t));
+    for (const k in out) {
+      if (k === 'damage' && !addsDamage) continue;
+      out[k as ModKey] += e[k as ModKey];
+    }
   }
+  // Bonuses this weapon has no use for. Only projectiles that hit enemies can pierce, split or chain.
+  if (!hitsWithProjectiles(def)) out.split = out.splitDepth = out.chain = out.pierce = 0;
+  if (def.noPierce) out.pierce = 0;
+  if (def.harmlessArea) out.echo = out.echoArea = out.echoRepeats = 0;
+  if (!def.effect) out.reiterate = 0;
   return out;
+}
+
+/** The weapon fires projectiles that stop at enemies (so pierce, split and chain mean something). */
+export function hitsWithProjectiles(def: WeaponDef): boolean {
+  const flies = def.targeting === 'nearest' || def.targeting === 'random' || def.targeting === 'facing';
+  return flies && def.stats.speed > 0 && def.stats.pierce !== Infinity;
+}
+
+/**
+ * What a modification at its top level does for a weapon: nothing, everything it offers, only its damage bonus, or
+ * everything except its damage bonus. Used to offer modifications only when they matter, and by the wiki.
+ */
+export function modReach(def: WeaponDef, mod: ModificationDef): 'none' | 'full' | 'damage only' | 'no damage' {
+  const top = modEffectAt(mod, mod.levels.length);
+  const got = modsForWeapon(def, [{ def: mod, level: mod.levels.length }]);
+  const keys = Object.keys(top) as ModKey[];
+  const offered = keys.filter((k) => top[k] !== 0);
+  const kept = offered.filter((k) => got[k] !== 0);
+  if (kept.length === 0) return 'none';
+  if (kept.length === offered.length) return 'full';
+  if (kept.length === 1 && kept[0] === 'damage') return 'damage only';
+  if (top.damage !== 0 && got.damage === 0) return 'no damage';
+  return 'full';
 }
 
 /** Multiplier on cooldowns from Ability Haste: 100 / (100 + haste), i.e. haste / (100 + haste) shorter. */

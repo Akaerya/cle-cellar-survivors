@@ -1,4 +1,9 @@
-import type { WeaponDef } from './types';
+import type { WeaponDef, WeaponLevel } from './types';
+
+/** Speed (px/s) of Elysia's crystal arrows. Crystalline Bloom's crystal flies 30% slower. */
+const ARROW_SPEED = 420;
+
+const fourTimes = (lv: WeaponLevel): WeaponLevel[] => [lv, lv, lv, lv];
 
 export const WEAPONS: WeaponDef[] = [
   // ---------------------------------------------------------------- rsncle, the banana monkey
@@ -75,7 +80,7 @@ export const WEAPONS: WeaponDef[] = [
     artRadius: 5,
     color: 0xf0b030,
     // Extra coconuts are thrown one after another over half the cooldown, each at a random enemy on screen.
-    burst: 0.5,
+    burst: { window: 0.5, spacing: 'within', target: 'random' },
     stats: {
       cooldown: 1.6,
       damage: 6,
@@ -240,5 +245,124 @@ export const WEAPONS: WeaponDef[] = [
       { text: 'Absorbs 20% of every hit.', add: { reduction: 0.05 } },
       { text: 'Absorbs 25% of every hit. The block recharges 15% faster.', add: { reduction: 0.05 }, faster: 0.15 },
     ],
+  },
+  // ---------------------------------------------------------------- Elysia, arrow of novae
+  {
+    id: 'hailing_arrows',
+    name: 'Hailing Arrows',
+    description: 'Fires a crystal arrow at the nearest enemy. Extra arrows follow it one after another.',
+    icon: 'icon_hailing',
+    targeting: 'nearest',
+    tags: ['projectile'],
+    projectileAnim: 'arrow-glint',
+    artRadius: 3,
+    orient: true,
+    color: 0xc8ecff,
+    // Extra arrows (levels, Additional Projectiles) follow the first one by one at the closest enemy; the last
+    // leaves exactly at half the cooldown.
+    burst: { window: 0.5, spacing: 'end', target: 'nearest' },
+    stats: {
+      cooldown: 1,
+      damage: 8,
+      projectileCount: 1,
+      speed: ARROW_SPEED,
+      pierce: 1,
+      lifetime: 1.2,
+      size: 3,
+      knockback: 5,
+      spread: 0,
+      range: 340,
+      arc: 0,
+      boomerang: false,
+    },
+    levels: fourTimes({ text: '+1 arrow. +1 damage.', add: { projectileCount: 1, damage: 1 } }),
+  },
+  {
+    id: 'crystalline_bloom',
+    name: 'Crystalline Bloom',
+    description: 'Fires a slow crystal at the nearest enemy. It bursts into a cold blast on the first enemy it touches.',
+    icon: 'icon_bloom',
+    targeting: 'nearest',
+    tags: ['projectile', 'aoe'],
+    // The crystal deals nothing itself (it never pierces); the blast deals the damage, so only AoE modifications add damage.
+    damageTags: ['aoe'],
+    noPierce: true,
+    blastOnHit: true,
+    blastStyle: 'frost',
+    projectileAnim: 'bloom-pulse',
+    artRadius: 4,
+    color: 0xa8e8ff,
+    stats: {
+      cooldown: 2.5,
+      damage: 6,
+      projectileCount: 1,
+      speed: ARROW_SPEED * 0.7,
+      pierce: 1,
+      lifetime: 1.8,
+      size: 35,
+      knockback: 10,
+      spread: 12,
+      range: 340,
+      arc: 0,
+      boomerang: false,
+    },
+    levels: fourTimes({ text: '+10% radius.', pct: { size: 0.1 } }),
+  },
+  {
+    id: 'infinite_helix',
+    name: 'Infinite Helix',
+    description: 'Conjures a swirling freezing field under the nearest enemy. It slows enemies on it and inflicts Rime Trauma every second.',
+    icon: 'icon_helix',
+    targeting: 'field',
+    tags: ['duration', 'aoe'],
+    // The field deals nothing itself; Rime Trauma deals the damage, and only duration modifications strengthen it.
+    damageTags: ['duration'],
+    harmlessArea: true,
+    color: 0x9fe4ff,
+    fieldInterval: 1,
+    effect: { name: 'Rime Trauma', damage: 6, interval: 1, duration: 2, stacks: true, tint: 0x9fd8ff },
+    stats: {
+      cooldown: 2.5,
+      damage: 0,
+      projectileCount: 1,
+      speed: 0,
+      pierce: Infinity,
+      lifetime: 3,
+      size: 30,
+      knockback: 0,
+      spread: 0,
+      range: 260,
+      arc: 0,
+      boomerang: false,
+      slow: 0.25,
+    },
+    levels: [2, 3, 4, 5].map((n) => ({ text: `Creates ${n} freezing fields.`, add: { projectileCount: 1 } })),
+  },
+  {
+    id: 'original_pristinity',
+    name: 'Original Pristinity',
+    description: 'Your hits can be critical strikes (10% chance). Every critical strike takes 0.1s off all your cooldowns, ultimate included.',
+    icon: 'icon_pristinity',
+    targeting: 'passive',
+    color: 0xffb8e6,
+    stats: {
+      cooldown: 0,
+      damage: 0,
+      projectileCount: 0,
+      speed: 0,
+      pierce: Infinity,
+      lifetime: 0,
+      size: 0,
+      knockback: 0,
+      spread: 0,
+      range: 0,
+      arc: 0,
+      boomerang: false,
+      crit: 0.1,
+      critCooldown: 0.1,
+      // Late game brings hundreds of crits a second; refunds can shorten each cooldown by at most half.
+      refundFloor: 0.5,
+    },
+    levels: fourTimes({ text: '+5% critical strike chance.', add: { crit: 0.05 } }),
   },
 ];

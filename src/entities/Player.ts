@@ -146,6 +146,11 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.animate(dt);
   }
 
+  /** Chance (0..1) that one of this player's hits is a critical strike: the stat plus passive weapons. */
+  get critChance(): number {
+    return Math.min(1, this.stats.critChance + this.weapons.critChance());
+  }
+
   /** HP healed per second: flat regen plus the percent-of-max-HP regen. Not paused by taking damage. */
   get regenPerSecond(): number {
     return this.stats.regen + this.stats.regenPercent * this.stats.maxHp;

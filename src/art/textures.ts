@@ -241,6 +241,9 @@ function buildAnimations(scene: Phaser.Scene): void {
   a.create({ key: 'knight-idle', frames: frames('knight_idle', 4), frameRate: 4, repeat: -1 });
   a.create({ key: 'knight-walk', frames: frames('knight_walk', 4), frameRate: 10, repeat: -1 });
   a.create({ key: 'knight-hurt', frames: frames('knight_hurt', 2), frameRate: 10, repeat: 0 });
+  a.create({ key: 'elysia-idle', frames: frames('elysia_idle', 4), frameRate: 4, repeat: -1 });
+  a.create({ key: 'elysia-walk', frames: frames('elysia_walk', 4), frameRate: 10, repeat: -1 });
+  a.create({ key: 'elysia-hurt', frames: frames('elysia_hurt', 2), frameRate: 10, repeat: 0 });
   a.create({ key: 'drake-fly', frames: frames('drake', 2), frameRate: 8, repeat: -1 });
   a.create({ key: 'orb-pulse', frames: frames('orb', 2), frameRate: 12, repeat: -1 });
   a.create({ key: 'bat-fly', frames: frames('bat', 4), frameRate: 12, repeat: -1 });
@@ -249,6 +252,8 @@ function buildAnimations(scene: Phaser.Scene): void {
   a.create({ key: 'brute-walk', frames: frames('brute', 4), frameRate: 5, repeat: -1 });
   a.create({ key: 'banana-spin', frames: frames('banana', 4), frameRate: 18, repeat: -1 });
   a.create({ key: 'coconut-spin', frames: frames('coconut', 4), frameRate: 10, repeat: -1 });
+  a.create({ key: 'arrow-glint', frames: frames('arrow', 2), frameRate: 8, repeat: -1 });
+  a.create({ key: 'bloom-pulse', frames: frames('bloom', 2), frameRate: 10, repeat: -1 });
   for (const c of ['blue', 'green', 'red']) {
     a.create({ key: `gem-${c}`, frames: frames(`gem_${c}`, 2), frameRate: 2, repeat: -1 });
   }

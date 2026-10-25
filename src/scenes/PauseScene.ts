@@ -98,6 +98,7 @@ export class PauseScene extends Phaser.Scene {
       ['DAMAGE', pct(s.damageMult)],
       ['COOLDOWN', pct(s.cooldownMult)],
       ['ABILITY HASTE', `${Math.round(s.abilityHaste)} (-${Math.round((1 - hasteFactor(s.abilityHaste)) * 100)}%)`],
+      ['CRIT CHANCE', `${Math.round(run.player.critChance * 100)}% (×${s.critDamage})`],
       ['AREA', pct(s.areaMult)],
       ['EXP GAIN', pct(s.expMult)],
     ];

@@ -38,6 +38,11 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   readonly lastHit = new Map<number, number>();
   /** Duration effects ticking on this enemy (host only). */
   readonly effects: EffectStack[] = [];
+  /** Slowed (e.g. standing on a freezing field) until this scene time, by this fraction of its speed. */
+  slowUntil = 0;
+  slowAmount = 0;
+  /** Tint shown right now: 0 none, 1 hit flash, 2 chilled (slowed or carrying a tinted effect). */
+  tintState = 0;
   shadow: Phaser.GameObjects.Bob | null = null;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
@@ -59,6 +64,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.flashUntil = 0;
     this.lastHit.clear();
     this.effects.length = 0;
+    this.slowUntil = 0;
+    this.slowAmount = 0;
+    this.tintState = 0;
     this.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
     this.setAlpha(1).setFlipX(false);
     this.setDepth(DEPTH.units + y / ARENA_SIZE);
@@ -67,6 +75,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   flash(now: number): void {
     this.flashUntil = now + 100;
+    this.tintState = 1;
     this.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
+  }
+
+  /** The colour of a tinted effect on this enemy, or of a slow, or null. */
+  chillTint(now: number, slowTint: number): number | null {
+    for (const st of this.effects) {
+      const t = st.weapon.def.effect?.tint;
+      if (t !== undefined) return t;
+    }
+    return now < this.slowUntil ? slowTint : null;
   }
 }

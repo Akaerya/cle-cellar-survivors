@@ -53,10 +53,12 @@ export interface PlayerRunStats {
   /** Hits a shield blocked completely. */
   blocks: number;
   ultCasts: number;
+  /** Critical strikes landed. */
+  crits: number;
 }
 
 export function emptyRunStats(): PlayerRunStats {
-  return { damage: 0, kills: 0, taken: 0, healed: 0, deaths: 0, revives: 0, exp: 0, blocks: 0, ultCasts: 0 };
+  return { damage: 0, kills: 0, taken: 0, healed: 0, deaths: 0, revives: 0, exp: 0, blocks: 0, ultCasts: 0, crits: 0 };
 }
 
 /** One weapon (or the ultimate) on the party screen. */

@@ -40,8 +40,8 @@ export type ClientMsg =
 // ------------------------------------------------------------------ effects relayed to joiners
 
 export type FxEvent =
-  /** damage number */
-  | ['n', number, number, number, 0 | 1]
+  /** damage number: x, y, value, style (0 normal, 1 big hit, 2 critical strike) */
+  | ['n', number, number, number, 0 | 1 | 2]
   /** heal number: x, y, amount */
   | ['g', number, number, number]
   /** puff: x, y, colour, count */
@@ -65,14 +65,22 @@ export type FxEvent =
   /** Echo Strike ring: x, y, radius, colour */
   | ['e', number, number, number, number]
   /** bomb explosion: x, y, radius, colour */
-  | ['x', number, number, number, number];
+  | ['x', number, number, number, number]
+  /** cold crystal burst: x, y, radius, colour */
+  | ['k', number, number, number, number]
+  /** freezing field (a swirling vortex): x, y, radius, seconds, colour */
+  | ['v', number, number, number, number, number]
+  /** lingering beam: x1, y1, x2, y2, width, seconds, colour */
+  | ['z', number, number, number, number, number, number, number]
+  /** dome ultimate cast: caster slot, centre x, centre y */
+  | ['d', number, number, number];
 
 // ------------------------------------------------------------------ binary snapshots
 
 export const STATE_CODES = ['playing', 'dying', 'victory', 'ended'] as const;
 
 export const PF = { dead: 1, gone: 2, moving: 4, god: 8 } as const;
-export const EF = { flip: 1, flash: 2 } as const;
+export const EF = { flip: 1, flash: 2, chill: 4 } as const;
 
 export interface SnapPlayer {
   slot: number;

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { ARENA_SIZE, DEPTH } from '../constants';
+import { ARENA_SIZE, CHILL_TINT, DEPTH } from '../constants';
 import { ATTACK_DEFS, ENEMIES } from '../data';
 import { EF, type SnapEntity } from './protocol';
 
@@ -122,6 +122,7 @@ export class Mirror {
         }
         o.s.setFlipX((e.extra & EF.flip) !== 0);
         if (e.extra & EF.flash) o.s.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
+        else if (e.extra & EF.chill) o.s.setTint(CHILL_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
         else o.s.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
       },
       (o) => {
@@ -153,11 +154,17 @@ export class Mirror {
           o.kind = e.kind;
           const anim = ATTACK_DEFS[e.kind]?.projectileAnim;
           if (anim) o.s.play(anim, true);
-          o.s.setDepth(DEPTH.projectiles).clearTint().setAlpha(1);
+          o.s.setDepth(DEPTH.projectiles).clearTint().setAlpha(1).setRotation(0);
         }
         o.s.setScale(e.extra / 32);
       },
-      () => {},
+      (o) => {
+        // Arrows face the way they move between snapshots.
+        if (!ATTACK_DEFS[o.kind]?.orient) return;
+        const dx = o.toX - o.fromX;
+        const dy = o.toY - o.fromY;
+        if (dx * dx + dy * dy > 0.25) o.s.setRotation(Math.atan2(dy, dx));
+      },
     );
     this.potions = new Layer(
       scene,

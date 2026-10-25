@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { DEPTH, INNER, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
+import { DEPTH, INNER, MAX_EFFECT_STACKS, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
 import { applyLevelBonuses, hasteFactor, modsForWeapon, weaponLevelAt, type WeaponLevelStats } from '../core/progression';
 import { CHAIN_RANGE, ECHO_GAP, ECHO_RADIUS, SPLIT_ARC, weaponDef } from '../data';
 import type { ModEffect, WeaponDef, WeaponStats } from '../data/types';
@@ -47,7 +47,9 @@ export interface WeaponInstance {
   /** Repeats of the last attack still to come, and seconds until the next one. */
   repeatsLeft: number;
   repeatTimer: number;
-  /** Bombs with `burst`: projectiles of the last throw still to come, seconds until the next, and the gap between them. */
+  /** Seconds of crit refund this weapon can still take before it is next used (see `refundFloor`). */
+  refundable: number;
+  /** Weapons with `burst`: projectiles of the last attack still to come, seconds until the next, and the gap between them. */
   burstLeft: number;
   burstTimer: number;
   burstGap: number;
@@ -69,6 +71,31 @@ export interface Effective extends WeaponStats {
   effectDuration: number;
   /** Duration effect: chance a stack copies itself when applied or when it deals damage. */
   reiterate: number;
+  /** Fields: fraction of speed enemies inside lose. */
+  slow: number;
+}
+
+/** A freezing field (`field` weapons): stays where it was cast, slows enemies on it and applies the weapon's effect. */
+interface Field {
+  weapon: WeaponInstance;
+  x: number;
+  y: number;
+  radius: number;
+  /** Seconds left, and seconds until the next check for enemies on the field. */
+  left: number;
+  next: number;
+}
+
+/** A lingering beam (dome ultimate): hits every enemy that touches it once. */
+interface Beam {
+  weapon: WeaponInstance;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  halfWidth: number;
+  left: number;
+  readonly hit: Set<Enemy>;
 }
 
 /** An Echo Strike waiting to go off. */
@@ -86,6 +113,10 @@ interface Echo {
 }
 
 const DEG = Math.PI / 180;
+/** px a projectile that ricochets off a dome edge is put back inside the dome. */
+const DOME_INSET = 1;
+/** Seconds of slack for field timers, so a check due at the very end of a field's time does not run. */
+const FIELD_EPSILON = 1e-6;
 /** Targeting types drawn with the slash graphics (redrawn every frame while effects play). */
 const SLASHERS = new Set(['facing', 'stab', 'breath']);
 
@@ -94,7 +125,9 @@ const SLASHERS = new Set(['facing', 'stab', 'breath']);
  * weapon is a data entry: `nearest` / `random` / `facing` fire projectiles (or sweep if speed is 0),
  * `orbit` keeps objects circling the owner, `aura` damages everything in a radius on a tick,
  * `stab` thrusts a blade at the nearest enemy, `breath` sprays a cone at it, `strike` calls bolts down
- * around the owner, and `shield` blocks a hit every cooldown and absorbs part of the rest.
+ * around the owner, `shield` blocks a hit every cooldown and absorbs part of the rest, `bomb` throws a projectile that
+ * explodes on reaching its target, `field` conjures freezing fields under enemies, and `passive` weapons only change
+ * stats (critical strikes). `beam` is for ultimate attacks: lingering beams across a dome.
  * The owner's modifications (data/modifications.ts) are folded into `eff()` by weapon tag; this class also
  * runs what they add: projectile splits and chains, Echo Strike echoes and duration effects on enemies.
  */
@@ -104,6 +137,8 @@ export class Weapons {
   private echoes: Echo[] = [];
   /** Echo damage summed per weapon and enemy, so one frame of echoes is one hit (and one number) per enemy. */
   private echoSums = new Map<WeaponInstance, Map<Enemy, number>>();
+  private fields: Field[] = [];
+  private beams: Beam[] = [];
 
   /** `projectiles` is shared by every player's weapons. */
   constructor(
@@ -155,6 +190,7 @@ export class Weapons {
       burstLeft: 0,
       burstTimer: 0,
       burstGap: 0,
+      refundable: 0,
     };
   }
 
@@ -170,9 +206,11 @@ export class Weapons {
     w.stats = applyLevelBonuses(w.levelStats);
   }
 
-  /** The owner's modifications changed: recompute what they add to every weapon. */
+  /** The owner's modifications changed: recompute what they add to every weapon and to the ultimate's attack. */
   refreshMods(): void {
     for (const w of this.list) w.mod = modsForWeapon(w.def, this.owner.mods);
+    const ult = this.owner.ultimate?.attack;
+    if (ult) ult.mod = modsForWeapon(ult.def, this.owner.mods);
   }
 
   eff(w: WeaponInstance): Effective {
@@ -201,9 +239,12 @@ export class Weapons {
       // Echoes grow with AREA and area modifications, not with the weapon's own size levels.
       echoRadius: ECHO_RADIUS * Math.max(0.1, p.areaMult + m.area + m.echoArea),
       echoRepeats: m.echo > 0 ? Math.max(1, Math.round(m.echoRepeats)) : 0,
+      // Duration modifications stretch how long the weapon's fields, beams and effects last.
+      lifetime: s.lifetime * Math.max(0.1, 1 + m.duration),
       effectDamage: effect ? effect.damage * damageMult : 0,
       effectDuration: effect ? effect.duration * Math.max(0.1, 1 + m.duration) : 0,
       reiterate: m.reiterate,
+      slow: s.slow ?? 0,
     };
   }
 
@@ -219,6 +260,7 @@ export class Weapons {
         case 'breath':
         case 'strike':
         case 'bomb':
+        case 'field':
           if (firing) this.tickShooter(w, e, dt);
           break;
         case 'shield':
@@ -233,7 +275,11 @@ export class Weapons {
       }
       if (w.gfx && SLASHERS.has(w.def.targeting)) this.drawSlashes(w, dt);
     }
-    if (firing) this.processEchoes();
+    if (firing) {
+      this.updateFields(dt);
+      this.updateBeams(dt);
+      this.processEchoes();
+    }
   }
 
   /** Projectiles of every player: lifetime, boomerang and bomb steering, and the arena wall. Bombs explode instead of vanishing. */
@@ -247,20 +293,32 @@ export class Weapons {
       const hitWall = pr.x < INNER.left || pr.x > INNER.right || pr.y < INNER.top || pr.y > INNER.bottom;
       if (pr.bomb) {
         if (pr.arrived || !alive || hitWall) o.weapons.explode(pr);
-      } else if (!alive || hitWall) Weapons.release(pr);
+        continue;
+      }
+      if (!alive || hitWall) {
+        Weapons.release(pr);
+        continue;
+      }
+      const dome = o.ultimate?.dome();
+      if (dome) o.weapons.domeEdge(pr, dome);
+      pr.prevX = pr.x;
+      pr.prevY = pr.y;
     }
   }
 
   private tickShooter(w: WeaponInstance, e: Effective, dt: number): void {
-    if (w.burstLeft > 0) {
+    const burst = w.def.burst;
+    if (w.burstLeft > 0 && burst) {
       w.burstTimer -= dt;
       while (w.burstLeft > 0 && w.burstTimer <= 0) {
         w.burstLeft--;
         w.burstTimer += w.burstGap;
         const p = this.owner;
-        const target = this.randomOnScreen() ?? this.game.enemies.nearest(p.x, p.y, e.range);
+        const nearest = this.game.enemies.nearest(p.x, p.y, e.range);
+        const target = burst.target === 'random' ? (this.randomOnScreen() ?? nearest) : nearest;
+        // With nothing to aim at, that projectile is skipped (the rest of the burst carries on).
         if (target) {
-          this.throwBomb(w, e, target);
+          this.fireAt(w, e, target);
           this.game.playSfx('throw', p.x, p.y);
         }
       }
@@ -283,6 +341,7 @@ export class Weapons {
     }
     // Hold fire with no target: stay ready and shoot the moment one appears.
     w.timer = fired ? Math.max(w.timer + e.cooldown, e.cooldown * 0.5) : 0;
+    if (fired) w.refundable = this.refundShare() * e.cooldown;
   }
 
   /** Seconds between repeats: the weapon's delay, shortened so every repeat lands before the next attack. */
@@ -298,7 +357,8 @@ export class Weapons {
     if (w.def.targeting === 'nearest') {
       const target = this.game.enemies.nearest(p.x, p.y, e.range);
       if (target) {
-        this.volley(w, e, Math.atan2(target.y - p.y, target.x - p.x));
+        if (w.def.burst) this.startBurst(w, e, target);
+        else this.volley(w, e, Math.atan2(target.y - p.y, target.x - p.x));
         fired = true;
       }
     } else if (w.def.targeting === 'random') {
@@ -319,9 +379,11 @@ export class Weapons {
     } else if (w.def.targeting === 'bomb') {
       const target = this.game.enemies.nearest(p.x, p.y, e.range);
       if (target) {
-        this.throwBombs(w, e, target);
+        this.startBurst(w, e, target);
         fired = true;
       }
+    } else if (w.def.targeting === 'field') {
+      fired = this.castFields(w, e);
     } else {
       const base = Math.atan2(p.facing.y, p.facing.x);
       if (e.speed > 0) this.volley(w, e, base);
@@ -334,31 +396,55 @@ export class Weapons {
   private volley(w: WeaponInstance, e: Effective, base: number): void {
     const p = this.owner;
     const n = Math.max(1, Math.round(e.projectileCount));
+    const shot = this.shot(w, e);
     for (let i = 0; i < n; i++) {
       const angle = base + (i - (n - 1) / 2) * e.spread * DEG;
       const pr = this.projectiles.get(p.x, p.y) as Projectile | null;
       if (!pr) break;
-      pr.fire(w, p.x, p.y - 2, angle, e);
+      pr.fire(w, p.x, p.y - 2, angle, shot);
     }
     this.game.playSfx('throw', p.x, p.y);
   }
 
   /**
-   * Bomb weapons: the first projectile goes at `first` (the closest enemy). With `burst`, the others follow one at a
-   * time, spread evenly over that fraction of the cooldown, each at a random enemy on screen; without it they all go now.
+   * Stats a projectile of `w` is fired with. Weapons whose `size` is a blast radius (bombs, blast-on-hit) fly at the
+   * size of their art; bombs never split or chain since they touch nothing on the way.
    */
-  private throwBombs(w: WeaponInstance, e: Effective, first: Enemy): void {
+  private shot(w: WeaponInstance, e: Effective): Effective {
+    if (w.def.targeting === 'bomb') return { ...e, size: w.def.artRadius ?? 5, split: 0, chain: 0 };
+    if (w.def.blastOnHit) return { ...e, size: w.def.artRadius ?? 5 };
+    return e;
+  }
+
+  /**
+   * The first projectile goes at `first` (the closest enemy). With `burst`, the others follow one at a time over part
+   * of the cooldown (see BurstDef); without it, bombs throw them all now at random enemies on screen.
+   */
+  private startBurst(w: WeaponInstance, e: Effective, first: Enemy): void {
     const p = this.owner;
-    this.throwBomb(w, e, first);
+    this.fireAt(w, e, first);
     const n = Math.max(1, Math.round(e.projectileCount));
-    if (n > 1 && w.def.burst) {
+    const burst = w.def.burst;
+    if (n > 1 && burst) {
       w.burstLeft = n - 1;
-      w.burstGap = (w.def.burst * e.cooldown) / n;
+      w.burstGap = (burst.window * e.cooldown) / (burst.spacing === 'end' ? n - 1 : n);
       w.burstTimer = w.burstGap;
     } else {
-      for (let i = 1; i < n; i++) this.throwBomb(w, e, this.randomOnScreen() ?? first);
+      for (let i = 1; i < n; i++) this.fireAt(w, e, this.randomOnScreen() ?? first);
     }
     this.game.playSfx('throw', p.x, p.y);
+  }
+
+  /** One projectile of `w` at `target`: a bomb that homes in on it, or a straight shot toward where it is now. */
+  private fireAt(w: WeaponInstance, e: Effective, target: Enemy): void {
+    if (w.def.targeting === 'bomb') {
+      this.throwBomb(w, e, target);
+      return;
+    }
+    const p = this.owner;
+    const pr = this.projectiles.get(p.x, p.y) as Projectile | null;
+    if (!pr) return;
+    pr.fire(w, p.x, p.y - 2, Math.atan2(target.y - p.y, target.x - p.x), this.shot(w, e));
   }
 
   /** One bomb at `target`. It flies at art size, touches nothing on the way, and explodes on reaching the target. */
@@ -367,7 +453,7 @@ export class Weapons {
     const pr = this.projectiles.get(p.x, p.y) as Projectile | null;
     if (!pr) return;
     const angle = Math.atan2(target.y - p.y, target.x - p.x);
-    pr.fire(w, p.x, p.y - 2, angle, { ...e, size: w.def.artRadius ?? 5, split: 0, chain: 0 });
+    pr.fire(w, p.x, p.y - 2, angle, this.shot(w, e));
     pr.aim(target);
   }
 
@@ -378,13 +464,17 @@ export class Weapons {
     return list.length > 0 ? this.game.rng.pick(list) : null;
   }
 
-  /** A bomb explodes where it is: everything within the weapon's area is hit (an area hit, so AoE modifications apply). */
+  /** A bomb explodes where it is. */
   explode(pr: Projectile): void {
-    const w = pr.weapon;
-    const e = this.eff(w);
     const x = pr.x;
     const y = pr.y;
     Weapons.release(pr);
+    this.blast(pr.weapon, x, y);
+  }
+
+  /** A blast of `w` at (x, y): everything within the weapon's area is hit (an area hit, so AoE modifications apply). */
+  private blast(w: WeaponInstance, x: number, y: number): void {
+    const e = this.eff(w);
     this.query.length = 0;
     this.game.enemies.grid.query(x, y, e.size + 16, this.query);
     for (const en of this.query) {
@@ -395,8 +485,165 @@ export class Weapons {
       if (d > e.size + en.radius) continue;
       this.areaHit(w, e, en, dx / (d || 1), dy / (d || 1));
     }
-    this.game.fx.blast(x, y, e.size, w.def.color ?? 0xffffff);
-    this.game.playSfx('boom', x, y);
+    if (w.def.blastStyle === 'frost') {
+      this.game.fx.frost(x, y, e.size, w.def.color ?? 0xc8ecff);
+      this.game.playSfx('shatter', x, y);
+    } else {
+      this.game.fx.blast(x, y, e.size, w.def.color ?? 0xffffff);
+      this.game.playSfx('boom', x, y);
+    }
+  }
+
+  // ---------------------------------------------------------------- freezing fields
+
+  /** `field`: one field under the closest enemy in range, the others under random enemies in range. */
+  private castFields(w: WeaponInstance, e: Effective): boolean {
+    const p = this.owner;
+    const first = this.game.enemies.nearest(p.x, p.y, e.range);
+    if (!first) return false;
+    const n = Math.max(1, Math.round(e.projectileCount));
+    const near: Enemy[] = [];
+    this.game.enemies.grid.query(p.x, p.y, e.range, near);
+    const inRange = near.filter((en) => en.active && (en.x - p.x) ** 2 + (en.y - p.y) ** 2 <= e.range * e.range);
+    const fresh = inRange.filter((en) => en !== first);
+    const targets = [first];
+    // Different enemies while there are enough; after that, any enemy in range again.
+    for (let i = 1; i < n; i++) {
+      if (fresh.length > 0) targets.push(fresh.splice(this.game.rng.int(0, fresh.length - 1), 1)[0]);
+      else targets.push(inRange.length > 0 ? this.game.rng.pick(inRange) : first);
+    }
+    for (const t of targets) {
+      this.fields.push({ weapon: w, x: t.x, y: t.y, radius: e.size, left: e.lifetime, next: 0 });
+      this.game.fx.vortex(t.x, t.y, e.size, e.lifetime, w.def.color ?? 0x9fe4ff);
+    }
+    this.game.playSfx('freeze', p.x, p.y);
+    return true;
+  }
+
+  /**
+   * Fields slow every enemy on them, and on every check (when they appear, then every `fieldInterval` seconds) each
+   * field applies the weapon's effect to every enemy on it: two fields on one enemy give it two stacks.
+   */
+  private updateFields(dt: number): void {
+    if (this.fields.length === 0) return;
+    const now = this.game.time.now;
+    let keep = 0;
+    for (const f of this.fields) {
+      // Done once its time is up (the small margin stops float drift from adding a check at exactly the end).
+      if (f.left <= FIELD_EPSILON) continue;
+      const w = f.weapon;
+      const e = this.eff(w);
+      const check = f.next <= FIELD_EPSILON;
+      if (check) f.next += w.def.fieldInterval ?? 1;
+      this.query.length = 0;
+      this.game.enemies.grid.query(f.x, f.y, f.radius + 16, this.query);
+      for (const en of this.query) {
+        if (!en.active) continue;
+        const rr = f.radius + en.radius * 0.5;
+        if ((en.x - f.x) ** 2 + (en.y - f.y) ** 2 > rr * rr) continue;
+        if (e.slow > 0) this.game.enemies.slow(en, e.slow, now);
+        if (check) this.applyEffect(w, e, en);
+      }
+      f.left -= dt;
+      f.next -= dt;
+      if (f.left > 0) this.fields[keep++] = f;
+    }
+    this.fields.length = keep;
+  }
+
+  // ---------------------------------------------------------------- beams (dome ultimate)
+
+  /** A beam of `w` from (x1, y1) to (x2, y2) that lingers for the weapon's lifetime, hitting each enemy once. */
+  beam(w: WeaponInstance, x1: number, y1: number, x2: number, y2: number): void {
+    const e = this.eff(w);
+    this.beams.push({ weapon: w, x1, y1, x2, y2, halfWidth: e.size, left: e.lifetime, hit: new Set() });
+    this.game.fx.beam(x1, y1, x2, y2, e.size * 2, e.lifetime, w.def.color ?? 0xffb8e6);
+    this.game.playSfx('laser', (x1 + x2) / 2, (y1 + y2) / 2);
+  }
+
+  private updateBeams(dt: number): void {
+    if (this.beams.length === 0) return;
+    let keep = 0;
+    for (const b of this.beams) {
+      const e = this.eff(b.weapon);
+      const dx = b.x2 - b.x1;
+      const dy = b.y2 - b.y1;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      this.query.length = 0;
+      this.game.enemies.grid.query((b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2, len / 2 + b.halfWidth + 16, this.query);
+      for (const en of this.query) {
+        if (!en.active || b.hit.has(en)) continue;
+        const rx = en.x - b.x1;
+        const ry = en.y - b.y1;
+        const along = rx * ux + ry * uy;
+        if (along < -en.radius || along > len + en.radius) continue;
+        const side = rx * -uy + ry * ux;
+        if (Math.abs(side) > b.halfWidth + en.radius) continue;
+        b.hit.add(en);
+        const s = side >= 0 ? 1 : -1;
+        this.areaHit(b.weapon, e, en, -uy * s, ux * s);
+      }
+      b.left -= dt;
+      if (b.left > 0) this.beams[keep++] = b;
+    }
+    this.beams.length = keep;
+  }
+
+  // ---------------------------------------------------------------- dome edge (dome ultimate)
+
+  /**
+   * The owner's dome is up: a projectile inside it that reaches the edge treats the edge like an enemy it can split
+   * on, but it uses up no pierce or bounces, deals no damage, and ricochets toward the closest enemy inside the dome
+   * that it has not hit (straight back off the edge when there is none).
+   */
+  domeEdge(pr: Projectile, dome: { x: number; y: number; r: number }): void {
+    const px = pr.prevX - dome.x;
+    const py = pr.prevY - dome.y;
+    const cx = pr.x - dome.x;
+    const cy = pr.y - dome.y;
+    const r2 = dome.r * dome.r;
+    if (px * px + py * py >= r2 || cx * cx + cy * cy < r2) return;
+    // Where the step from inside to outside crosses the edge.
+    const dx = cx - px;
+    const dy = cy - py;
+    const a = dx * dx + dy * dy || 1;
+    const b = 2 * (px * dx + py * dy);
+    const c = px * px + py * py - r2;
+    const t = (-b + Math.sqrt(Math.max(0, b * b - 4 * a * c))) / (2 * a);
+    const nx0 = px + dx * t;
+    const ny0 = py + dy * t;
+    const nl = Math.hypot(nx0, ny0) || 1;
+    const nx = nx0 / nl;
+    const ny = ny0 / nl;
+    const ex = dome.x + nx * (dome.r - DOME_INSET);
+    const ey = dome.y + ny * (dome.r - DOME_INSET);
+    let target: Enemy | null = null;
+    let best = Infinity;
+    for (const en of this.game.enemies.active) {
+      if (!en.active || pr.hit.has(en)) continue;
+      const d2 = (en.x - dome.x) ** 2 + (en.y - dome.y) ** 2;
+      if (d2 >= r2) continue;
+      const e2 = (en.x - ex) ** 2 + (en.y - ey) ** 2;
+      if (e2 < best) {
+        best = e2;
+        target = en;
+      }
+    }
+    let angle: number;
+    if (target) angle = Math.atan2(target.y - ey, target.x - ex);
+    else {
+      const dot = pr.dirX * nx + pr.dirY * ny;
+      angle = Math.atan2(pr.dirY - 2 * dot * ny, pr.dirX - 2 * dot * nx);
+    }
+    if (pr.splitsLeft > 0) {
+      (pr.body as Phaser.Physics.Arcade.Body).reset(ex, ey);
+      this.split(pr, angle);
+      Weapons.release(pr);
+      return;
+    }
+    pr.ricochet(ex, ey, angle);
   }
 
   /** Fires one projectile of `w` from anywhere (ultimates). Returns false when the pool is empty. */
@@ -508,6 +755,7 @@ export class Weapons {
       if (w.def.targeting !== 'shield' || w.timer > 0) continue;
       const e = this.eff(w);
       w.timer = e.cooldown;
+      w.refundable = this.refundShare() * e.cooldown;
       w.pulse = 1;
       const p = this.owner;
       this.game.fx.ring(p.x, p.y, w.def.color ?? 0x5ab0ff, e.size + 12, 320);
@@ -522,6 +770,43 @@ export class Weapons {
     let r = 0;
     for (const w of this.list) if (w.def.targeting === 'shield') r += w.stats.reduction ?? 0;
     return Math.min(MAX_SHIELD_REDUCTION, r);
+  }
+
+  /** Critical strike chance the owner's passive weapons add. */
+  critChance(): number {
+    let c = 0;
+    for (const w of this.list) c += w.stats.crit ?? 0;
+    return c;
+  }
+
+  /** Share of a cooldown crit refunds may take off: 1 minus the passive weapons' highest `refundFloor`. */
+  refundShare(): number {
+    let floor = 0;
+    for (const w of this.list) floor = Math.max(floor, w.stats.refundFloor ?? 0);
+    return Math.max(0, 1 - floor);
+  }
+
+  /**
+   * One of the owner's hits was a critical strike: passive weapons with `critCooldown` take that many seconds off
+   * every cooldown the owner has, the ultimate included. A cooldown never goes below ready, and refunds stop once
+   * they have taken `refundShare()` of it since the ability was last used.
+   */
+  onCrit(): void {
+    let s = 0;
+    for (const w of this.list) s += w.stats.critCooldown ?? 0;
+    if (s <= 0) return;
+    for (const w of this.list) {
+      if (w.def.targeting === 'passive') continue;
+      const r = Math.max(0, Math.min(s, w.refundable, w.timer));
+      w.timer -= r;
+      w.refundable -= r;
+    }
+    const u = this.owner.ultimate;
+    if (u) {
+      const r = Math.max(0, Math.min(s, u.refundable, u.cooldownLeft));
+      u.cooldownLeft -= r;
+      u.refundable -= r;
+    }
   }
 
   /** Melee arc toward `base` (Tail Whip, breaths). Extra projectiles add sweeps around the owner. */
@@ -728,6 +1013,7 @@ export class Weapons {
       w.timer -= dt;
       if (w.timer <= 0) {
         w.timer += e.cooldown;
+        w.refundable = this.refundShare() * e.cooldown;
         w.pulse = 1;
         this.game.relay(['a', p.slot, this.list.indexOf(w)]);
         this.query.length = 0;
@@ -771,8 +1057,12 @@ export class Weapons {
     const v = Math.hypot(body.velocity.x, body.velocity.y);
     const dx = v > 1 ? body.velocity.x / v : pr.dirX;
     const dy = v > 1 ? body.velocity.y / v : pr.dirY;
-    this.game.enemies.hit(en, pr.damage, dx, dy, pr.knockback, pr.weapon);
-    if (pr.weapon.def.effect) this.applyEffect(pr.weapon, this.eff(pr.weapon), en);
+    // Blast-on-hit projectiles deal nothing themselves: every enemy they touch sets off the weapon's blast.
+    if (pr.weapon.def.blastOnHit) this.blast(pr.weapon, en.x, en.y);
+    else {
+      this.game.enemies.hit(en, pr.damage, dx, dy, pr.knockback, pr.weapon);
+      if (pr.weapon.def.effect) this.applyEffect(pr.weapon, this.eff(pr.weapon), en);
+    }
     if (pr.splitsLeft > 0) {
       this.split(pr, Math.atan2(dy, dx));
       Weapons.release(pr);
@@ -792,7 +1082,7 @@ export class Weapons {
   /** Splits: identical projectiles fan out from the hit, skipping enemies the parent already hit. */
   private split(pr: Projectile, angle: number): void {
     const w = pr.weapon;
-    const e = this.eff(w);
+    const e = this.shot(w, this.eff(w));
     const n = pr.splitCount;
     const step = (SPLIT_ARC * DEG) / (n - 1);
     for (let i = 0; i < n; i++) {
@@ -893,9 +1183,12 @@ export class Weapons {
   private applyEffect(w: WeaponInstance, e: Effective, en: Enemy): void {
     const def = w.def.effect;
     if (!def || e.effectDuration <= 0 || !en.active) return;
-    let stack = en.effects.find((st) => st.weapon === w && !st.copy);
+    let stack = def.stacks ? undefined : en.effects.find((st) => st.weapon === w && !st.copy);
     if (stack) stack.left = e.effectDuration;
     else {
+      let count = 0;
+      for (const st of en.effects) if (st.weapon === w) count++;
+      if (count >= MAX_EFFECT_STACKS) return;
       stack = { weapon: w, left: e.effectDuration, next: def.interval, copy: false };
       en.effects.push(stack);
     }
@@ -960,6 +1253,8 @@ export class Weapons {
   /** Removes everything this player drew (player left). The list stays for the party screen. */
   destroy(): void {
     this.echoes.length = 0;
+    this.fields.length = 0;
+    this.beams.length = 0;
     for (const w of this.list) {
       for (const s of w.orbiters) s.destroy();
       w.orbiters.length = 0;
@@ -984,5 +1279,7 @@ export class Weapons {
       w.burstLeft = 0;
     }
     this.echoes.length = 0;
+    this.fields.length = 0;
+    this.beams.length = 0;
   }
 }

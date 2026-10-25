@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { ARENA_SIZE, DEPTH, MAX_EFFECT_STACKS, MAX_ENEMIES } from '../constants';
+import { ARENA_SIZE, CHILL_TINT, DEPTH, MAX_EFFECT_STACKS, MAX_ENEMIES, SLOW_LINGER_MS } from '../constants';
 import { SpatialGrid } from '../core/spatialGrid';
 import type { EnemyDef } from '../data/types';
 import { Enemy, type EffectStack } from '../entities/Enemy';
@@ -107,16 +107,23 @@ export class Enemies {
         e.kby *= decay;
         const sl = Math.hypot(e.sepX, e.sepY);
         const sk = sl > SEP_MAX ? SEP_MAX / sl : 1;
-        const sp = e.def.speed * speedScale;
+        const sp = e.def.speed * speedScale * (now < e.slowUntil ? 1 - e.slowAmount : 1);
         body.setVelocity(
           (dx / d) * sp + e.kbx + e.sepX * sk,
           (dy / d) * sp + e.kby + e.sepY * sk,
         );
         if (Math.abs(dx) > 2) e.setFlipX(dx < 0);
       }
-      if (e.flashUntil !== 0 && now >= e.flashUntil) {
-        e.flashUntil = 0;
-        e.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
+      if (e.flashUntil !== 0 && now >= e.flashUntil) e.flashUntil = 0;
+      if (e.flashUntil === 0) {
+        // Back from a hit flash, or chilled / no longer chilled: only touch the tint when it changes.
+        const chill = e.chillTint(now, CHILL_TINT);
+        const want = chill !== null ? 2 : 0;
+        if (want !== e.tintState) {
+          e.tintState = want;
+          if (chill !== null) e.setTint(chill).setTintMode(Phaser.TintModes.MULTIPLY);
+          else e.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
+        }
       }
       e.setDepth(DEPTH.units + e.y / ARENA_SIZE);
       const s = e.shadow!;
@@ -161,6 +168,13 @@ export class Enemies {
     }
   }
 
+  /** Slows `e` by `amount` (0..1) for a moment; fields call this every frame. Slows do not stack: the strongest wins. */
+  slow(e: Enemy, amount: number, now: number): void {
+    if (now >= e.slowUntil) e.slowAmount = 0;
+    e.slowAmount = Math.max(e.slowAmount, Math.min(1, amount));
+    e.slowUntil = now + SLOW_LINGER_MS;
+  }
+
   /** Reiterate: with `chance`, the stack copies itself (same time left), up to MAX_EFFECT_STACKS per weapon. */
   reiterate(e: Enemy, stack: EffectStack, chance: number): void {
     if (chance <= 0 || stack.left <= 0 || !e.active) return;
@@ -173,6 +187,15 @@ export class Enemies {
   /** dirX/dirY: unit vector to push the enemy along. */
   hit(e: Enemy, amount: number, dirX: number, dirY: number, knockback: number, weapon?: WeaponInstance): void {
     if (!e.active || e.hp <= 0) return;
+    // Critical strikes: any hit from a player with crit chance (passive weapons, stats) can crit.
+    let crit = false;
+    if (weapon) {
+      const chance = weapon.owner.critChance;
+      if (chance > 0 && this.game.rng.float() < chance) {
+        crit = true;
+        amount *= weapon.owner.stats.critDamage;
+      }
+    }
     const dealt = Math.min(e.hp, amount);
     e.hp -= amount;
     if (weapon) {
@@ -180,7 +203,7 @@ export class Enemies {
       weapon.owner.runStats.damage += dealt;
     }
     e.flash(this.game.time.now);
-    this.game.fx.damageNumber(e.x, e.y - e.height / 2, amount, amount >= 25);
+    this.game.fx.damageNumber(e.x, e.y - e.height / 2, amount, crit ? 2 : amount >= 25 ? 1 : 0);
     const k = (knockback * (1 - e.def.knockbackResist)) / KB_TAU;
     e.kbx += dirX * k;
     e.kby += dirY * k;
@@ -191,6 +214,10 @@ export class Enemies {
         weapon.kills++;
         weapon.owner.runStats.kills++;
       }
+    }
+    if (crit && weapon) {
+      weapon.owner.runStats.crits++;
+      weapon.owner.weapons.onCrit();
     }
   }
 

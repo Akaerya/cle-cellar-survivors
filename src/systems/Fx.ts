@@ -14,6 +14,14 @@ const MAX_NUMBERS = 90;
 /** Echo Strike rings: how long one shows, and how many can show at once (the oldest is reused). */
 const ECHO_LIFE = 0.25;
 const MAX_ECHOES = 64;
+/** Critical strike numbers: colour and scale. */
+const CRIT_TINT = 0xff7ad9;
+const CRIT_SCALE = 2;
+/** Freezing fields and beams that can show at once (the oldest is reused). */
+const MAX_VORTICES = 40;
+const MAX_BEAMS = 24;
+/** Seconds a field takes to swirl open and to fade at the end. */
+const VORTEX_FADE = 0.25;
 
 interface EchoRing {
   x: number;
@@ -21,6 +29,29 @@ interface EchoRing {
   r: number;
   color: number;
   life: number;
+}
+
+/** A freezing field drawn as a swirling vortex for `dur` seconds. */
+interface Vortex {
+  x: number;
+  y: number;
+  r: number;
+  color: number;
+  age: number;
+  dur: number;
+  spin: number;
+}
+
+/** A lingering beam, bright when it fires and fading over `dur` seconds. */
+interface BeamFx {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  width: number;
+  color: number;
+  age: number;
+  dur: number;
 }
 
 /** Juice: floating damage numbers, death puffs, rings. All pooled. */
@@ -31,6 +62,13 @@ export class Fx {
   private echoes: EchoRing[] = [];
   private echoCursor = 0;
   private echoGfx: Phaser.GameObjects.Graphics;
+  private vortices: Vortex[] = [];
+  private vortexCursor = 0;
+  private vortexGfx: Phaser.GameObjects.Graphics;
+  private beams: BeamFx[] = [];
+  private beamCursor = 0;
+  private beamGfx: Phaser.GameObjects.Graphics;
+  private time = 0;
   activeNumbers = 0;
   /** Co-op host: every effect is also handed here to be replayed on the joiners' screens. */
   relay: ((ev: FxEvent) => void) | null = null;
@@ -46,6 +84,74 @@ export class Fx {
     }
     this.echoGfx = scene.add.graphics().setDepth(DEPTH.fx);
     for (let i = 0; i < MAX_ECHOES; i++) this.echoes.push({ x: 0, y: 0, r: 0, color: 0, life: 0 });
+    // Fields lie on the ground under the units; beams cross over them.
+    this.vortexGfx = scene.add.graphics().setDepth(DEPTH.aura);
+    for (let i = 0; i < MAX_VORTICES; i++) this.vortices.push({ x: 0, y: 0, r: 0, color: 0, age: 0, dur: 0, spin: 1 });
+    this.beamGfx = scene.add.graphics().setDepth(DEPTH.slash);
+    for (let i = 0; i < MAX_BEAMS; i++) this.beams.push({ x1: 0, y1: 0, x2: 0, y2: 0, width: 0, color: 0, age: 0, dur: 0 });
+  }
+
+  /** A freezing field at (x, y): a swirling vortex of `radius` px that lasts `dur` seconds. */
+  vortex(x: number, y: number, radius: number, dur: number, color: number): void {
+    this.relay?.(['v', Math.round(x), Math.round(y), Math.round(radius), Math.round(dur * 100) / 100, color]);
+    const v = this.vortices[this.vortexCursor];
+    this.vortexCursor = (this.vortexCursor + 1) % MAX_VORTICES;
+    v.x = x;
+    v.y = y;
+    v.r = radius;
+    v.color = color;
+    v.age = 0;
+    v.dur = dur;
+    // Each field turns its own way at a slightly different speed (visual only, so Math.random is fine).
+    v.spin = (Math.random() < 0.5 ? -1 : 1) * (2.2 + Math.random() * 0.8);
+  }
+
+  /** A beam from (x1, y1) to (x2, y2), `width` px wide, lingering for `dur` seconds. */
+  beam(x1: number, y1: number, x2: number, y2: number, width: number, dur: number, color: number): void {
+    this.relay?.(['z', Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2), Math.round(width), Math.round(dur * 100) / 100, color]);
+    const b = this.beams[this.beamCursor];
+    this.beamCursor = (this.beamCursor + 1) % MAX_BEAMS;
+    b.x1 = x1;
+    b.y1 = y1;
+    b.x2 = x2;
+    b.y2 = y2;
+    b.width = width;
+    b.color = color;
+    b.age = 0;
+    b.dur = dur;
+  }
+
+  /** A cold crystal burst: a pale flash filling `radius` px, a frosty ring and ice shards flying out. */
+  frost(x: number, y: number, radius: number, color: number): void {
+    this.relay?.(['k', Math.round(x), Math.round(y), Math.round(radius), color]);
+    const g = this.scene.add.graphics().setDepth(DEPTH.fx);
+    const state = { k: 0 };
+    const spikes = 7;
+    const turn = Math.random() * Math.PI * 2;
+    const draw = () => {
+      const a = 1 - state.k;
+      g.clear();
+      g.fillStyle(0xffffff, 0.3 * a * a);
+      g.fillCircle(x, y, radius * (0.35 + 0.25 * state.k));
+      g.fillStyle(color, 0.22 * a);
+      g.fillCircle(x, y, radius * (0.75 + 0.25 * state.k));
+      g.lineStyle(1, 0xffffff, 0.8 * a);
+      g.strokeCircle(x, y, radius * (0.8 + 0.2 * state.k));
+      // Ice shards: thin diamonds pointing out from the centre.
+      const reach = radius * (0.45 + 0.55 * Math.min(1, state.k * 2));
+      for (let i = 0; i < spikes; i++) {
+        const ang = turn + (i * Math.PI * 2) / spikes;
+        const cs = Math.cos(ang);
+        const sn = Math.sin(ang);
+        const w = 2.2;
+        g.fillStyle(i % 2 ? color : 0xffffff, 0.85 * a);
+        g.fillTriangle(x + cs * reach, y + sn * reach, x - sn * w + cs * reach * 0.35, y + cs * w + sn * reach * 0.35, x + sn * w + cs * reach * 0.35, y - cs * w + sn * reach * 0.35);
+      }
+    };
+    draw();
+    this.scene.tweens.add({ targets: state, k: 1, duration: 320, ease: 'Quad.easeOut', onUpdate: draw, onComplete: () => g.destroy() });
+    this.emitter(0xffffff).explode(5, x, y);
+    this.emitter(color).explode(6, x, y);
   }
 
   /** Echo Strike going off: a faint ring that swells to `radius` and fades. All echoes share one Graphics. */
@@ -60,9 +166,11 @@ export class Fx {
     ring.life = ECHO_LIFE;
   }
 
-  damageNumber(x: number, y: number, value: number, big = false): void {
-    this.relay?.(['n', Math.round(x), Math.round(y), Math.round(value), big ? 1 : 0]);
-    this.number(x, y, String(Math.max(1, Math.round(value))), big ? 0xffd24a : 0xffffff);
+  /** `style`: 0 a normal hit, 1 a big hit (gold), 2 a critical strike (pink and larger). */
+  damageNumber(x: number, y: number, value: number, style: 0 | 1 | 2 = 0): void {
+    this.relay?.(['n', Math.round(x), Math.round(y), Math.round(value), style]);
+    const tint = style === 2 ? CRIT_TINT : style === 1 ? 0xffd24a : 0xffffff;
+    this.number(x, y, String(Math.max(1, Math.round(value))), tint, style === 2 ? CRIT_SCALE : 1);
   }
 
   /** Green "+N" over a player that healed. */
@@ -71,7 +179,7 @@ export class Fx {
     this.number(x, y, `+${Math.max(1, Math.round(value))}`, 0x7be38a);
   }
 
-  private number(x: number, y: number, label: string, tint: number): void {
+  private number(x: number, y: number, label: string, tint: number, scale = 1): void {
     // Reuse the oldest slot when the pool is full.
     let n: DamageNumber | null = null;
     for (let i = 0; i < MAX_NUMBERS; i++) {
@@ -92,6 +200,7 @@ export class Fx {
       .setText(label)
       .setPosition(Math.round(x + (Math.random() * 6 - 3)), Math.round(y - 6))
       .setTint(tint)
+      .setScale(scale)
       .setAlpha(1)
       .setVisible(true);
   }
@@ -112,6 +221,9 @@ export class Fx {
     }
     this.activeNumbers = active;
 
+    this.time += dt;
+    this.drawVortices(dt);
+    this.drawBeams(dt);
     const g = this.echoGfx;
     g.clear();
     for (const ring of this.echoes) {
@@ -121,6 +233,71 @@ export class Fx {
       const k = 1 - ring.life / ECHO_LIFE;
       g.lineStyle(1, ring.color, 0.7 * (1 - k));
       g.strokeCircle(ring.x, ring.y, ring.r * (0.5 + 0.5 * k));
+    }
+  }
+
+  /** Freezing fields: a pale disc with a frosty rim and spiral arms turning around the centre. */
+  private drawVortices(dt: number): void {
+    const g = this.vortexGfx;
+    g.clear();
+    for (const v of this.vortices) {
+      if (v.age >= v.dur) continue;
+      v.age += dt;
+      if (v.age >= v.dur) continue;
+      const fade = Math.min(1, v.age / VORTEX_FADE, (v.dur - v.age) / VORTEX_FADE);
+      const r = v.r * (0.6 + 0.4 * Math.min(1, v.age / VORTEX_FADE));
+      g.fillStyle(v.color, 0.14 * fade);
+      g.fillCircle(v.x, v.y, r);
+      g.fillStyle(0xffffff, 0.06 * fade);
+      g.fillCircle(v.x, v.y, r * 0.45);
+      g.lineStyle(1, v.color, 0.55 * fade);
+      g.strokeCircle(v.x, v.y, r);
+      // Spiral arms: each starts at the centre and curls outward; the whole set turns over time.
+      const arms = 4;
+      const turn = v.spin * v.age;
+      const steps = 10;
+      for (let i = 0; i < arms; i++) {
+        const a0 = turn + (i * Math.PI * 2) / arms;
+        g.lineStyle(i % 2 ? 1 : 2, i % 2 ? 0xffffff : v.color, (i % 2 ? 0.5 : 0.65) * fade);
+        g.beginPath();
+        for (let j = 0; j <= steps; j++) {
+          const k = j / steps;
+          const a = a0 + Math.sign(v.spin) * k * 2.4;
+          const rr = r * (0.12 + 0.86 * k);
+          const px = v.x + Math.cos(a) * rr;
+          const py = v.y + Math.sin(a) * rr;
+          if (j === 0) g.moveTo(px, py);
+          else g.lineTo(px, py);
+        }
+        g.strokePath();
+      }
+      // A few frost motes riding the swirl.
+      for (let i = 0; i < 3; i++) {
+        const a = -turn * 1.3 + (i * Math.PI * 2) / 3;
+        const rr = r * (0.35 + 0.25 * Math.sin(this.time * 3 + i));
+        g.fillStyle(0xffffff, 0.8 * fade);
+        g.fillRect(Math.round(v.x + Math.cos(a) * rr), Math.round(v.y + Math.sin(a) * rr), 1, 1);
+      }
+    }
+  }
+
+  /** Beams: a wide soft glow, a bright core and a white centre line, fading as they linger. */
+  private drawBeams(dt: number): void {
+    const g = this.beamGfx;
+    g.clear();
+    for (const b of this.beams) {
+      if (b.age >= b.dur) continue;
+      b.age += dt;
+      if (b.age >= b.dur) continue;
+      const k = b.age / b.dur;
+      const a = k < 0.15 ? 1 : 1 - (k - 0.15) / 0.85;
+      const flare = k < 0.15 ? 1 + (0.15 - k) * 4 : 1;
+      g.lineStyle(b.width * 2.2 * flare, b.color, 0.18 * a);
+      g.lineBetween(b.x1, b.y1, b.x2, b.y2);
+      g.lineStyle(b.width * flare, b.color, 0.6 * a);
+      g.lineBetween(b.x1, b.y1, b.x2, b.y2);
+      g.lineStyle(Math.max(1, b.width * 0.3), 0xffffff, 0.9 * a);
+      g.lineBetween(b.x1, b.y1, b.x2, b.y2);
     }
   }
 

@@ -24,6 +24,10 @@ export const MAX_GEMS = 300;
 export const MAX_PROJECTILES = 600;
 /** Duration effects: most stacks one enemy can carry from one weapon (Reiterate copies stop here). */
 export const MAX_EFFECT_STACKS = 30;
+/** A slow lasts this many ms after the enemy was last on the slowing field (fields refresh it every frame). */
+export const SLOW_LINGER_MS = 120;
+/** Tint of slowed enemies. */
+export const CHILL_TINT = 0x9fd8ff;
 export const MAX_WEAPONS = 4;
 export const MAX_ITEMS = 4;
 export const MAX_LEVEL = 5;
@@ -54,6 +58,8 @@ export const DEPTH = {
   units: 10, // enemies and players, y-sorted inside 10..11
   projectiles: 20,
   slash: 21,
+  /** Dome ultimates: a see-through overlay above units and projectiles. */
+  dome: 25,
   fx: 30,
   numbers: 40,
   hpBar: 50,

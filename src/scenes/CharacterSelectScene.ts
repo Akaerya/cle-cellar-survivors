@@ -7,9 +7,11 @@ import { CHARACTERS, ultimateDef, weaponDef } from '../data';
 import { netSession } from '../net/Net';
 import { Button, drawPanel, onKey, text } from '../ui/widgets';
 
-const CARD_W = 250;
-const CARD_H = 248;
-const GAP = 20;
+/** Cards are as wide as fits (up to CARD_MAX_W) with every character side by side. */
+const CARD_MAX_W = 250;
+const CARD_H = 252;
+const GAP = 12;
+const MARGIN = 10;
 const CARD_Y = 46;
 
 interface Card {
@@ -27,6 +29,7 @@ export class CharacterSelectScene extends Phaser.Scene {
   private cards: Card[] = [];
   private index = 0;
   private leaving = false;
+  private cardW = CARD_MAX_W;
 
   constructor() {
     super(SCENES.select);
@@ -43,7 +46,10 @@ export class CharacterSelectScene extends Phaser.Scene {
     this.add.image(0, 0, 'vignette').setOrigin(0).setDisplaySize(VIEW_W, VIEW_H);
     text(this, VIEW_W / 2, 24, 'CHOOSE YOUR CHARACTER', { scale: 2, origin: [0.5, 0.5], color: COLOR.gold });
 
-    const total = CHARACTERS.length * CARD_W + (CHARACTERS.length - 1) * GAP;
+    const n = CHARACTERS.length;
+    const CARD_W = Math.min(CARD_MAX_W, Math.floor((VIEW_W - 2 * MARGIN - (n - 1) * GAP) / n));
+    this.cardW = CARD_W;
+    const total = n * CARD_W + (n - 1) * GAP;
     const x0 = Math.round((VIEW_W - total) / 2);
     CHARACTERS.forEach((c, i) => {
       const x = x0 + i * (CARD_W + GAP);
@@ -55,19 +61,21 @@ export class CharacterSelectScene extends Phaser.Scene {
       text(this, cx, CARD_Y + 131, c.title, { origin: [0.5, 0.5], color: COLOR.gold });
       text(this, cx, CARD_Y + 142, c.description.toUpperCase(), { origin: [0.5, 0], color: COLOR.textDim, maxWidth: CARD_W - 20, align: 1 });
 
+      // Descriptions may wrap to three lines; everything below starts after that.
       const lx = x + 12;
       const start = weaponDef(c.startingWeapon);
-      this.add.image(lx, CARD_Y + 170, ATLAS, start.icon).setOrigin(0);
-      text(this, lx + 20, CARD_Y + 171, 'STARTS WITH', { color: COLOR.textDim });
-      text(this, lx + 20, CARD_Y + 180, start.name.toUpperCase(), { color: COLOR.text });
+      this.add.image(lx, CARD_Y + 175, ATLAS, start.icon).setOrigin(0);
+      text(this, lx + 20, CARD_Y + 175, 'STARTS WITH', { color: COLOR.textDim });
+      text(this, lx + 20, CARD_Y + 184, start.name.toUpperCase(), { color: COLOR.text });
 
       const ult = ultimateDef(c.ultimate);
-      this.add.image(lx, CARD_Y + 194, ATLAS, ult.icon).setOrigin(0);
-      text(this, lx + 20, CARD_Y + 195, `ULTIMATE (Q): ${ult.name.toUpperCase()}`, { color: COLOR.textDim });
-      text(this, lx + 20, CARD_Y + 204, `${ult.duration}S · ${ult.cooldown}S COOLDOWN`, { color: COLOR.text });
+      this.add.image(lx, CARD_Y + 198, ATLAS, ult.icon).setOrigin(0);
+      text(this, lx + 20, CARD_Y + 196, 'ULTIMATE (Q)', { color: COLOR.textDim });
+      text(this, lx + 20, CARD_Y + 205, ult.name.toUpperCase(), { color: COLOR.text, maxWidth: CARD_W - 36 });
+      text(this, lx + 20, CARD_Y + 214, `${ult.duration}S · ${ult.cooldown}S COOLDOWN`, { color: COLOR.textDim });
 
-      text(this, lx, CARD_Y + 222, 'KIT', { color: COLOR.textDim });
-      c.weapons.forEach((id, k) => this.add.image(lx + 22 + k * 19, CARD_Y + 218, ATLAS, weaponDef(id).icon).setOrigin(0));
+      text(this, lx, CARD_Y + 232, 'KIT', { color: COLOR.textDim });
+      c.weapons.forEach((id, k) => this.add.image(lx + 22 + k * 19, CARD_Y + 228, ATLAS, weaponDef(id).icon).setOrigin(0));
 
       const zone = this.add.zone(x, CARD_Y, CARD_W, CARD_H).setOrigin(0).setInteractive({ useHandCursor: true });
       zone.on('pointerover', () => this.select(i));
@@ -98,7 +106,7 @@ export class CharacterSelectScene extends Phaser.Scene {
     this.cards.forEach((c, j) => {
       const on = j === this.index;
       c.frame.clear();
-      drawPanel(c.frame, c.x, CARD_Y, CARD_W, CARD_H, on ? COLOR.gold : COLOR.panelEdge, on ? 0x2a1f3c : COLOR.panel, on ? 0.96 : 0.8);
+      drawPanel(c.frame, c.x, CARD_Y, this.cardW, CARD_H, on ? COLOR.gold : COLOR.panelEdge, on ? 0x2a1f3c : COLOR.panel, on ? 0.96 : 0.8);
       c.sprite.setAlpha(on ? 1 : 0.6);
     });
   }

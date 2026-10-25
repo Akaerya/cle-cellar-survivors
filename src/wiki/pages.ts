@@ -23,7 +23,7 @@ import {
   SPAWN_TICK_MS,
   COLOR,
 } from '../constants';
-import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffectAt, weaponLevelAt, weaponStatsAt } from '../core/progression';
+import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffectAt, modReach, weaponLevelAt, weaponStatsAt } from '../core/progression';
 import { NAME_MAX } from '../core/profile';
 import {
   BASE_STATS,
@@ -90,6 +90,8 @@ const STAT_LABELS: Record<StatKey, string> = {
   damageMult: 'DAMAGE',
   cooldownMult: 'COOLDOWN',
   abilityHaste: 'ABILITY HASTE',
+  critChance: 'CRIT CHANCE',
+  critDamage: 'CRIT DAMAGE',
   areaMult: 'AREA',
   expMult: 'EXP GAIN',
 };
@@ -105,12 +107,21 @@ const STAT_NOTES: Record<StatKey, string> = {
   damageMult: 'Multiplies all weapon damage. The only multiplier: damage bonuses from weapon levels and modifications add up first.',
   cooldownMult: 'Multiplies all weapon cooldowns (lower is faster, floor 10%).',
   abilityHaste: 'Cooldowns × 100 / (100 + haste): 20 haste is 16.7% shorter, 100 haste 50%. Works with COOLDOWN; not ultimates.',
+  critChance: 'Chance that a hit is a critical strike. Any of your hits can crit: weapons, blasts, echoes, effects, ultimates. Passive weapons such as Original Pristinity add to it.',
+  critDamage: 'Damage of a critical strike, as a share of the hit.',
   areaMult: 'Scales weapon size, sweep, stab and breath reach, aura, orbit and blast radius. Weapon size levels and area modifications add to it.',
   expMult: 'Multiplies EXP from gems you pick up.',
 };
 
 const isPercentStat = (k: StatKey) =>
-  k === 'damageMult' || k === 'cooldownMult' || k === 'areaMult' || k === 'expMult' || k === 'damageTaken' || k === 'regenPercent';
+  k === 'damageMult' ||
+  k === 'cooldownMult' ||
+  k === 'areaMult' ||
+  k === 'expMult' ||
+  k === 'damageTaken' ||
+  k === 'regenPercent' ||
+  k === 'critChance' ||
+  k === 'critDamage';
 const statValue = (k: StatKey, v: number) => (k === 'regenPercent' ? pct(v, 1) : isPercentStat(k) ? pct(v) : num(v));
 
 const TAG_LABELS: Record<WeaponTag, string> = { projectile: 'PROJECTILE', aoe: 'AOE', duration: 'DURATION' };
@@ -119,7 +130,7 @@ const tagList = (tags: WeaponTag[] | undefined) => (tags?.length ? tags.map((t) 
 /** How each targeting type uses its stats. Update when a weapon behaviour changes. */
 const TARGETING_NOTES: Record<Targeting, string> = {
   nearest:
-    'Throws at the closest enemy within RANGE. Holds fire while nothing is in range and shoots the moment something is. COUNT projectiles fan out by the spread angle. PIERCE is how many enemies one projectile hits.',
+    'Throws at the closest enemy within RANGE. Holds fire while nothing is in range and shoots the moment something is. COUNT projectiles fan out by the spread angle, unless the weapon fires them one at a time (see below). PIERCE is how many enemies one projectile hits.',
   facing:
     'Fires toward the way you last moved. With SPEED 0 it is a melee sweep: everything within AREA px inside the arc is hit. Extra COUNT adds sweeps spread evenly around you.',
   random: 'Fires in a random direction.',
@@ -133,6 +144,11 @@ const TARGETING_NOTES: Record<Targeting, string> = {
   strike:
     'Every COOLDOWN, BOLTS lightning bolts land within RANGE px of you. Each bolt picks a different random enemy in range, or a random spot when there are none, and hits everything within RADIUS px of where it lands. RADIUS is scaled by AREA.',
   shield: `Blocks one hit completely, then recharges for RECHARGE seconds (shortened by COOLDOWN). Every hit that is not blocked is reduced by ABSORBS (after armor, at most ${pct(MAX_SHIELD_REDUCTION)}, still at least 1). A blocked hit gives the usual invulnerability. The bubble around you shows the charge.`,
+  field:
+    'Every COOLDOWN, conjures FIELDS freezing fields of RADIUS px: one under the closest enemy within RANGE, the others under different random enemies in range (holds while nothing is in range). A field stays where it appeared for DURATION seconds and slows every enemy on it by SLOW (slows do not stack). When it appears and then every second, it applies its effect to every enemy on it; each field applies its own, so two fields give two stacks. The field itself deals no damage. RADIUS is scaled by AREA, DURATION by duration modifications.',
+  passive:
+    'Does nothing on its own: it changes how all your other attacks work. CRIT is added to your critical strike chance; every critical strike you land takes CRIT REFUND seconds off all your cooldowns, ultimate included (never below ready). Refunds stop once an ability would come back sooner than FASTEST of its cooldown after it was used, so hundreds of crits a second cannot make abilities fire every frame.',
+  beam: 'A straight beam that lingers for LIFETIME seconds and hits every enemy that touches it once. SIZE is half its width.',
 };
 
 /** Table columns per targeting type: which stats mean something for that behaviour. */
@@ -155,6 +171,14 @@ const C = {
   recharge: { label: 'RECHARGE', w: 70, get: (s) => secs(s.cooldown) },
   absorbs: { label: 'ABSORBS', w: 64, get: (s) => pct(s.reduction ?? 0) },
   repeats: { label: 'REPEATS', w: 60, get: (s) => num(s.repeat ?? 0) },
+  fields: { label: 'FIELDS', w: 52, get: (s) => num(s.projectileCount) },
+  duration: { label: 'DURATION', w: 70, get: (s) => secs(s.lifetime) },
+  slow: { label: 'SLOW', w: 46, get: (s) => pct(s.slow ?? 0) },
+  crit: { label: 'CRIT', w: 46, get: (s) => pct(s.crit ?? 0) },
+  critRefund: { label: 'CRIT REFUND', w: 90, get: (s) => secs(s.critCooldown ?? 0) },
+  fastest: { label: 'FASTEST', w: 64, get: (s) => pct(s.refundFloor ?? 0) },
+  lifetime: { label: 'LIFETIME', w: 66, get: (s) => secs(s.lifetime) },
+  size: { label: 'SIZE', w: 40, get: (s) => num(s.size) },
 } satisfies Record<string, Col>;
 const COLUMNS: Record<Targeting, Col[]> = {
   nearest: [C.damage, C.cooldown, C.count, C.pierce, C.area, C.speed, C.range, C.knockback, C.ret],
@@ -167,13 +191,19 @@ const COLUMNS: Record<Targeting, Col[]> = {
   strike: [C.damage, C.cooldown, C.bolts, C.radius, C.range, C.knockback],
   shield: [C.recharge, C.absorbs],
   bomb: [C.damage, C.cooldown, C.count, C.radius, C.speed, C.range, C.knockback],
+  field: [C.cooldown, C.fields, C.radius, C.duration, C.slow, C.range],
+  passive: [C.crit, C.critRefund, C.fastest],
+  beam: [C.damage, C.size, C.lifetime, C.knockback],
 };
 
 // ------------------------------------------------------------------ pages
 
-/** Columns for one weapon: its targeting type's, plus REPEATS when any level repeats the attack. */
+/**
+ * Columns for one weapon: its targeting type's (blast-on-hit projectiles show their blast RADIUS, like bombs, with
+ * no pierce), plus REPEATS when any level repeats the attack.
+ */
 function weaponColumns(def: WeaponDef): Col[] {
-  const cols = [...COLUMNS[def.targeting]];
+  const cols = def.blastOnHit ? [...COLUMNS.bomb] : [...COLUMNS[def.targeting]];
   for (let lv = 1; lv <= MAX_LEVEL; lv++) {
     if ((weaponStatsAt(def, lv).repeat ?? 0) > 0) {
       cols.push(C.repeats);
@@ -203,18 +233,22 @@ function weaponsPage(): Block[] {
       const start = def.id === c.startingWeapon ? ' · STARTING WEAPON' : '';
       out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()}${start} · TAGS: ${tagList(def.tags)} · ${def.description}` });
       out.push({ t: 'p', text: TARGETING_NOTES[def.targeting], color: COLOR.textDim });
-      if (def.burst) {
+      if (def.blastOnHit) {
         out.push({
           t: 'p',
-          text: `With more than one projectile (COUNT, or Additional Projectiles) they are thrown one at a time, spread evenly over ${pct(def.burst)} of the cooldown (after ABILITY HASTE): the first at the closest enemy, each of the others at a random enemy on your screen.`,
+          text: `The projectile deals no damage itself and never pierces: every enemy it touches sets off a blast that hits everything within RADIUS px (scaled by AREA). Projectiles from Splits, and every enemy a chaining projectile reaches, set off a blast too. ${def.damageTags ? `Only ${tagList(def.damageTags)} modifications add to the blast's damage.` : ''}`,
           color: COLOR.textDim,
         });
       }
+      if (def.burst) out.push({ t: 'p', text: burstText(def), color: COLOR.textDim });
       if (def.effect) {
         const fx = def.effect;
+        const name = fx.name ? fx.name.toUpperCase() : 'EFFECT';
+        const source = def.targeting === 'field' ? 'every check of a field' : 'each hit';
+        const again = fx.stacks ? 'Stacks: every application adds a stack.' : 'Hitting again refreshes it.';
         out.push({
           t: 'p',
-          text: `EFFECT: each hit leaves a stack dealing ${num(fx.damage)} damage every ${secs(fx.interval)} for ${secs(fx.duration)} (hitting again refreshes it).`,
+          text: `${name}: ${source} leaves a stack dealing ${num(fx.damage)} damage every ${secs(fx.interval)} for ${secs(fx.duration)}. ${again} ${def.damageTags ? `Only ${tagList(def.damageTags)} modifications add to its damage.` : ''}`,
           color: COLOR.textDim,
         });
       }
@@ -229,6 +263,17 @@ function weaponsPage(): Block[] {
     }
   }
   return out;
+}
+
+/** How a weapon fires its extra projectiles one after another (BurstDef). */
+function burstText(def: WeaponDef): string {
+  const b = def.burst!;
+  const when =
+    b.spacing === 'end'
+      ? `the extra ones follow evenly so the last leaves exactly at ${pct(b.window)} of the cooldown`
+      : `they are spread evenly over ${pct(b.window)} of the cooldown (with n projectiles, one every ${pct(b.window)} / n of it)`;
+  const aim = b.target === 'random' ? 'each of the others at a random enemy on your screen' : 'each of the others at the closest enemy when it leaves';
+  return `With more than one projectile (COUNT, or Additional Projectiles) they are fired one at a time instead of in a spread: ${when}, after ABILITY HASTE. The first goes at the closest enemy, ${aim}.`;
 }
 
 function charactersPage(): Block[] {
@@ -256,8 +301,27 @@ function charactersPage(): Block[] {
     const how =
       ult.kind === 'storm'
         ? `Every ${secs(ult.interval)} for ${ult.duration}S, ${ult.count} projectiles fly out from you in a spiral that turns ${ult.spin} degrees per second.`
-        : `For ${ult.duration}S a pet follows you and every ${secs(ult.interval)} fires at the closest enemy within ${a.range} px of it.`;
+        : ult.kind === 'pet'
+          ? `For ${ult.duration}S a pet follows you and every ${secs(ult.interval)} fires at the closest enemy within ${a.range} px of it.`
+          : `For ${ult.duration}S a dome of ${ult.radius} px radius stands where you cast it. Every ${secs(ult.interval)} a beam crosses it in a random straight line, lingering for ${secs(a.lifetime)} and hitting every enemy that touches it once (${num(a.size * 2)} px wide). While your projectiles are inside, the edge works like an enemy they can split on, but they use up no pierce or bounces and deal no damage there; they ricochet toward the closest enemy inside the dome they have not hit (straight back when there is none). The beams are tagged ${tagList(ult.attack.tags)}: area modifications widen them, duration modifications make them linger, and Echo Strike, Reduced AoE and Less Duration work on them. Reiterate does not, since the beams leave no stacks. The dome itself keeps its size and length.`;
     out.push({ t: 'p', text: how, color: COLOR.textDim });
+    if (ult.kind === 'dome') {
+      out.push({
+        t: 'table',
+        cols: [
+          { label: 'DURATION', w: 70 },
+          { label: 'COOLDOWN', w: 70 },
+          { label: 'RADIUS', w: 54 },
+          { label: 'BEAMS', w: 50 },
+          { label: 'DAMAGE', w: 58 },
+          { label: 'LINGER', w: 56 },
+          { label: 'WIDTH', w: 50 },
+          { label: 'KNOCKBACK', w: 80 },
+        ],
+        rows: [[`${ult.duration}S`, `${ult.cooldown}S`, num(ult.radius ?? 0), `${ult.count} / ${secs(ult.interval)}`, num(a.damage), secs(a.lifetime), num(a.size * 2), num(a.knockback)]],
+      });
+      continue;
+    }
     out.push({
       t: 'table',
       cols: [
@@ -381,48 +445,47 @@ function modsPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Modifications change every weapon that shares one of their tags (PROJECTILE, AOE or DURATION; each weapon's tags are on the WEAPONS page). Each goes up to level ${MAX_LEVEL} and takes no slot. A modification is offered once you own a weapon it changes; after you take it, its upgrades keep being offered.`,
+      text: `Modifications change every weapon that shares one of their tags (PROJECTILE, AOE or DURATION; each weapon's tags are on the WEAPONS page), as far as the weapon has a use for them: CHANGES under each one lists what it really does. Each goes up to level ${MAX_LEVEL} and takes no slot. A modification is offered once you own a weapon it changes; after you take it, its upgrades keep being offered.`,
     },
     { t: 'h', text: 'PROJECTILES' },
     {
       t: 'p',
-      text: `On hitting an enemy a projectile first splits if it still can: it is replaced by its splits, which fan out over ${SPLIT_ARC} degrees from where it was going, skip the enemies it already hit and start with full pierce and bounces. Otherwise it uses up 1 pierce. Once pierce runs out it chains: it flies to the closest enemy within ${CHAIN_RANGE} px that it has not hit yet (a random direction when there is none), using up 1 bounce per hit. Projectiles that never hit anything on the way (Coconuts) cannot split or chain; of Pierce they only get the damage bonus. Additional Projectiles adds to COUNT: spread weapons fan the extra projectiles out, Coconuts throws them one after another. At most ${MAX_PROJECTILES} projectiles fly at once; splits past that are lost.`,
+      text: `On hitting an enemy a projectile first splits if it still can: it is replaced by its splits, which fan out over ${SPLIT_ARC} degrees from where it was going, skip the enemies it already hit and start with full pierce and bounces. Otherwise it uses up 1 pierce. Once pierce runs out it chains: it flies to the closest enemy within ${CHAIN_RANGE} px that it has not hit yet (a random direction when there is none), using up 1 bounce per hit. Projectiles that never hit anything on the way (Coconuts) cannot split or chain; of Pierce they only get the damage bonus. Crystalline Bloom's crystal never pierces and deals no damage itself, so Pierce does nothing for it; Splits and Chain do, and every enemy its crystals touch sets off a blast. Additional Projectiles adds to COUNT: spread weapons fan the extra projectiles out, Coconuts and Hailing Arrows fire them one after another. At most ${MAX_PROJECTILES} projectiles fly at once; splits past that are lost.`,
     },
     { t: 'h', text: 'AREA' },
     {
       t: 'p',
-      text: `Area bonuses add up: a weapon's own size levels, the AREA stat and area modifications go into one sum. ${areaExample()} Area modifications change only the area part of a weapon: the reach of sweeps, stabs and breaths, the radius of auras, strikes and bomb blasts, and the size of orbiting objects.`,
+      text: `Area bonuses add up: a weapon's own size levels, the AREA stat and area modifications go into one sum. ${areaExample()} Area modifications change only the area part of a weapon: the reach of sweeps, stabs and breaths, the radius of auras, strikes, blasts and freezing fields, the width of beams, and the size of orbiting objects.`,
     },
     {
       t: 'p',
-      text: `Echo Strike: every enemy an AOE weapon hits sends out an echo with a ${ECHO_RADIUS} px radius (scaled by the AREA stat, area modifications and Echo Strike's own area bonus, not by the weapon's size levels). It deals a share of the hit to everything inside, the enemy that was hit included. Echo damage never echoes again. Echoes landing on the same enemy in the same frame count as one hit.`,
+      text: `Echo Strike: every enemy an AOE weapon hits sends out an echo with a ${ECHO_RADIUS} px radius (scaled by the AREA stat, area modifications and Echo Strike's own area bonus, not by the weapon's size levels). It deals a share of the hit to everything inside, the enemy that was hit included. Echo damage never echoes again. Echoes landing on the same enemy in the same frame count as one hit. Areas that deal no damage themselves (freezing fields) never echo.`,
     },
     { t: 'h', text: 'DURATION' },
     {
       t: 'p',
-      text: `Duration weapons leave a stack on every enemy they hit that deals damage each tick until it runs out; hitting again refreshes it. Reiterate: when a stack is applied or deals damage it may copy itself with the time it has left. Copies tick and reiterate too, but are never refreshed. At most ${MAX_EFFECT_STACKS} stacks of one weapon sit on one enemy.`,
+      text: `Duration weapons leave a stack on every enemy they hit (or, for freezing fields, on every enemy on the field at each check) that deals damage each tick until it runs out; hitting again refreshes it, unless the effect stacks (Rime Trauma), when every application adds a stack. Duration modifications also stretch how long fields and beams last. Reiterate: when a stack is applied or deals damage it may copy itself with the time it has left. Copies tick and reiterate too, but are never refreshed. At most ${MAX_EFFECT_STACKS} stacks of one weapon sit on one enemy.`,
     },
     { t: 'h', text: 'DAMAGE' },
     {
       t: 'p',
-      text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconuts is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up), the only damage multiplier.",
+      text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconuts is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. Some weapons deal damage with one part only: Crystalline Bloom's blast only takes AOE damage bonuses, Rime Trauma only DURATION ones. That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up), the only damage multiplier.",
     },
   ];
   const weapons = CHARACTERS.flatMap((c) => c.weapons.map(weaponDef));
   for (const def of MODIFICATIONS) {
     out.push({ t: 'gap', h: 6 });
     out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `TAGS: ${tagList(def.tags)} · ${def.description}` });
-    // Orbiting objects never vanish, so pierce, split and chain do nothing for them; only the other bonuses apply.
-    // Weapons with infinite pierce never use up pierce, split or chain; only the modification's other bonuses apply.
-    const top = modEffectAt(def, def.levels.length);
-    const passThrough = top.pierce || top.split || top.chain;
-    const otherwise = top.projectiles || top.damage || top.area || top.echo || top.duration || top.reiterate;
-    const changes = weapons
-      .filter((w) => w.tags?.some((t) => def.tags.includes(t)) && (w.stats.pierce !== Infinity || otherwise))
-      .map((w) => (w.stats.pierce === Infinity && passThrough ? `${w.name.toUpperCase()} (DAMAGE ONLY)` : w.name.toUpperCase()));
+    // Sharing a tag is not always enough: a weapon only listed for what the modification really does for it.
+    const changes = weapons.flatMap((w) => {
+      const reach = modReach(w, def);
+      if (reach === 'none') return [];
+      const note = reach === 'damage only' ? ' (DAMAGE ONLY)' : reach === 'no damage' ? ' (NO DAMAGE BONUS)' : '';
+      return [`${w.name.toUpperCase()}${note}`];
+    });
     out.push({
       t: 'p',
-      text: changes.length ? `CHANGES: ${changes.join(', ')}.` : 'NO WEAPON HAS THIS TAG YET, SO IT IS NEVER OFFERED.',
+      text: changes.length ? `CHANGES: ${changes.join(', ')}.` : 'NO WEAPON USES IT YET, SO IT IS NEVER OFFERED.',
       color: changes.length ? COLOR.textDim : COLOR.bad,
     });
     out.push({
@@ -644,6 +707,16 @@ function mechanicsPage(): Block[] {
       t: 'p',
       text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
     },
+    { t: 'h', text: 'CRITICAL STRIKES' },
+    {
+      t: 'p',
+      text: `Every hit you land, from any source (weapons, blasts, echoes, effects, ultimates), can be a critical strike with your CRIT CHANCE (base ${pct(BASE_STATS.critChance)}). A critical strike deals ${pct(BASE_STATS.critDamage)} of the hit and shows a large pink number. Original Pristinity adds crit chance and takes time off all your cooldowns on every critical strike.`,
+    },
+    { t: 'h', text: 'SLOWS' },
+    {
+      t: 'p',
+      text: 'Some effects slow enemies (freezing fields): they walk slower while on the field and a moment after. Slows do not stack; the strongest one counts. Slowed or chilled enemies are tinted pale blue.',
+    },
     { t: 'h', text: 'CARDS AND SLOTS' },
     {
       t: 'p',
@@ -654,7 +727,7 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'PARTY SCREEN' },
     {
       t: 'p',
-      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions and heal cards, not regen), BLOCKS (hits a shield stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one) and ULTS cast. Pick a row to see that player\'s weapons and ultimate: level, damage, DPS since it was picked up, kills and share of their damage.',
+      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions and heal cards, not regen), BLOCKS (hits a shield stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). Pick a row to see that player\'s weapons and ultimate: level, damage, DPS since it was picked up, kills and share of their damage.',
     },
     { t: 'h', text: 'CONTROLS' },
     { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click.' },

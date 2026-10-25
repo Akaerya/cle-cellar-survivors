@@ -15,7 +15,7 @@ import {
 } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry, type PartyMember, type RunSummary, type WeaponReport } from '../core/events';
 import { displayName, loadProfile } from '../core/profile';
-import { computeStats, expToNext, itemMaxLevel, weaponLevelText } from '../core/progression';
+import { computeStats, expToNext, itemMaxLevel, modReach, weaponLevelText } from '../core/progression';
 import { Rng, seedFromUrl } from '../core/rng';
 import { sfx, type SfxName } from '../core/sfx';
 import {
@@ -584,7 +584,7 @@ export class GameScene extends Phaser.Scene {
   /**
    * Up to 3 random cards from the character's weapons, the shared items, modifications, generic powerups
    * and upgrades of owned ones, respecting slot limits. A modification is only offered new while the player
-   * owns a weapon it changes.
+   * owns a weapon it actually changes (sharing a tag is not enough when the weapon has no use for it).
    */
   rollChoices(p: Player): Choice[] {
     const pool: Choice[] = [];
@@ -623,7 +623,6 @@ export class GameScene extends Phaser.Scene {
       }
     };
     stat('item', ITEMS, p.items, itemSlotsFull);
-    const tags = new Set(p.weapons.list.flatMap((w) => w.def.tags ?? []));
     for (const def of MODIFICATIONS) {
       const max = def.levels.length;
       const have = p.mods.find((m) => m.def.id === def.id);
@@ -631,7 +630,7 @@ export class GameScene extends Phaser.Scene {
         if (have.level < max) {
           pool.push({ kind: 'mod', id: def.id, name: def.name, icon: def.icon, level: have.level + 1, maxLevel: max, isNew: false, text: def.levels[have.level].text });
         }
-      } else if (def.tags.some((t) => tags.has(t))) {
+      } else if (p.weapons.list.some((w) => modReach(w.def, def) !== 'none')) {
         pool.push({ kind: 'mod', id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
       }
     }
@@ -1004,7 +1003,7 @@ export class GameScene extends Phaser.Scene {
       w.u16(0);
       for (const e of this.enemies.active) {
         if (!e.active || !this.nearView(p, e.x, e.y)) continue;
-        const flags = (e.flipX ? EF.flip : 0) | (e.flashUntil > now ? EF.flash : 0);
+        const flags = (e.flipX ? EF.flip : 0) | (e.flashUntil > now ? EF.flash : 0) | (e.tintState === 2 ? EF.chill : 0);
         writeEntity(w, e.netId, enemyKind.get(e.def) ?? 0, flags, e.x, e.y);
         n++;
       }
@@ -1051,6 +1050,8 @@ export class GameScene extends Phaser.Scene {
           case 'l':
           case 'e':
           case 'x':
+          case 'k':
+          case 'z':
             return this.nearView(p, ev[1], ev[2]);
           case 's':
             if (sounds.has(ev[1])) return false;
@@ -1170,7 +1171,7 @@ export class GameScene extends Phaser.Scene {
   private replay(ev: FxEvent): void {
     switch (ev[0]) {
       case 'n':
-        this.fx.damageNumber(ev[1], ev[2], ev[3], ev[4] === 1);
+        this.fx.damageNumber(ev[1], ev[2], ev[3], ev[4]);
         break;
       case 'g':
         this.fx.healNumber(ev[1], ev[2], ev[3]);
@@ -1211,6 +1212,18 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'x':
         this.fx.blast(ev[1], ev[2], ev[3], ev[4]);
+        break;
+      case 'k':
+        this.fx.frost(ev[1], ev[2], ev[3], ev[4]);
+        break;
+      case 'v':
+        this.fx.vortex(ev[1], ev[2], ev[3], ev[4], ev[5]);
+        break;
+      case 'z':
+        this.fx.beam(ev[1], ev[2], ev[3], ev[4], ev[5], ev[6], ev[7]);
+        break;
+      case 'd':
+        this.players[ev[1]]?.ultimate.setDome(ev[2], ev[3]);
         break;
     }
   }

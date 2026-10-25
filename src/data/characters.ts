@@ -27,6 +27,17 @@ export const CHARACTERS: CharacterDef[] = [
     weapons: ['stormblade', 'thunder_breath', 'thunderstrike', 'storm_shield'],
     ultimate: 'storm_drake',
   },
+  {
+    id: 'elysia',
+    name: 'White Hair Bow User',
+    title: 'ARROW OF NOVAE',
+    description: "'I'm a girl as gorgeous as dancing petals!'",
+    anim: 'elysia',
+    firstFrame: 'elysia_idle_0',
+    startingWeapon: 'hailing_arrows',
+    weapons: ['hailing_arrows', 'crystalline_bloom', 'infinite_helix', 'original_pristinity'],
+    ultimate: 'beginning_you_and_i',
+  },
 ];
 
 export const DEFAULT_CHARACTER = CHARACTERS[0].id;

@@ -19,8 +19,8 @@ const ROW_H = 12;
 
 /** Party table columns: label, width in px, value. */
 const PARTY_COLS: { label: string; w: number; value: (m: PartyMember) => string }[] = [
-  { label: 'PLAYER', w: 84, value: (m) => m.name },
-  { label: 'CHARACTER', w: 66, value: (m) => characterDef(m.character).name.toUpperCase() },
+  { label: 'PLAYER', w: 78, value: (m) => m.name },
+  { label: 'CHARACTER', w: 62, value: (m) => characterDef(m.character).name.toUpperCase() },
   { label: 'DAMAGE', w: 52, value: (m) => short(m.stats.damage) },
   { label: 'DPS', w: 40, value: (m) => short(m.dps) },
   { label: 'KILLS', w: 40, value: (m) => String(m.stats.kills) },
@@ -29,7 +29,8 @@ const PARTY_COLS: { label: string; w: number; value: (m: PartyMember) => string 
   { label: 'BLOCKS', w: 46, value: (m) => String(m.stats.blocks) },
   { label: 'DEATHS', w: 46, value: (m) => String(m.stats.deaths) },
   { label: 'REVIVES', w: 50, value: (m) => String(m.stats.revives) },
-  { label: 'ULTS', w: 30, value: (m) => String(m.stats.ultCasts) },
+  { label: 'ULTS', w: 38, value: (m) => String(m.stats.ultCasts) },
+  { label: 'CRITS', w: 38, value: (m) => short(m.stats.crits ?? 0) },
 ];
 
 /** 1234 -> 1234, 12345 -> 12.3K, 1234567 -> 1.2M. Decimals only below 100. */

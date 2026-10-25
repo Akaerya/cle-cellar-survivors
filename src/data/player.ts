@@ -12,6 +12,8 @@ export const BASE_STATS: PlayerStats = {
   damageMult: 1,
   cooldownMult: 1,
   abilityHaste: 0,
+  critChance: 0,
+  critDamage: 2,
   areaMult: 1,
   expMult: 1,
 };

@@ -57,6 +57,9 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
   targetY = 0;
   /** Bomb: reached its target this frame and should explode. */
   arrived = false;
+  /** Where the projectile was last frame (dome edges are found by the step from inside to outside). */
+  prevX = 0;
+  prevY = 0;
   /** Enemies hit on the current pass. Cleared when a boomerang turns around. */
   readonly hit = new Set<Enemy>();
   /** Identifies this shot to network clients (pooled objects are reused). */
@@ -101,6 +104,9 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.bomb = false;
     this.target = null;
     this.arrived = false;
+    this.prevX = x;
+    this.prevY = y;
+    this.setRotation(def.orient ? angle : 0);
     this.hit.clear();
     this.setDepth(DEPTH.projectiles);
     body.setVelocity(this.dirX * this.speed, this.dirY * this.speed);
@@ -116,6 +122,16 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.arrived = false;
   }
 
+  /** Dome edge: put back at (x, y) and fly off toward `angle`. Nothing else changes (no pierce or bounces used). */
+  ricochet(x: number, y: number, angle: number): void {
+    const body = this.body as Phaser.Physics.Arcade.Body;
+    body.reset(x, y);
+    this.dirX = Math.cos(angle);
+    this.dirY = Math.sin(angle);
+    body.setVelocity(this.dirX * this.speed, this.dirY * this.speed);
+    if (this.weapon.def.orient) this.setRotation(angle);
+  }
+
   /** Chain: flies off toward `angle`, with at least `minLife` seconds left to get there. */
   bounce(angle: number, minLife: number): void {
     this.dirX = Math.cos(angle);
@@ -123,6 +139,7 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.life = Math.max(this.life - this.age, minLife);
     this.age = 0;
     (this.body as Phaser.Physics.Arcade.Body).setVelocity(this.dirX * this.speed, this.dirY * this.speed);
+    if (this.weapon.def.orient) this.setRotation(angle);
   }
 
   /** Called when the outbound pass is used up or the turn point is reached. */

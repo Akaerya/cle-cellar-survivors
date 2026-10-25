@@ -3,7 +3,20 @@
  * that satisfies one of these types; engine code reads them generically.
  */
 
-export type Targeting = 'nearest' | 'facing' | 'random' | 'orbit' | 'aura' | 'stab' | 'breath' | 'strike' | 'shield' | 'bomb';
+export type Targeting =
+  | 'nearest'
+  | 'facing'
+  | 'random'
+  | 'orbit'
+  | 'aura'
+  | 'stab'
+  | 'breath'
+  | 'strike'
+  | 'shield'
+  | 'bomb'
+  | 'field'
+  | 'passive'
+  | 'beam';
 
 /**
  * Ability tags. A modification (data/modifications.ts) changes every weapon that carries one of its tags.
@@ -45,18 +58,48 @@ export interface WeaponStats {
   reduction?: number;
   /** Times the attack is performed again after the first one, `WeaponDef.repeatDelay` seconds apart. */
   repeat?: number;
+  /** `passive`: chance (0..1) added to the owner's critical strike chance. */
+  crit?: number;
+  /** `passive`: seconds taken off every cooldown of the owner (ultimate included) on each critical strike. */
+  critCooldown?: number;
+  /**
+   * `passive`: share of each cooldown that crit refunds can never take off (0.5: an ability comes back no sooner than
+   * half its cooldown after it was used). Without it, hundreds of crits a second would let abilities fire every frame.
+   */
+  refundFloor?: number;
+  /** `field`: fraction of their speed enemies inside the field lose (0.25 = 25% slower). Slows do not stack. */
+  slow?: number;
 }
 
 export type NumericWeaponStat = Exclude<keyof WeaponStats, 'boomerang'>;
 
-/** A damage-over-time effect a weapon's hits leave on enemies (duration weapons). */
+/** A damage-over-time effect a weapon's hits (or fields) leave on enemies (duration weapons). */
 export interface EffectDef {
+  /** Shown in the wiki, e.g. 'Rime Trauma'. */
+  name?: string;
   /** Damage per tick, before DAMAGE and modification bonuses. */
   damage: number;
   /** Seconds between ticks. */
   interval: number;
   /** Seconds one stack lasts. Scaled by duration modifications. */
   duration: number;
+  /** Every application adds a new stack. Without it, a new hit refreshes the stack the weapon applied before. */
+  stacks?: boolean;
+  /** Enemies carrying the effect are tinted this colour. */
+  tint?: number;
+}
+
+/** How a weapon fires its extra projectiles one after another instead of all at once. */
+export interface BurstDef {
+  /** Fraction of the cooldown (after Ability Haste) the projectiles are spread over. */
+  window: number;
+  /**
+   * 'within': n projectiles spaced window / n apart, so the last leaves one gap before the window ends.
+   * 'end': the extra projectiles are spaced window / (n - 1) apart, so the last leaves exactly at the end of the window.
+   */
+  spacing: 'within' | 'end';
+  /** Who the projectiles after the first aim at: the closest enemy, or a random enemy on the owner's screen. */
+  target: 'nearest' | 'random';
 }
 
 export interface WeaponLevel {
@@ -89,6 +132,21 @@ export interface WeaponDef {
   color?: number;
   /** Which modifications change this weapon. No tags: none do. */
   tags?: WeaponTag[];
+  /**
+   * Modifications only add their damage bonus when they share one of these tags (defaults to `tags`). For weapons
+   * whose damage comes from one part only, e.g. a projectile that deals no damage but sets off an AoE blast.
+   */
+  damageTags?: WeaponTag[];
+  /** The projectile never pierces: the Pierce modification's extra pierce does not apply. */
+  noPierce?: boolean;
+  /** The weapon's area deals no damage itself (a field that only slows and applies an effect): Echo Strike does nothing. */
+  harmlessArea?: boolean;
+  /** The projectile deals no damage itself: every enemy it touches sets off a blast of `stats.size` px. */
+  blastOnHit?: boolean;
+  /** Look of the weapon's blasts: an orange burst, or a cold crystal burst. */
+  blastStyle?: 'burst' | 'frost';
+  /** Projectiles turn to face where they fly (arrows). */
+  orient?: boolean;
   /** Level 1 stats. */
   stats: WeaponStats;
   /** Changes applied to reach level 2, 3, 4 and 5, in order. */
@@ -96,11 +154,13 @@ export interface WeaponDef {
   /** Seconds between an attack and each of its repeats (`stats.repeat`). */
   repeatDelay?: number;
   /**
-   * `bomb`: with more than one projectile, they are thrown one at a time, spread evenly over this fraction of the
-   * cooldown, instead of all at once. The first goes at the closest enemy, the rest at random enemies on screen.
+   * With more than one projectile, they are fired one at a time instead of all at once (see BurstDef). The first
+   * always goes at the closest enemy.
    */
-  burst?: number;
-  /** Timed effect each hit leaves on the enemy. Give the weapon the `duration` tag. */
+  burst?: BurstDef;
+  /** `field`: seconds between the field's checks for enemies standing on it (the first check is when it appears). */
+  fieldInterval?: number;
+  /** Timed effect each hit (or field check) leaves on the enemy. Give the weapon the `duration` tag. */
   effect?: EffectDef;
 }
 
@@ -172,6 +232,10 @@ export interface PlayerStats {
   cooldownMult: number;
   /** Cooldowns are multiplied by 100 / (100 + haste). */
   abilityHaste: number;
+  /** Chance (0..1) that a hit is a critical strike. Passive weapons (e.g. Original Pristinity) add to it. */
+  critChance: number;
+  /** Damage of a critical strike, as a multiple of the hit (2 = double). */
+  critDamage: number;
   areaMult: number;
   expMult: number;
 }
@@ -261,7 +325,7 @@ export interface CharacterDef {
   ultimate: string;
 }
 
-export type UltimateKind = 'storm' | 'pet';
+export type UltimateKind = 'storm' | 'pet' | 'dome';
 
 export interface UltimateDef {
   id: string;
@@ -280,6 +344,10 @@ export interface UltimateDef {
   count: number;
   /** `storm`: degrees per second the spiral turns. */
   spin?: number;
+  /** `dome`: px radius of the dome, centred where it was cast. */
+  radius?: number;
+  /** `dome`: colour of the dome and its beams. */
+  color?: number;
   /**
    * The projectile the ultimate fires. Uses the WeaponDef shape so it shares the projectile pool,
    * the network sync and the damage tracking. `pet`: `stats.range` is how far the pet looks for targets.
