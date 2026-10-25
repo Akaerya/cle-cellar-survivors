@@ -32,6 +32,8 @@ export const MAX_WEAPONS = 4;
 export const MAX_ITEMS = 4;
 export const MAX_LEVEL = 5;
 export const INVULN_SECONDS = 0.5;
+/** Invulnerability each living player gets when the run resumes after a level-up pick. */
+export const LEVELUP_INVULN_SECONDS = 0.2;
 export const SPAWN_TICK_MS = 500;
 export const FALLBACK_HEAL = 30;
 /** `stab` weapons thrust at enemies this many px beyond the blade's reach, so the stab lands as they close in. */

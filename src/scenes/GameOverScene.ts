@@ -197,7 +197,7 @@ export class GameOverScene extends Phaser.Scene {
       add(this.add.image(x, y, ATLAS, it.icon).setOrigin(0));
       add(text(this, x + 20, y + 4, `${it.name.toUpperCase()} ${it.level}`, { color: it.level >= (it.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.text }));
     });
-    add(text(this, PX + PW - 14, y + 4, `EXP COLLECTED ${short(m.stats.exp)}`, { origin: [1, 0], color: COLOR.textDim }));
+    add(text(this, PX + PW - 14, y + 4, `EXP ${short(m.stats.exp)} · REROLLS ${m.stats.rerolls ?? 0}`, { origin: [1, 0], color: COLOR.textDim }));
 
     // Modifications and powerups: icon and level only (there can be many).
     y += 18;

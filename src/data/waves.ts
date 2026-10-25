@@ -37,6 +37,18 @@ export function hpScaleForPlayers(players: number): number {
   return 1 + HP_SCALE_PER_EXTRA_PLAYER * Math.max(0, players - 1);
 }
 
+/**
+ * Spawn pressure: the wave's ON FIELD target (and with it how fast the horde is topped up) is multiplied by
+ * (1 + PER_MINUTE x minute) x (1 + PER_EXTRA_PLAYER x (players - 1)), capped at MAX_ENEMIES.
+ * So +4% per minute (x1.56 at 14:00) and +15% per extra player (x1.45 with 4 players).
+ */
+export const SPAWN_SCALE_PER_MINUTE = 0.04;
+export const SPAWN_SCALE_PER_EXTRA_PLAYER = 0.15;
+
+export function spawnScaleFor(minute: number, players: number): number {
+  return (1 + SPAWN_SCALE_PER_MINUTE * Math.max(0, minute)) * (1 + SPAWN_SCALE_PER_EXTRA_PLAYER * Math.max(0, players - 1));
+}
+
 export const WAVE_EVENTS: WaveEvent[] = [
   { at: 5 * 60, type: 'swarm', enemy: 'bat', count: 40 },
   { at: 10 * 60, type: 'swarm', enemy: 'bat', count: 40 },

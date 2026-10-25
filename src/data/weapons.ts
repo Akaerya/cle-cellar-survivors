@@ -147,7 +147,7 @@ export const WEAPONS: WeaponDef[] = [
       speed: 0,
       pierce: Infinity,
       lifetime: 0.16,
-      size: 40,
+      size: 50,
       knockback: 14,
       spread: 0,
       range: 0,
@@ -155,10 +155,10 @@ export const WEAPONS: WeaponDef[] = [
       boomerang: false,
     },
     levels: [
-      { text: 'The stab reaches 30% further.', pct: { size: 0.3 } },
-      { text: '+25% damage.', pct: { damage: 0.25 } },
-      { text: 'The stab reaches 30% further and the blade is wider.', pct: { size: 0.3 }, add: { arc: 4 } },
-      { text: 'The stab reaches 30% further. +25% damage.', pct: { size: 0.3, damage: 0.25 } },
+      { text: 'The stab reaches 25% further and stabs 15% more often.', pct: { size: 0.25 }, faster: 0.15 },
+      { text: 'The stab reaches 25% further and stabs 15% more often. +25% damage.', pct: { size: 0.25, damage: 0.25 }, faster: 0.15 },
+      { text: 'The stab reaches 25% further, stabs 15% more often and the blade is wider.', pct: { size: 0.25 }, faster: 0.15, add: { arc: 4 } },
+      { text: 'The stab reaches 25% further and stabs 15% more often. +25% damage.', pct: { size: 0.25, damage: 0.25 }, faster: 0.15 },
     ],
   },
   {

@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, CHILL_TINT, DEPTH } from '../constants';
-import { ATTACK_DEFS, ENEMIES } from '../data';
+import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS } from '../data';
+import { PLAYER_RADIUS } from '../data/player';
+import { SHADOW_W, randomStartFrame } from '../entities/Enemy';
 import { EF, type SnapEntity } from './protocol';
 
 export const SNAPSHOT_HZ = 20;
@@ -32,7 +34,7 @@ class Layer {
   constructor(
     private scene: Phaser.Scene,
     private setup: (o: Shown, e: SnapEntity, fresh: boolean) => void,
-    private place: (o: Shown) => void,
+    private place: (o: Shown, dt: number) => void,
     private shadows: Phaser.GameObjects.Blitter | null = null,
   ) {}
 
@@ -83,12 +85,21 @@ class Layer {
     for (const o of this.shown.values()) {
       o.t = Math.min(1, o.t + dt / STEP);
       o.s.setPosition(o.fromX + (o.toX - o.fromX) * o.t, o.fromY + (o.toY - o.fromY) * o.t);
-      this.place(o);
+      this.place(o, dt);
     }
   }
 
   get count(): number {
     return this.shown.size;
+  }
+
+  /** The sprite drawn for net id `id`, if it is on screen. */
+  get(id: number): Phaser.GameObjects.Sprite | undefined {
+    return this.shown.get(id)?.s;
+  }
+
+  forEach(fn: (o: Shown) => void): void {
+    for (const o of this.shown.values()) fn(o);
   }
 
   /** Shadow bob for an object (created on first use). */
@@ -106,18 +117,19 @@ export class Mirror {
   readonly gems: Layer;
   readonly projectiles: Layer;
   readonly potions: Layer;
+  readonly hazards: Layer;
 
   constructor(scene: Phaser.Scene) {
     const shadows = scene.add.blitter(0, 0, ATLAS).setDepth(DEPTH.shadows);
     this.enemies = new Layer(
       scene,
       (o, e, fresh) => {
-        const def = ENEMIES[e.kind];
+        const def = ALL_ENEMIES[e.kind];
         if (!def) return;
         if (fresh || o.kind !== e.kind) {
           o.kind = e.kind;
-          o.s.setTexture(ATLAS, def.firstFrame).play({ key: def.anim, startFrame: Math.floor(Math.random() * 4) }, true);
-          o.s.setAlpha(1).setScale(1);
+          o.s.setTexture(ATLAS, def.firstFrame).play({ key: def.anim, startFrame: randomStartFrame(scene, def.anim) }, true);
+          o.s.setAlpha(1).setScale(def.scale ?? 1).setRotation(0);
           this.enemies.shadowFor(o, def.shadow);
         }
         o.s.setFlipX((e.extra & EF.flip) !== 0);
@@ -126,13 +138,12 @@ export class Mirror {
         else o.s.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
       },
       (o) => {
-        const def = ENEMIES[o.kind];
+        const def = ALL_ENEMIES[o.kind];
         if (!def) return;
         o.s.setDepth(DEPTH.units + o.s.y / ARENA_SIZE);
         if (o.shadow) {
-          const sw = def.shadow === 'shadow_l' ? 24 : 12;
-          o.shadow.x = o.s.x - sw / 2;
-          o.shadow.y = o.s.y + o.s.height / 2 - 3 + def.hover;
+          o.shadow.x = o.s.x - SHADOW_W[def.shadow] / 2;
+          o.shadow.y = o.s.y + o.s.displayHeight / 2 - 3 * (def.scale ?? 1) + def.hover;
         }
       },
       shadows,
@@ -178,9 +189,41 @@ export class Mirror {
       },
       () => {},
     );
+    this.hazards = new Layer(
+      scene,
+      (o, e, fresh) => {
+        const def = HAZARDS[e.kind];
+        if (!def) return;
+        if (fresh || o.kind !== e.kind) {
+          o.kind = e.kind;
+          o.s.anims.stop();
+          o.s.setTexture(ATLAS, def.frame).setScale(def.radius / def.artRadius).clearTint().setRotation(0);
+          if (def.anim) o.s.play(def.anim, true);
+          o.s.setDepth(def.ground ? DEPTH.shadows + 0.5 : DEPTH.projectiles - 1);
+        }
+        o.s.setAlpha(e.extra / 255);
+      },
+      (o, dt) => {
+        const spin = HAZARDS[o.kind]?.spin;
+        if (spin) o.s.rotation += spin * dt;
+      },
+    );
+  }
+
+  /** Move speed multiplier for this joiner's own character at (x, y): webs from the last snapshot slow it. */
+  slowAt(x: number, y: number): number {
+    let slow = 0;
+    this.hazards.forEach((o) => {
+      const def = HAZARDS[o.kind];
+      if (!def?.slow) return;
+      const r = def.radius + PLAYER_RADIUS;
+      if ((o.s.x - x) ** 2 + (o.s.y - y) ** 2 <= r * r) slow = Math.max(slow, def.slow);
+    });
+    return 1 - slow;
   }
 
   update(dt: number): void {
+    this.hazards.update(dt);
     this.potions.update(dt);
     this.enemies.update(dt);
     this.gems.update(dt);

@@ -121,6 +121,25 @@ export class Fx {
     b.dur = dur;
   }
 
+  /** A pulsing warning circle of `radius` px for `dur` seconds (a boss winding up an attack there). */
+  warn(x: number, y: number, radius: number, dur: number, color: number): void {
+    this.relay?.(['c', Math.round(x), Math.round(y), Math.round(radius), Math.round(dur * 100) / 100, color]);
+    const g = this.scene.add.graphics().setDepth(DEPTH.aura);
+    const state = { k: 0 };
+    const draw = () => {
+      const pulse = 0.5 + 0.5 * Math.sin(state.k * Math.PI * 8);
+      g.clear();
+      g.fillStyle(color, 0.08 + 0.1 * state.k);
+      g.fillCircle(x, y, radius);
+      g.fillStyle(color, 0.15 + 0.15 * pulse);
+      g.fillCircle(x, y, radius * state.k);
+      g.lineStyle(2, color, 0.5 + 0.4 * pulse);
+      g.strokeCircle(x, y, radius);
+    };
+    draw();
+    this.scene.tweens.add({ targets: state, k: 1, duration: dur * 1000, onUpdate: draw, onComplete: () => g.destroy() });
+  }
+
   /** A cold crystal burst: a pale flash filling `radius` px, a frosty ring and ice shards flying out. */
   frost(x: number, y: number, radius: number, color: number): void {
     this.relay?.(['k', Math.round(x), Math.round(y), Math.round(radius), color]);

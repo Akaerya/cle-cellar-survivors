@@ -1,3 +1,4 @@
+import { BOSSES, HAZARDS, MINIONS } from './bosses';
 import { CHARACTERS } from './characters';
 import { ENEMIES } from './enemies';
 import { ITEMS } from './items';
@@ -5,16 +6,23 @@ import { MODIFICATIONS } from './modifications';
 import { POWERUPS } from './powerups';
 import { ULTIMATES } from './ultimates';
 import { WEAPONS } from './weapons';
-import type { CharacterDef, EnemyDef, ItemDef, ModificationDef, UltimateDef, WeaponDef } from './types';
+import type { CharacterDef, EnemyDef, HazardDef, ItemDef, ModificationDef, UltimateDef, WeaponDef } from './types';
 
 export * from './types';
 export { ENEMIES } from './enemies';
+export { BOSSES, BOSS_TIMES, HAZARDS, MINIONS } from './bosses';
+
+/**
+ * Every enemy kind: the wave enemies, boss minions, then bosses. An enemy's index in this list is how
+ * snapshots tell joiners which art to draw.
+ */
+export const ALL_ENEMIES: EnemyDef[] = [...ENEMIES, ...MINIONS, ...BOSSES];
 export { ITEMS } from './items';
 export { MODIFICATIONS, SPLIT_ARC, CHAIN_RANGE, CHAIN_SPEED, ECHO_RADIUS, ECHO_GAP } from './modifications';
 export { POWERUPS, POWERUP_MAX_LEVEL } from './powerups';
 export { WEAPONS } from './weapons';
-export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute, hpScaleForPlayers, speedScaleForMinute } from './waves';
-export { BASE_STATS, PLAYER_RADIUS } from './player';
+export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute, hpScaleForPlayers, speedScaleForMinute, spawnScaleFor } from './waves';
+export { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from './player';
 export { CHARACTERS, DEFAULT_CHARACTER } from './characters';
 export { ULTIMATES } from './ultimates';
 
@@ -30,7 +38,8 @@ const weaponMap = byId(WEAPONS);
 const itemMap = byId(ITEMS);
 const modMap = byId(MODIFICATIONS);
 const powerupMap = byId(POWERUPS);
-const enemyMap = byId(ENEMIES);
+const enemyMap = byId(ALL_ENEMIES);
+const hazardMap = byId(HAZARDS);
 const characterMap = byId(CHARACTERS);
 const ultimateMap = byId(ULTIMATES);
 
@@ -63,6 +72,12 @@ export function enemyDef(id: string): EnemyDef {
   if (!d) throw new Error(`Unknown enemy ${id}`);
   return d;
 }
+export function hazardDef(id: string): HazardDef {
+  const d = hazardMap.get(id);
+  if (!d) throw new Error(`Unknown hazard ${id}`);
+  return d;
+}
+
 /** Unknown ids (an old profile, a newer client) fall back to the first character. */
 export function characterDef(id: string | undefined): CharacterDef {
   return (id && characterMap.get(id)) || CHARACTERS[0];

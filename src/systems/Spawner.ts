@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ARENA_SIZE, DESPAWN_SCREENS, INNER, MAX_ENEMIES, VIEW_H, VIEW_W, COLOR } from '../constants';
-import { enemyDef, hpScaleForMinute, hpScaleForPlayers, waveForMinute, WAVE_EVENTS } from '../data';
+import { enemyDef, hpScaleForMinute, hpScaleForPlayers, spawnScaleFor, waveForMinute, WAVE_EVENTS } from '../data';
 import type { WaveEvent } from '../data/types';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
@@ -20,8 +20,10 @@ export class Spawner {
     return Math.floor(this.game.runTime / 60);
   }
 
+  /** Enemies kept on the field: the wave's target, scaled up over time and per extra player. */
   get target(): number {
-    return waveForMinute(this.minute).target;
+    const scaled = waveForMinute(this.minute).target * spawnScaleFor(this.game.runTime / 60, this.game.playerCount);
+    return Math.min(MAX_ENEMIES, Math.round(scaled));
   }
 
   /** Minute scaling times the co-op player scaling. */
@@ -36,11 +38,12 @@ export class Spawner {
     if (players.length === 0) return;
     this.relocateStragglers(players);
     const wave = waveForMinute(this.minute);
+    const target = this.target;
     const hpScale = this.hpScale;
     const alive = g.enemies.live;
-    const deficit = Math.min(wave.target - alive, MAX_ENEMIES - alive);
+    const deficit = Math.min(target - alive, MAX_ENEMIES - alive);
     if (deficit <= 0) return;
-    const batch = Math.min(deficit, Math.max(4, Math.ceil(wave.target / 6)));
+    const batch = Math.min(deficit, Math.max(4, Math.ceil(target / 6)));
     for (let i = 0; i < batch; i++) {
       const id = g.rng.weighted(wave.weights);
       if (!id) break;

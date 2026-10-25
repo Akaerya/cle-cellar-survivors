@@ -8,6 +8,7 @@
 import {
   FALLBACK_HEAL,
   INVULN_SECONDS,
+  LEVELUP_INVULN_SECONDS,
   MAX_EFFECT_STACKS,
   MAX_PROJECTILES,
   MAX_SHIELD_REDUCTION,
@@ -27,6 +28,8 @@ import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffe
 import { NAME_MAX } from '../core/profile';
 import {
   BASE_STATS,
+  BOSSES,
+  BOSS_TIMES,
   CHAIN_RANGE,
   CHARACTERS,
   ECHO_GAP,
@@ -38,20 +41,30 @@ import {
   POTION,
   POWERUPS,
   POWERUP_MAX_LEVEL,
+  REROLLS_PER_RUN,
   SPLIT_ARC,
   REVIVE,
   WAVES,
   WAVE_EVENTS,
   enemyDef,
+  hazardDef,
   hpScaleForMinute,
   hpScaleForPlayers,
+  spawnScaleFor,
   reviveHpPercent,
   speedScaleForMinute,
   ultimateDef,
   weaponDef,
 } from '../data';
-import { HP_SCALE_PER_EXTRA_PLAYER, HP_SCALE_PER_MINUTE, SPEED_SCALE_PER_MINUTE, SPEED_SCALE_START } from '../data/waves';
-import type { ItemDef, ModEffect, StatKey, Targeting, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
+import {
+  HP_SCALE_PER_EXTRA_PLAYER,
+  HP_SCALE_PER_MINUTE,
+  SPAWN_SCALE_PER_EXTRA_PLAYER,
+  SPAWN_SCALE_PER_MINUTE,
+  SPEED_SCALE_PER_MINUTE,
+  SPEED_SCALE_START,
+} from '../data/waves';
+import type { BossSkill, EnemyDef, ItemDef, ModEffect, StatKey, Targeting, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
 
 export type Cell = string | { text: string; color?: number };
 
@@ -68,8 +81,15 @@ export interface WikiPage {
   tab: string;
   /** Where contributors change these values. */
   source: string;
-  blocks: () => Block[];
+  /** Filter chips shown under the tabs (the first is 'ALL'). Omit for short pages. */
+  filters?: () => string[];
+  /** The page's content, narrowed to `filter` (one of `filters`, or 'ALL'). */
+  blocks: (filter: string) => Block[];
 }
+
+/** Filter chips: ALL, then one per character (by display name). */
+const characterFilters = () => ['ALL', ...CHARACTERS.map((c) => c.name.toUpperCase())];
+const shows = (filter: string, label: string) => filter === 'ALL' || filter === label.toUpperCase();
 
 // ------------------------------------------------------------------ formatting helpers
 
@@ -213,7 +233,7 @@ function weaponColumns(def: WeaponDef): Col[] {
   return cols;
 }
 
-function weaponsPage(): Block[] {
+function weaponsPage(filter: string): Block[] {
   const out: Block[] = [
     {
       t: 'p',
@@ -226,6 +246,7 @@ function weaponsPage(): Block[] {
     },
   ];
   for (const c of CHARACTERS) {
+    if (!shows(filter, c.name)) continue;
     out.push({ t: 'gap', h: 4 });
     out.push({ t: 'h', text: `${c.name.toUpperCase()}'S WEAPONS` });
     for (const def of c.weapons.map(weaponDef)) {
@@ -276,7 +297,7 @@ function burstText(def: WeaponDef): string {
   return `With more than one projectile (COUNT, or Additional Projectiles) they are fired one at a time instead of in a spread: ${when}, after ABILITY HASTE. The first goes at the closest enemy, ${aim}.`;
 }
 
-function charactersPage(): Block[] {
+function charactersPage(filter: string): Block[] {
   const out: Block[] = [
     {
       t: 'p',
@@ -289,6 +310,7 @@ function charactersPage(): Block[] {
     },
   ];
   for (const c of CHARACTERS) {
+    if (!shows(filter, c.name)) continue;
     const ult = ultimateDef(c.ultimate);
     const a = ult.attack.stats;
     out.push({ t: 'gap', h: 8 });
@@ -395,7 +417,7 @@ function itemsPage(): Block[] {
   return out;
 }
 
-function powerupsPage(): Block[] {
+function powerupsPage(filter: string): Block[] {
   const out: Block[] = [
     {
       t: 'p',
@@ -403,6 +425,7 @@ function powerupsPage(): Block[] {
     },
   ];
   for (const def of POWERUPS) {
+    if (!shows(filter, def.name)) continue;
     out.push({ t: 'gap', h: 6 });
     out.push({ t: 'entry', icon: def.icon, title: def.name, sub: def.description });
     const max = itemMaxLevel(def);
@@ -441,8 +464,11 @@ function areaExample(): string {
   return `Howler Aura at level ${MAX_LEVEL} (${signedPct(howl)}) with 2 levels of Increased AoE (${signedPct(inc)}) and 1 of Reduced AoE (${signedPct(red)}) has ${pct(total)} of its base radius.`;
 }
 
-function modsPage(): Block[] {
-  const out: Block[] = [
+/** MODS filters: everything, only the rules text, or the modifications carrying one tag. */
+const MOD_FILTERS = ['ALL', 'RULES', 'PROJECTILE', 'AOE', 'DURATION'];
+
+function modsPage(filter: string): Block[] {
+  const rules: Block[] = [
     {
       t: 'p',
       text: `Modifications change every weapon that shares one of their tags (PROJECTILE, AOE or DURATION; each weapon's tags are on the WEAPONS page), as far as the weapon has a use for them: CHANGES under each one lists what it really does. Each goes up to level ${MAX_LEVEL} and takes no slot. A modification is offered once you own a weapon it changes; after you take it, its upgrades keep being offered.`,
@@ -472,8 +498,11 @@ function modsPage(): Block[] {
       text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconuts is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. Some weapons deal damage with one part only: Crystalline Bloom's blast only takes AOE damage bonuses, Rime Trauma only DURATION ones. That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up), the only damage multiplier.",
     },
   ];
+  if (filter === 'RULES') return rules;
+  const out: Block[] = filter === 'ALL' ? rules : [rules[0]];
   const weapons = CHARACTERS.flatMap((c) => c.weapons.map(weaponDef));
   for (const def of MODIFICATIONS) {
+    if (filter !== 'ALL' && !def.tags.some((t) => TAG_LABELS[t] === filter)) continue;
     out.push({ t: 'gap', h: 6 });
     out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `TAGS: ${tagList(def.tags)} · ${def.description}` });
     // Sharing a tag is not always enough: a weapon only listed for what the modification really does for it.
@@ -505,7 +534,7 @@ function monstersPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Enemies walk straight at the nearest living player and hurt them on touch. HP grows ${pct(HP_SCALE_PER_MINUTE)} of base per minute; speed starts at ${pct(SPEED_SCALE_START)} and rises ${pct(SPEED_SCALE_PER_MINUTE, 1)} per minute up to 100%. In co-op HP is also multiplied by the player count (see CO-OP).`,
+      text: `Enemies walk straight at the nearest living player and hurt them on touch. HP grows ${pct(HP_SCALE_PER_MINUTE)} of base per minute; speed starts at ${pct(SPEED_SCALE_START)} and rises ${pct(SPEED_SCALE_PER_MINUTE, 1)} per minute up to 100%. In co-op HP is also multiplied by the player count (see CO-OP). Bosses and their minions are on the BOSSES page.`,
     },
     { t: 'gap', h: 4 },
   ];
@@ -551,17 +580,17 @@ function wavesPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `The run lasts ${formatTime(RUN_SECONDS)}. Every ${SPAWN_TICK_MS} ms the spawner tops the horde up toward ON FIELD, at most a sixth of it per tick, on a ring just outside a random living player's screen. At most ${MAX_ENEMIES} enemies exist at once. Enemies more than ${DESPAWN_SCREENS} screens away from every player are moved back near one, keeping their HP.`,
+      text: `The run lasts ${formatTime(RUN_SECONDS)}. Every ${SPAWN_TICK_MS} ms the spawner tops the horde up toward ON FIELD, at most a sixth of it per tick, on a ring just outside a random living player's screen. ON FIELD grows over time and with more players: it is multiplied by (1 + ${pct(SPAWN_SCALE_PER_MINUTE)} per minute) × (1 + ${pct(SPAWN_SCALE_PER_EXTRA_PLAYER)} per extra player), so the horde also refills faster. At most ${MAX_ENEMIES} enemies exist at once. Enemies more than ${DESPAWN_SCREENS} screens away from every player are moved back near one, keeping their HP.`,
     },
   ];
   out.push({
     t: 'table',
     cols: [
-      { label: 'MINUTES', w: 70 },
-      { label: 'ON FIELD', w: 70 },
-      { label: 'HP ×', w: 50 },
-      { label: 'SPEED ×', w: 60 },
-      { label: 'MIX', w: 350 },
+      { label: 'MINUTES', w: 64 },
+      { label: 'ON FIELD (SOLO)', w: 106 },
+      { label: 'HP ×', w: 44 },
+      { label: 'SPEED ×', w: 58 },
+      { label: 'MIX', w: 330 },
     ],
     rows: WAVES.map((w) => {
       const total = Object.values(w.weights).reduce((a, b) => a + b, 0);
@@ -570,18 +599,32 @@ function wavesPage(): Block[] {
         .join(', ');
       return [
         `${w.from}-${w.to}`,
-        num(w.target),
+        `${num(w.target)} (${Math.min(MAX_ENEMIES, Math.round(w.target * spawnScaleFor(w.from, 1)))})`,
         num(hpScaleForMinute(w.from), 2),
         pct(speedScaleForMinute(w.from)),
         mix,
       ];
     }),
   });
+  out.push({
+    t: 'p',
+    text: 'ON FIELD is the table value; in brackets, solo at the start of the row after the per-minute increase. Spawn multiplier by minute and players:',
+    color: COLOR.textDim,
+  });
+  out.push({
+    t: 'table',
+    cols: [{ label: 'MINUTE', w: 64 }, ...Array.from({ length: MAX_PLAYERS }, (_, i) => ({ label: `${i + 1}P`, w: 50 }))],
+    rows: [0, 5, 10, 14].map((m) => [formatTime(m * 60), ...Array.from({ length: MAX_PLAYERS }, (_, i) => `× ${num(spawnScaleFor(m, i + 1), 2)}`)]),
+  });
   out.push({ t: 'h', text: 'EVENTS' });
+  for (const at of BOSS_TIMES) {
+    const end = at >= RUN_SECONDS ? ' Dawn waits until it is defeated.' : '';
+    out.push({ t: 'p', text: `${formatTime(at)} · BOSS: one of the bosses arrives (see BOSSES).${end}` });
+  }
   for (const ev of WAVE_EVENTS) {
     out.push({ t: 'p', text: `${formatTime(ev.at)} · SWARM: a ring of ${ev.count} ${enemyDef(ev.enemy).name.toUpperCase()}S closes in around every living player.` });
   }
-  out.push({ t: 'p', text: `${formatTime(RUN_SECONDS)} · DAWN: every enemy dies and the run is won.` });
+  out.push({ t: 'p', text: `${formatTime(RUN_SECONDS)} · DAWN: every enemy dies and the run is won (once a boss that arrived at ${formatTime(RUN_SECONDS)} is defeated).` });
   return out;
 }
 
@@ -622,7 +665,7 @@ function dropsPage(): Block[] {
     { t: 'h', text: 'LEVELS' },
     {
       t: 'p',
-      text: `Each level up offers 3 random cards: new weapons or items (while you have free slots), modifications (once you own a weapon they change), generic powerups, and upgrades to ones you own. With everything maxed the only card is a heal of ${FALLBACK_HEAL} HP. EXP needed for the next level:`,
+      text: `Each level up offers 3 random cards: new weapons or items (while you have free slots), modifications (once you own a weapon they change), generic powerups, and upgrades to ones you own. With everything maxed the only card is a heal of ${FALLBACK_HEAL} HP. Each player has ${REROLLS_PER_RUN} rerolls per run (R or the REROLL button): a reroll replaces all three cards, with different ones whenever the pool has enough. When the run resumes after your picks you are invulnerable for ${secs(LEVELUP_INVULN_SECONDS)}. EXP needed for the next level:`,
     },
     {
       t: 'table',
@@ -660,7 +703,7 @@ function coopPage(): Block[] {
     { t: 'h', text: 'ENEMY HP' },
     {
       t: 'p',
-      text: `Enemy HP × (1 + ${HP_SCALE_PER_EXTRA_PLAYER} × (players - 1)). Enemies chase the nearest living player and spawn around a random one.`,
+      text: `Enemy HP × (1 + ${HP_SCALE_PER_EXTRA_PLAYER} × (players - 1)). Enemies chase the nearest living player and spawn around a random one. More players also bring more of them (see WAVES), and bosses scale their HP the same way.`,
     },
     {
       t: 'table',
@@ -705,7 +748,7 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'TAKING DAMAGE' },
     {
       t: 'p',
-      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
+      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}, and for ${secs(LEVELUP_INVULN_SECONDS)} when the run resumes after a level-up pick. Boss attacks (beams, shockwaves, clubs, petals, pollen, whirlpools) hit the same way. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
     },
     { t: 'h', text: 'CRITICAL STRIKES' },
     {
@@ -715,22 +758,22 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'SLOWS' },
     {
       t: 'p',
-      text: 'Some effects slow enemies (freezing fields): they walk slower while on the field and a moment after. Slows do not stack; the strongest one counts. Slowed or chilled enemies are tinted pale blue.',
+      text: 'Some effects slow enemies (freezing fields): they walk slower while on the field and a moment after. Slows do not stack; the strongest one counts. Slowed or chilled enemies are tinted pale blue. Boss webs slow players the same way while they stand in one.',
     },
     { t: 'h', text: 'CARDS AND SLOTS' },
     {
       t: 'p',
-      text: `${MAX_WEAPONS} weapon slots and ${MAX_ITEMS} item slots. Each weapon, item and modification goes up to level ${MAX_LEVEL}, each generic powerup to level ${POWERUP_MAX_LEVEL}. Modifications and powerups take no slots. Several level-ups in a row are offered one after another.`,
+      text: `${MAX_WEAPONS} weapon slots and ${MAX_ITEMS} item slots. Each weapon, item and modification goes up to level ${MAX_LEVEL}, each generic powerup to level ${POWERUP_MAX_LEVEL}. Modifications and powerups take no slots. Several level-ups in a row are offered one after another. Each player can reroll the cards ${REROLLS_PER_RUN} times per run.`,
     },
     { t: 'h', text: 'WINNING' },
-    { t: 'p', text: `Survive until ${formatTime(RUN_SECONDS)} and dawn breaks: every enemy on the field dies and the run is won.` },
+    { t: 'p', text: `Survive until ${formatTime(RUN_SECONDS)} and dawn breaks: every enemy on the field dies and the run is won. A boss that arrives at ${formatTime(RUN_SECONDS)} holds dawn back until it is defeated.` },
     { t: 'h', text: 'PARTY SCREEN' },
     {
       t: 'p',
-      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions and heal cards, not regen), BLOCKS (hits a shield stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). Pick a row to see that player\'s weapons and ultimate: level, damage, DPS since it was picked up, kills and share of their damage.',
+      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions and heal cards, not regen), BLOCKS (hits a shield stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate: level, damage, DPS since it was picked up, kills and share of their damage.',
     },
     { t: 'h', text: 'CONTROLS' },
-    { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click.' },
+    { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click; R rerolls.' },
     { t: 'h', text: 'FEEDBACK' },
     {
       t: 'p',
@@ -740,15 +783,84 @@ function mechanicsPage(): Block[] {
   ];
 }
 
+/** One line per boss skill, with every number from the data. */
+function skillText(s: BossSkill): string {
+  const every = `every ${secs(s.cooldown)}`;
+  switch (s.kind) {
+    case 'webs': {
+      const web = hazardDef('web');
+      return `WEBS · ${every}: ${s.count} webs land at random within ${s.range} px of the closest player. Standing in one (${web.radius} px) cuts move speed by ${pct(web.slow ?? 0)}. Webs last ${s.lifetime}S, fading over the last ${web.fade ?? 0}S.`;
+    }
+    case 'summon': {
+      const m = enemyDef(s.minion);
+      const sh = m.shooter;
+      const shot = sh ? ` Each one spits a slow petal (${sh.damage} damage, ${sh.speed} px/s) at the closest player within ${sh.range} px every ${secs(sh.interval)}.` : '';
+      return `SPROUTS · ${every}: up to ${s.count} ${m.name.toUpperCase()}S grow ${s.distance} px around it (at most ${s.max} alive).${shot}`;
+    }
+    case 'pollen':
+      return `POLLEN · ${every}: ${s.count} clouds (${hazardDef('pollen').radius} px) drift after the closest player at ${s.speed} px/s for ${s.lifetime}S, dealing ${s.damage} to anyone inside.`;
+    case 'beam':
+      return `WATER BEAM · ${every}: stops and aims at the closest player for ${secs(s.charge)} (a red line shows where), then fires a beam ${s.length} px long and ${s.width} px wide that hits for ${s.damage}.`;
+    case 'whirlpools':
+      return `WHIRLPOOLS · ${every}: ${s.count} whirlpools (${hazardDef('whirlpool').radius} px) open up to ${s.range} px from random players for ${s.lifetime}S, dealing ${s.damage} to anyone inside.`;
+    case 'slam':
+      return `SLAM · ${every}: stops and raises its club for ${secs(s.windup)} (a red circle shows the reach), then a shockwave rolls out to ${s.radius} px over ${secs(s.duration)}, hitting each player it passes for ${s.damage}.`;
+    case 'clubs':
+      return `CLUBS · ${every}: throws ${s.count} clubs in every direction at ${s.speed} px/s. They slow to a stop after ${secs(s.outTime)}, then fly back to it, hitting for ${s.damage}.`;
+  }
+}
+
+function bossesPage(filter: string): Block[] {
+  const times = BOSS_TIMES.map((t) => formatTime(t)).join(', ');
+  const out: Block[] = [
+    {
+      t: 'p',
+      text: `A boss arrives at ${times}: each run picks ${BOSS_TIMES.length} different bosses at random (the same seed meets the same ones). A boss that arrives at ${formatTime(RUN_SECONDS)} holds dawn back: the run is won once it is defeated, while the horde keeps coming. Bosses are much bigger, ignore knockback, hurt on touch and have a big HP bar over them and at the top of the screen. Their HP grows with time and players like every enemy's (see MONSTERS and CO-OP). Each skill has its own cooldown; one with a wind-up roots the boss and shows a red warning first. A boss drops its EXP as one gem, and a health potion.`,
+    },
+    {
+      t: 'p',
+      text: 'Boss attacks hurt like a touch: through armor and shields, then the usual invulnerability, so standing in pollen or a whirlpool hurts once per invulnerability. Webs deal no damage but slow you.',
+      color: COLOR.textDim,
+    },
+  ];
+  const hpAt = (d: EnemyDef) => BOSS_TIMES.map((t) => num(Math.round(d.hp * hpScaleForMinute(t / 60)))).join(' / ');
+  for (const d of BOSSES) {
+    if (!shows(filter, d.name)) continue;
+    const b = d.boss!;
+    out.push({ t: 'gap', h: 8 });
+    out.push({ t: 'entry', icon: d.firstFrame, title: d.name, sub: `${b.title} · ${b.description}` });
+    out.push({
+      t: 'table',
+      cols: [
+        { label: 'HP', w: 50 },
+        { label: `HP AT ${BOSS_TIMES.map((t) => formatTime(t)).join(' / ')} (SOLO)`, w: 230 },
+        { label: 'SPEED', w: 50 },
+        { label: 'TOUCH', w: 50 },
+        { label: 'EXP', w: 40 },
+        { label: 'SIZE', w: 40 },
+      ],
+      rows: [[num(d.hp), hpAt(d), num(d.speed), num(d.damage), num(d.exp), num(d.radius)]],
+    });
+    for (const s of b.skills) out.push({ t: 'p', text: skillText(s) });
+    for (const s of b.skills) {
+      if (s.kind !== 'summon') continue;
+      const m = enemyDef(s.minion);
+      out.push({ t: 'entry', icon: m.firstFrame, title: m.name, sub: `MINION · ${num(m.hp)} HP (SCALES LIKE OTHER ENEMIES) · DOES NOT MOVE · ${num(m.damage)} TOUCH DAMAGE · ${num(m.exp)} EXP` });
+    }
+  }
+  return out;
+}
+
 export const WIKI_PAGES: WikiPage[] = [
-  { tab: 'CHARACTERS', source: 'src/data/characters.ts, src/data/ultimates.ts', blocks: charactersPage },
-  { tab: 'WEAPONS', source: 'src/data/weapons.ts', blocks: weaponsPage },
-  { tab: 'MODS', source: 'src/data/modifications.ts, src/constants.ts', blocks: modsPage },
+  { tab: 'CHARACTERS', source: 'src/data/characters.ts, src/data/ultimates.ts', filters: characterFilters, blocks: charactersPage },
+  { tab: 'WEAPONS', source: 'src/data/weapons.ts', filters: characterFilters, blocks: weaponsPage },
+  { tab: 'MODS', source: 'src/data/modifications.ts, src/constants.ts', filters: () => MOD_FILTERS, blocks: modsPage },
   { tab: 'ITEMS', source: 'src/data/items.ts, src/data/player.ts', blocks: itemsPage },
-  { tab: 'POWERUPS', source: 'src/data/powerups.ts', blocks: powerupsPage },
+  { tab: 'POWERUPS', source: 'src/data/powerups.ts', filters: () => ['ALL', ...POWERUPS.map((p) => p.name.toUpperCase())], blocks: powerupsPage },
   { tab: 'MONSTERS', source: 'src/data/enemies.ts', blocks: monstersPage },
-  { tab: 'WAVES', source: 'src/data/waves.ts', blocks: wavesPage },
-  { tab: 'DROPS', source: 'src/data/drops.ts, src/core/progression.ts', blocks: dropsPage },
+  { tab: 'BOSSES', source: 'src/data/bosses.ts', filters: () => ['ALL', ...BOSSES.map((b) => b.name.toUpperCase())], blocks: bossesPage },
+  { tab: 'WAVES', source: 'src/data/waves.ts, src/data/bosses.ts', blocks: wavesPage },
+  { tab: 'DROPS', source: 'src/data/drops.ts, src/core/progression.ts, src/data/player.ts', blocks: dropsPage },
   { tab: 'CO-OP', source: 'src/data/coop.ts, src/data/waves.ts', blocks: coopPage },
   { tab: 'RULES', source: 'src/constants.ts', blocks: mechanicsPage },
 ];
