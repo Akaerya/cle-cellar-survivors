@@ -29,7 +29,7 @@ export const CHARACTERS: CharacterDef[] = [
   },
   {
     id: 'elysia',
-    name: 'White Hair Bow User',
+    name: 'yuko',
     title: 'ARROW OF NOVAE',
     description: "'I'm a girl as gorgeous as dancing petals!'",
     anim: 'elysia',
