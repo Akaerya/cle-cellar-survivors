@@ -3,6 +3,7 @@ import { ATLAS } from '../art/textures';
 import { DEPTH } from '../constants';
 import { GEM_TIERS } from '../data/drops';
 import { nextNetId } from '../net/ids';
+import { randomStartFrame } from './Enemy';
 import type { Player } from './Player';
 
 export function gemColor(value: number): 'blue' | 'green' | 'red' {
@@ -45,7 +46,7 @@ export class Gem extends Phaser.Physics.Arcade.Sprite {
     const c = gemColor(this.value);
     if (c !== this.color) {
       this.color = c;
-      this.play({ key: `gem-${c}`, startFrame: Math.floor(Math.random() * 2) }, true);
+      this.play({ key: `gem-${c}`, startFrame: randomStartFrame(this.scene, `gem-${c}`) }, true);
     }
   }
 }

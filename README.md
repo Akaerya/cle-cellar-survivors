@@ -33,7 +33,7 @@ Spawn pressure also grows over the run: the number of enemies kept on the field 
 
 After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing, shield blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate) with its level, damage, DPS, kills and share of their damage.
 
-Phaser 4.2.1, TypeScript, Vite, Arcade Physics. No backend, no asset files: all pixel art, fonts and sounds are generated at boot from data in `src/art`.
+Phaser 4.2.1, TypeScript, Vite, Arcade Physics. No backend. Sprites and tiles are Aseprite files in `src/art/sprites` (exported to PNG); fonts and sounds are generated at boot.
 
 ## Run it
 
@@ -43,6 +43,7 @@ npm run dev            # dev server with hot reload
 npm run build          # static site in dist/
 npm run build:single   # one self-contained dist/index.html
 npm run typecheck
+npm run sprites        # re-export src/art/sprites/*.aseprite after editing art (needs Aseprite)
 ```
 
 ### Deploy to GitHub Pages
@@ -102,9 +103,11 @@ src/
     events.ts          event names between scenes, run summary and per-player stats
     profile.ts         display name and character, kept in localStorage
   art/
-    spriteData.ts      every sprite and tile as a character grid + palette
+    sprites/           Aseprite sources (*.aseprite), their PNG exports and sprites.json
     font.ts            hand-drawn pixel fonts
-    textures.ts        builds the texture atlas, tileset, bitmap fonts and animations
+    textures.ts        loads the sheets; builds the texture atlas, tileset, bitmap fonts and animations
+scripts/
+  export-sprites.mjs   npm run sprites: Aseprite -> PNG strips + sprites.json
   entities/            Player, Enemy, Projectile, Gem, Potion (pooled)
   systems/             Arena, Enemies, Weapons, Ultimate, Gems, Potions, Spawner, Fx
   scenes/              Boot, Title, CharacterSelect, Lobby, Game, UI (HUD), LevelUp, Pause, GameOver (party screen), Wiki
@@ -115,7 +118,7 @@ src/
 
 Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine code reads them generically.
 
-**A character** goes in `data/characters.ts`: a name, art (`anim` prefix with `-idle`, `-walk` and `-hurt` animations in `art/textures.ts`), a starting weapon, its weapon kit (the ids level-up cards may offer) and an ultimate id.
+**A character** goes in `data/characters.ts`: a name, art (`anim` prefix with `-idle`, `-walk` and `-hurt` animations: a sheet with `<anim>_idle`, `<anim>_walk` and `<anim>_hurt` tags, listed in `ANIMS` in `art/textures.ts`), a starting weapon, its weapon kit (the ids level-up cards may offer) and an ultimate id.
 
 **An ultimate** goes in `data/ultimates.ts`. `kind: 'storm'` fires `count` projectiles from the caster every `interval` in a spiral turning `spin` degrees per second; `kind: 'pet'` summons a pet that follows the caster and fires at the closest enemy within `attack.stats.range`. `duration` and `cooldown` are in seconds. `attack` is a weapon definition for the projectile, so it shares the projectile pool, the co-op sync and the damage counting. The HUD greys out the `icon`, using an `_grey` copy that `textures.ts` builds for every `icon_ult_*` sprite.
 
@@ -155,7 +158,7 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 
 **A modification** goes in `data/modifications.ts`: `tags` (the weapons it changes) and five `levels`, each with card text and `add` (summed over levels) or `set` (replaces the total) changes to pierce, damage, split, splitDepth, chain, area, echo, echoArea, echoRepeats, duration or reiterate. Split fan, chain range and echo radius and gap are constants at the top of that file.
 
-**An enemy** goes in `data/enemies.ts`, then gets a weight in a `data/waves.ts` row. New art needs a grid in `art/spriteData.ts` and an animation line in `art/textures.ts`. `scale` draws it larger (its `radius` stays in world px) and `mass` makes it shove lighter enemies aside.
+**An enemy** goes in `data/enemies.ts`, then gets a weight in a `data/waves.ts` row. New art needs a sheet in `art/sprites` (see Art) and an animation line in `ANIMS` in `art/textures.ts`. `scale` draws it larger (its `radius` stays in world px) and `mass` makes it shove lighter enemies aside.
 
 **A boss** goes in `data/bosses.ts`: an enemy definition with a `boss` block (title, description, HP bar colour and `skills`). Skills are data: `webs`, `summon` (minions from `MINIONS`; a minion with `shooter` fires hazards), `pollen`, `beam`, `whirlpools`, `slam` and `clubs`, each with its own cooldown and numbers. What they leave in the world (webs, pollen, whirlpools, petals, clubs) is in `HAZARDS`: size, art, spin, fade and slow. `BOSS_TIMES` is the schedule. The boss logic is `systems/Bosses.ts`; a new skill kind needs a case there and a line in the wiki's `skillText`.
 
@@ -165,9 +168,17 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 
 ## Art
 
-All art is drawn on the 16 px grid as character grids in `src/art/spriteData.ts`: one character per pixel, mapped through `PALETTE`. Edit a grid to redraw a sprite. At boot, `textures.ts` packs every sprite into one atlas and the tiles into an extruded tileset.
+Every sprite and tile is an [Aseprite](https://www.aseprite.org) file in `src/art/sprites/`. Open one, draw, save, then run `npm run sprites` (set `ASEPRITE` to the Aseprite executable if it is not on your PATH). The script exports each file to a PNG strip next to it and rewrites `sprites.json`; commit all three. The game loads the PNGs at boot, so building and deploying never needs Aseprite.
 
-The spec names 0x72's CC0 [16x16 DungeonTileset II](https://0x72.itch.io/dungeontileset-ii) for enemies and tiles. The build machine could not reach itch.io, so enemies and tiles are hand-drawn placeholders in the same palette family and frame sizes (zombie 16x18, ghoul 16x16, brute 28x30, tiles 16x16). To use the pack, load its sheet in `BootScene`, register frames named like the existing ones (`zombie_0`..`zombie_3`, `floor_a`, `wall_top` and so on), and drop the matching grids. Nothing else references art by anything but frame name.
+Frames are named from the file and its tags:
+
+- Frames inside a tag are `<tag>_0`, `<tag>_1`, ... (just `<tag>` when the tag has one frame). `monkey.aseprite` has tags `monkey_idle`, `monkey_walk` and `monkey_hurt`; `icons.aseprite` has one single-frame tag per icon.
+- Untagged frames are `<file>_0`, `<file>_1`, ... (just `<file>` for a one-frame file): `bat.aseprite` gives `bat_0`..`bat_3`, `potion.aseprite` gives `potion`.
+- Every frame of a file is the same size. Frame durations set in Aseprite are the animation timings.
+
+At boot, `textures.ts` packs every frame into one atlas (and an `_grey` copy of each `icon_ult_*`), builds the extruded tileset from `tiles.aseprite` (one tag per tile, looked up by name) and creates the animations in `ANIMS`. A new animation is a line there: its key and the frame prefix. Nothing else references art by anything but frame name.
+
+Style: a single dark outline (`#1c1322`), light from the top left, 3-4 shades per material, enemies and bosses facing right (the game flips them). Characters are 16x20, wave enemies 16x16 to 28x30, bosses 40x30 to 44x34 drawn at 2x, icons 16x16.
 
 ## Debug overlay (F3)
 

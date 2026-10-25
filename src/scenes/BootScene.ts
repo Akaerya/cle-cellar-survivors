@@ -1,11 +1,15 @@
 import Phaser from 'phaser';
-import { buildAllTextures } from '../art/textures';
+import { buildAllTextures, loadSpriteSheets } from '../art/textures';
 import { SCENES } from '../constants';
 
-/** Builds every texture, font and animation from the pixel data, then shows the title. */
+/** Loads the sprite sheets, builds every texture, font and animation, then shows the title. */
 export class BootScene extends Phaser.Scene {
   constructor() {
     super(SCENES.boot);
+  }
+
+  preload(): void {
+    loadSpriteSheets(this);
   }
 
   create(): void {
