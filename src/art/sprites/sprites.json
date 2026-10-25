@@ -1,0 +1,341 @@
+{
+ "arrow": {
+  "w": 13,
+  "h": 5,
+  "frames": {
+   "arrow_0": [0, 0, 125],
+   "arrow_1": [13, 0, 125]
+  }
+ },
+ "banana": {
+  "w": 12,
+  "h": 12,
+  "frames": {
+   "banana_0": [0, 0, 56],
+   "banana_1": [12, 0, 56],
+   "banana_2": [24, 0, 56],
+   "banana_3": [36, 0, 56]
+  }
+ },
+ "bat": {
+  "w": 16,
+  "h": 12,
+  "frames": {
+   "bat_0": [0, 0, 83],
+   "bat_1": [16, 0, 83],
+   "bat_2": [32, 0, 83],
+   "bat_3": [48, 0, 83]
+  }
+ },
+ "bloom": {
+  "w": 9,
+  "h": 9,
+  "frames": {
+   "bloom_0": [0, 0, 100],
+   "bloom_1": [9, 0, 100]
+  }
+ },
+ "bloomboss": {
+  "w": 40,
+  "h": 40,
+  "frames": {
+   "bloomboss_0": [0, 0, 333],
+   "bloomboss_1": [40, 0, 333]
+  }
+ },
+ "brute": {
+  "w": 28,
+  "h": 30,
+  "frames": {
+   "brute_0": [0, 0, 200],
+   "brute_1": [28, 0, 200],
+   "brute_2": [56, 0, 200],
+   "brute_3": [84, 0, 200]
+  }
+ },
+ "club": {
+  "w": 14,
+  "h": 14,
+  "frames": {
+   "club": [0, 0, 100]
+  }
+ },
+ "coconut": {
+  "w": 10,
+  "h": 10,
+  "frames": {
+   "coconut_0": [0, 0, 100],
+   "coconut_1": [10, 0, 100],
+   "coconut_2": [20, 0, 100],
+   "coconut_3": [30, 0, 100]
+  }
+ },
+ "cyclops": {
+  "w": 40,
+  "h": 40,
+  "frames": {
+   "cyclops_0": [0, 0, 500],
+   "cyclops_1": [40, 0, 500]
+  }
+ },
+ "drake": {
+  "w": 16,
+  "h": 12,
+  "frames": {
+   "drake_0": [0, 0, 125],
+   "drake_1": [16, 0, 125]
+  }
+ },
+ "elysia": {
+  "w": 16,
+  "h": 20,
+  "frames": {
+   "elysia_idle_0": [0, 0, 250],
+   "elysia_idle_1": [16, 0, 250],
+   "elysia_idle_2": [32, 0, 250],
+   "elysia_idle_3": [48, 0, 250],
+   "elysia_walk_0": [64, 0, 100],
+   "elysia_walk_1": [80, 0, 100],
+   "elysia_walk_2": [96, 0, 100],
+   "elysia_walk_3": [112, 0, 100],
+   "elysia_hurt_0": [128, 0, 100],
+   "elysia_hurt_1": [144, 0, 100]
+  }
+ },
+ "gem": {
+  "w": 7,
+  "h": 9,
+  "frames": {
+   "gem_blue_0": [0, 0, 500],
+   "gem_blue_1": [7, 0, 500],
+   "gem_green_0": [14, 0, 500],
+   "gem_green_1": [21, 0, 500],
+   "gem_red_0": [28, 0, 500],
+   "gem_red_1": [35, 0, 500]
+  }
+ },
+ "ghoul": {
+  "w": 16,
+  "h": 16,
+  "frames": {
+   "ghoul_0": [0, 0, 83],
+   "ghoul_1": [16, 0, 83],
+   "ghoul_2": [32, 0, 83],
+   "ghoul_3": [48, 0, 83]
+  }
+ },
+ "icon_skull": {
+  "w": 9,
+  "h": 9,
+  "frames": {
+   "icon_skull": [0, 0, 100]
+  }
+ },
+ "icons": {
+  "w": 16,
+  "h": 16,
+  "frames": {
+   "icon_banana": [0, 0, 100],
+   "icon_tail": [16, 0, 100],
+   "icon_coconut": [32, 0, 100],
+   "icon_howl": [48, 0, 100],
+   "icon_magnet": [64, 0, 100],
+   "icon_heal": [80, 0, 100],
+   "icon_sword": [96, 0, 100],
+   "icon_bolt": [112, 0, 100],
+   "icon_breath": [128, 0, 100],
+   "icon_shield": [144, 0, 100],
+   "icon_ult_storm": [160, 0, 100],
+   "icon_ult_drake": [176, 0, 100],
+   "icon_mod_pierce": [192, 0, 100],
+   "icon_mod_split": [208, 0, 100],
+   "icon_mod_chain": [224, 0, 100],
+   "icon_mod_projectiles": [240, 0, 100],
+   "icon_mod_more_area": [256, 0, 100],
+   "icon_mod_less_area": [272, 0, 100],
+   "icon_mod_echo": [288, 0, 100],
+   "icon_mod_more_duration": [304, 0, 100],
+   "icon_mod_less_duration": [320, 0, 100],
+   "icon_mod_reiterate": [336, 0, 100],
+   "icon_pu_damage": [352, 0, 100],
+   "icon_pu_health": [368, 0, 100],
+   "icon_pu_haste": [384, 0, 100],
+   "icon_pu_speed": [400, 0, 100],
+   "icon_pu_regen": [416, 0, 100],
+   "icon_pu_armor": [432, 0, 100],
+   "icon_hailing": [448, 0, 100],
+   "icon_bloom": [464, 0, 100],
+   "icon_helix": [480, 0, 100],
+   "icon_pristinity": [496, 0, 100],
+   "icon_ult_dome": [512, 0, 100]
+  }
+ },
+ "knight": {
+  "w": 16,
+  "h": 20,
+  "frames": {
+   "knight_idle_0": [0, 0, 250],
+   "knight_idle_1": [16, 0, 250],
+   "knight_idle_2": [32, 0, 250],
+   "knight_idle_3": [48, 0, 250],
+   "knight_walk_0": [64, 0, 100],
+   "knight_walk_1": [80, 0, 100],
+   "knight_walk_2": [96, 0, 100],
+   "knight_walk_3": [112, 0, 100],
+   "knight_hurt_0": [128, 0, 100],
+   "knight_hurt_1": [144, 0, 100]
+  }
+ },
+ "leviathan": {
+  "w": 44,
+  "h": 34,
+  "frames": {
+   "leviathan_0": [0, 0, 333],
+   "leviathan_1": [44, 0, 333]
+  }
+ },
+ "monkey": {
+  "w": 16,
+  "h": 20,
+  "frames": {
+   "monkey_idle_0": [0, 0, 250],
+   "monkey_idle_1": [16, 0, 250],
+   "monkey_idle_2": [32, 0, 250],
+   "monkey_idle_3": [48, 0, 250],
+   "monkey_walk_0": [64, 0, 100],
+   "monkey_walk_1": [80, 0, 100],
+   "monkey_walk_2": [96, 0, 100],
+   "monkey_walk_3": [112, 0, 100],
+   "monkey_hurt_0": [128, 0, 100],
+   "monkey_hurt_1": [144, 0, 100]
+  }
+ },
+ "orb": {
+  "w": 8,
+  "h": 8,
+  "frames": {
+   "orb_0": [0, 0, 83],
+   "orb_1": [8, 0, 83]
+  }
+ },
+ "petal": {
+  "w": 8,
+  "h": 8,
+  "frames": {
+   "petal": [0, 0, 100]
+  }
+ },
+ "pollen": {
+  "w": 22,
+  "h": 22,
+  "frames": {
+   "pollen_0": [0, 0, 333],
+   "pollen_1": [22, 0, 333]
+  }
+ },
+ "potion": {
+  "w": 9,
+  "h": 12,
+  "frames": {
+   "potion": [0, 0, 100]
+  }
+ },
+ "px": {
+  "w": 2,
+  "h": 2,
+  "frames": {
+   "px": [0, 0, 100]
+  }
+ },
+ "px1": {
+  "w": 1,
+  "h": 1,
+  "frames": {
+   "px1": [0, 0, 100]
+  }
+ },
+ "shadow_l": {
+  "w": 24,
+  "h": 7,
+  "frames": {
+   "shadow_l": [0, 0, 100]
+  }
+ },
+ "shadow_s": {
+  "w": 12,
+  "h": 5,
+  "frames": {
+   "shadow_s": [0, 0, 100]
+  }
+ },
+ "shadow_xl": {
+  "w": 48,
+  "h": 12,
+  "frames": {
+   "shadow_xl": [0, 0, 100]
+  }
+ },
+ "spider": {
+  "w": 40,
+  "h": 30,
+  "frames": {
+   "spider_0": [0, 0, 143],
+   "spider_1": [40, 0, 143]
+  }
+ },
+ "sprout": {
+  "w": 16,
+  "h": 18,
+  "frames": {
+   "sprout_0": [0, 0, 333],
+   "sprout_1": [16, 0, 333]
+  }
+ },
+ "tiles": {
+  "w": 16,
+  "h": 16,
+  "frames": {
+   "floor_a": [0, 0, 100],
+   "floor_b": [16, 0, 100],
+   "floor_c": [32, 0, 100],
+   "earth_a": [48, 0, 100],
+   "earth_b": [64, 0, 100],
+   "grave_round": [80, 0, 100],
+   "grave_cross": [96, 0, 100],
+   "grave_broken": [112, 0, 100],
+   "grass_a": [128, 0, 100],
+   "grass_b": [144, 0, 100],
+   "bones": [160, 0, 100],
+   "crack": [176, 0, 100],
+   "floor_shadow": [192, 0, 100],
+   "wall_top": [208, 0, 100],
+   "wall_face": [224, 0, 100],
+   "wall_lip": [240, 0, 100],
+   "wall_lip_w": [256, 0, 100]
+  }
+ },
+ "web": {
+  "w": 26,
+  "h": 26,
+  "frames": {
+   "web": [0, 0, 100]
+  }
+ },
+ "whirlpool": {
+  "w": 26,
+  "h": 26,
+  "frames": {
+   "whirlpool": [0, 0, 100]
+  }
+ },
+ "zombie": {
+  "w": 16,
+  "h": 18,
+  "frames": {
+   "zombie_0": [0, 0, 167],
+   "zombie_1": [16, 0, 167],
+   "zombie_2": [32, 0, 167],
+   "zombie_3": [48, 0, 167]
+  }
+ }
+}

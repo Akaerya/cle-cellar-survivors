@@ -1,11 +1,11 @@
 import Phaser from 'phaser';
 import { FONT_MAIN, FONT_TINY } from './font';
-import { PALETTE, SPRITES, TILES } from './spriteData';
+import SHEETS from './sprites/sprites.json';
 
 /**
- * Turns the character-grid art into GPU textures at boot:
- * - one texture atlas ('atlas') with every sprite frame,
- * - an extruded tileset ('tiles') for the arena tilemap,
+ * Builds GPU textures at boot from the Aseprite exports in `src/art/sprites` (see README, "Art"):
+ * - one texture atlas ('atlas') with every sprite frame, named as in `sprites/sprites.json`,
+ * - an extruded tileset ('tiles') for the arena tilemap, from the frames of `tiles.aseprite`,
  * - two outlined pixel bitmap fonts ('font', 'tiny'),
  * - a few UI helper textures.
  */
@@ -17,74 +17,69 @@ export const FONT_SMALL = 'tiny';
 export const FONT_SIZE = 9; // native size of 'font' (7px glyphs + outline)
 export const FONT_SMALL_SIZE = 7;
 
-/** Tile indices, in TILES order. */
-export const TILE_INDEX: Record<string, number> = Object.fromEntries(TILES.map((t, i) => [t.name, i]));
+interface Sheet {
+  /** Frame size (every frame of a sheet is the same size). */
+  w: number;
+  h: number;
+  /** Frame name -> [x, y, duration in ms] in the sheet's PNG strip. */
+  frames: Record<string, [number, number, number]>;
+}
+const sheets = SHEETS as unknown as Record<string, Sheet>;
+const sheetUrls = import.meta.glob('./sprites/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const sheetKey = (name: string) => `sheet:${name}`;
+const TILES_SHEET = 'tiles';
 
-type RGBA = [number, number, number, number];
-const colorCache = new Map<string, RGBA>();
+/** Tile indices, in the frame order of tiles.aseprite. */
+export const TILE_INDEX: Record<string, number> = Object.fromEntries(Object.keys(sheets[TILES_SHEET].frames).map((n, i) => [n, i]));
 
-function rgba(ch: string): RGBA | null {
-  if (ch === '.') return null;
-  let c = colorCache.get(ch);
-  if (!c) {
-    const hex = PALETTE[ch];
-    if (!hex) return null;
-    const h = hex.replace('#', '');
-    c = [
-      parseInt(h.slice(0, 2), 16),
-      parseInt(h.slice(2, 4), 16),
-      parseInt(h.slice(4, 6), 16),
-      h.length >= 8 ? parseInt(h.slice(6, 8), 16) : 255,
-    ];
-    colorCache.set(ch, c);
+/** Queues every sprite sheet PNG; call from the boot scene's preload. */
+export function loadSpriteSheets(scene: Phaser.Scene): void {
+  for (const name of Object.keys(sheets)) {
+    const url = sheetUrls[`./sprites/${name}.png`];
+    if (!url) throw new Error(`src/art/sprites/${name}.png is missing: run npm run sprites`);
+    scene.load.image(sheetKey(name), url);
   }
-  return c;
 }
 
 /** Sprites that also get a greyed-out copy named `${name}_grey` (ultimate icons on cooldown). */
 const GREY_PREFIX = 'icon_ult_';
-
-function paint(img: ImageData, rows: string[], ox: number, oy: number, grey = false): void {
-  for (let y = 0; y < rows.length; y++) {
-    const row = rows[y];
-    for (let x = 0; x < row.length; x++) {
-      const c = rgba(row[x]);
-      if (!c) continue;
-      const px = ox + x;
-      const py = oy + y;
-      if (px < 0 || py < 0 || px >= img.width || py >= img.height) continue;
-      const i = (py * img.width + px) * 4;
-      if (grey) {
-        const l = Math.round((c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11) * 0.55);
-        img.data[i] = img.data[i + 1] = img.data[i + 2] = l;
-      } else {
-        img.data[i] = c[0];
-        img.data[i + 1] = c[1];
-        img.data[i + 2] = c[2];
-      }
-      img.data[i + 3] = c[3];
-    }
-  }
-}
 
 function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.imageSmoothingEnabled = false;
   return [canvas, ctx];
 }
 
 const nextPow2 = (n: number) => Math.pow(2, Math.ceil(Math.log2(Math.max(1, n))));
+const sheetImage = (scene: Phaser.Scene, name: string) =>
+  scene.textures.get(sheetKey(name)).getSourceImage() as CanvasImageSource;
 
-function buildAtlas(scene: Phaser.Scene): void {
-  const sprites = Object.entries(SPRITES).map(([name, rows]) => ({ name, rows, grey: false }));
-  for (const [name, rows] of Object.entries(SPRITES)) {
-    if (name.startsWith(GREY_PREFIX)) sprites.push({ name: `${name}_grey`, rows, grey: true });
+/** Greys out an area of the canvas in place (darkened luminance). */
+function greyOut(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  const img = ctx.getImageData(x, y, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = d[i + 1] = d[i + 2] = Math.round((d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11) * 0.55);
   }
-  const entries = sprites.map((s) => ({ ...s, w: s.rows[0].length, h: s.rows.length, x: 0, y: 0 }));
+  ctx.putImageData(img, x, y);
+}
+
+/** Packs every frame of every sheet (except the tiles) into one atlas texture. */
+function buildAtlas(scene: Phaser.Scene): void {
+  type Entry = { name: string; sheet: string; sx: number; sy: number; w: number; h: number; grey: boolean; x: number; y: number };
+  const entries: Entry[] = [];
+  for (const [sheet, s] of Object.entries(sheets)) {
+    if (sheet === TILES_SHEET) continue;
+    for (const [name, [sx, sy]] of Object.entries(s.frames)) {
+      entries.push({ name, sheet, sx, sy, w: s.w, h: s.h, grey: false, x: 0, y: 0 });
+      if (name.startsWith(GREY_PREFIX)) entries.push({ name: `${name}_grey`, sheet, sx, sy, w: s.w, h: s.h, grey: true, x: 0, y: 0 });
+    }
+  }
   entries.sort((a, b) => b.h - a.h || b.w - a.w);
-  const W = 256;
+  const W = 512;
   let x = 1;
   let y = 1;
   let shelf = 0;
@@ -101,9 +96,10 @@ function buildAtlas(scene: Phaser.Scene): void {
   }
   const H = nextPow2(y + shelf + 2);
   const [canvas, ctx] = makeCanvas(W, H);
-  const img = ctx.createImageData(W, H);
-  for (const e of entries) paint(img, e.rows, e.x, e.y, e.grey);
-  ctx.putImageData(img, 0, 0);
+  for (const e of entries) {
+    ctx.drawImage(sheetImage(scene, e.sheet), e.sx, e.sy, e.w, e.h, e.x, e.y, e.w, e.h);
+    if (e.grey) greyOut(ctx, e.x, e.y, e.w, e.h);
+  }
   const tex = scene.textures.addCanvas(ATLAS, canvas)!;
   for (const e of entries) tex.add(e.name, 0, e.x, e.y, e.w, e.h);
 }
@@ -112,24 +108,24 @@ export const TILESET_MARGIN = 1;
 export const TILESET_SPACING = 2;
 
 function buildTileset(scene: Phaser.Scene): void {
-  const ts = 16;
-  const n = TILES.length;
+  const { w: ts, frames } = sheets[TILES_SHEET];
+  const tiles = Object.values(frames);
+  const n = tiles.length;
   const W = TILESET_MARGIN * 2 + n * ts + (n - 1) * TILESET_SPACING;
   const H = TILESET_MARGIN * 2 + ts;
   const [canvas, ctx] = makeCanvas(W, H);
-  const img = ctx.createImageData(W, H);
-  TILES.forEach((tile, i) => {
+  const src = sheetImage(scene, TILES_SHEET);
+  tiles.forEach(([sx, sy], i) => {
     const ox = TILESET_MARGIN + i * (ts + TILESET_SPACING);
     const oy = TILESET_MARGIN;
     // Extrude 1px on every side so camera sub-pixel offsets never sample a neighbour tile.
     for (const [dx, dy] of [
       [-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1],
     ]) {
-      paint(img, tile.rows, ox + dx, oy + dy);
+      ctx.drawImage(src, sx, sy, ts, ts, ox + dx, oy + dy, ts, ts);
     }
-    paint(img, tile.rows, ox, oy);
+    ctx.drawImage(src, sx, sy, ts, ts, ox, oy, ts, ts);
   });
-  ctx.putImageData(img, 0, 0);
   scene.textures.addCanvas(TILESET, canvas);
 }
 
@@ -229,45 +225,55 @@ function buildUiTextures(scene: Phaser.Scene): void {
   scene.textures.addCanvas('white', wc);
 }
 
-function frames(prefix: string, n: number) {
-  return Array.from({ length: n }, (_, i) => ({ key: ATLAS, frame: `${prefix}_${i}` }));
-}
+/**
+ * Animations: key -> frame-name prefix (frames `${prefix}_0`, `_1`, ... in order, as many as the sheet has).
+ * Frame timings come from the frame durations set in Aseprite. Animations loop unless `once`.
+ */
+const ANIMS: { key: string; frames: string; once?: boolean }[] = [
+  ...['monkey', 'knight', 'elysia'].flatMap((c) => [
+    { key: `${c}-idle`, frames: `${c}_idle` },
+    { key: `${c}-walk`, frames: `${c}_walk` },
+    { key: `${c}-hurt`, frames: `${c}_hurt`, once: true },
+  ]),
+  { key: 'drake-fly', frames: 'drake' },
+  { key: 'orb-pulse', frames: 'orb' },
+  { key: 'spider-crawl', frames: 'spider' },
+  { key: 'bloomboss-sway', frames: 'bloomboss' },
+  { key: 'leviathan-swim', frames: 'leviathan' },
+  { key: 'cyclops-stomp', frames: 'cyclops' },
+  { key: 'sprout-sway', frames: 'sprout' },
+  { key: 'pollen-drift', frames: 'pollen' },
+  { key: 'bat-fly', frames: 'bat' },
+  { key: 'zombie-walk', frames: 'zombie' },
+  { key: 'ghoul-run', frames: 'ghoul' },
+  { key: 'brute-walk', frames: 'brute' },
+  { key: 'banana-spin', frames: 'banana' },
+  { key: 'coconut-spin', frames: 'coconut' },
+  { key: 'arrow-glint', frames: 'arrow' },
+  { key: 'bloom-pulse', frames: 'bloom' },
+  ...['blue', 'green', 'red'].map((c) => ({ key: `gem-${c}`, frames: `gem_${c}` })),
+];
+
+/** Frame name -> duration in ms, across every sheet. */
+const durations = new Map(Object.values(sheets).flatMap((s) => Object.entries(s.frames).map(([n, f]) => [n, f[2]] as const)));
 
 function buildAnimations(scene: Phaser.Scene): void {
-  const a = scene.anims;
-  a.create({ key: 'monkey-idle', frames: frames('monkey_idle', 4), frameRate: 4, repeat: -1 });
-  a.create({ key: 'monkey-walk', frames: frames('monkey_walk', 4), frameRate: 10, repeat: -1 });
-  a.create({ key: 'monkey-hurt', frames: frames('monkey_hurt', 2), frameRate: 10, repeat: 0 });
-  a.create({ key: 'knight-idle', frames: frames('knight_idle', 4), frameRate: 4, repeat: -1 });
-  a.create({ key: 'knight-walk', frames: frames('knight_walk', 4), frameRate: 10, repeat: -1 });
-  a.create({ key: 'knight-hurt', frames: frames('knight_hurt', 2), frameRate: 10, repeat: 0 });
-  a.create({ key: 'elysia-idle', frames: frames('elysia_idle', 4), frameRate: 4, repeat: -1 });
-  a.create({ key: 'elysia-walk', frames: frames('elysia_walk', 4), frameRate: 10, repeat: -1 });
-  a.create({ key: 'elysia-hurt', frames: frames('elysia_hurt', 2), frameRate: 10, repeat: 0 });
-  a.create({ key: 'drake-fly', frames: frames('drake', 2), frameRate: 8, repeat: -1 });
-  a.create({ key: 'orb-pulse', frames: frames('orb', 2), frameRate: 12, repeat: -1 });
-  a.create({ key: 'spider-crawl', frames: frames('spider', 2), frameRate: 7, repeat: -1 });
-  a.create({ key: 'bloomboss-sway', frames: frames('bloomboss', 2), frameRate: 3, repeat: -1 });
-  a.create({ key: 'leviathan-swim', frames: frames('leviathan', 2), frameRate: 3, repeat: -1 });
-  a.create({ key: 'cyclops-stomp', frames: frames('cyclops', 2), frameRate: 2, repeat: -1 });
-  a.create({ key: 'sprout-sway', frames: frames('sprout', 2), frameRate: 3, repeat: -1 });
-  a.create({ key: 'pollen-drift', frames: frames('pollen', 2), frameRate: 3, repeat: -1 });
-  a.create({ key: 'bat-fly', frames: frames('bat', 4), frameRate: 12, repeat: -1 });
-  a.create({ key: 'zombie-walk', frames: frames('zombie', 4), frameRate: 6, repeat: -1 });
-  a.create({ key: 'ghoul-run', frames: frames('ghoul', 4), frameRate: 12, repeat: -1 });
-  a.create({ key: 'brute-walk', frames: frames('brute', 4), frameRate: 5, repeat: -1 });
-  a.create({ key: 'banana-spin', frames: frames('banana', 4), frameRate: 18, repeat: -1 });
-  a.create({ key: 'coconut-spin', frames: frames('coconut', 4), frameRate: 10, repeat: -1 });
-  a.create({ key: 'arrow-glint', frames: frames('arrow', 2), frameRate: 8, repeat: -1 });
-  a.create({ key: 'bloom-pulse', frames: frames('bloom', 2), frameRate: 10, repeat: -1 });
-  for (const c of ['blue', 'green', 'red']) {
-    a.create({ key: `gem-${c}`, frames: frames(`gem_${c}`, 2), frameRate: 2, repeat: -1 });
+  for (const a of ANIMS) {
+    const frames: Phaser.Types.Animations.AnimationFrame[] = [];
+    for (let i = 0; durations.has(`${a.frames}_${i}`); i++) {
+      const frame = `${a.frames}_${i}`;
+      frames.push({ key: ATLAS, frame, duration: durations.get(frame) });
+    }
+    if (!frames.length) throw new Error(`animation ${a.key}: no frames named ${a.frames}_0, _1, ...`);
+    scene.anims.create({ key: a.key, frames, repeat: a.once ? 0 : -1 });
   }
 }
 
+/** Builds everything from the sheets queued by loadSpriteSheets, then frees the sheet textures. */
 export function buildAllTextures(scene: Phaser.Scene): void {
   buildAtlas(scene);
   buildTileset(scene);
+  for (const name of Object.keys(sheets)) scene.textures.remove(sheetKey(name));
   buildFont(scene, FONT, FONT_MAIN, 7);
   buildFont(scene, FONT_SMALL, FONT_TINY, 5);
   buildUiTextures(scene);
