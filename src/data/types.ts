@@ -281,11 +281,79 @@ export interface EnemyDef {
   knockbackResist: number;
   /** Colour of the death puff. */
   puffColor: number;
-  shadow: 'shadow_s' | 'shadow_l';
+  shadow: 'shadow_s' | 'shadow_l' | 'shadow_xl';
   /** Extra px between sprite and shadow (bats hover). */
   hover: number;
   /** Chance (0..1) to drop a health potion on death. See data/drops.ts. */
   potionChance: number;
+  /** Sprite scale (bosses are drawn larger). `radius` is already in world px. */
+  scale?: number;
+  /** Weight when enemies push each other apart (default 1): heavy ones shove light ones aside. */
+  mass?: number;
+  /** Fires slow projectiles at players (boss minions). */
+  shooter?: ShooterDef;
+  /** Makes this enemy a boss (see data/bosses.ts). */
+  boss?: BossInfo;
+}
+
+/** An enemy that shoots: every `interval` seconds, one `hazard` at the closest living player within `range`. */
+export interface ShooterDef {
+  interval: number;
+  range: number;
+  /** Hazard id (data/bosses.ts HAZARDS) fired. */
+  hazard: string;
+  speed: number;
+  damage: number;
+  lifetime: number;
+}
+
+/**
+ * Something a boss leaves in the world that touches players: webs, pollen, whirlpools, thrown things.
+ * The look and size are fixed per kind (joiners draw them from this table); damage and timing come from the skill.
+ */
+export interface HazardDef {
+  id: string;
+  /** Atlas frame, or the animation to play when `anim` is set. */
+  frame: string;
+  anim?: string;
+  /** px from its centre that counts as touching a player. */
+  radius: number;
+  /** Radius of the art at scale 1 (the art is scaled to `radius`). */
+  artRadius: number;
+  /** Radians per second the art turns. */
+  spin?: number;
+  /** Lies on the ground under units, rather than flying over them. */
+  ground: boolean;
+  /** Seconds it fades out at the end of its life. */
+  fade?: number;
+  /** Fraction of move speed a player standing in it loses (webs). */
+  slow?: number;
+}
+
+/** One thing a boss does on its own cooldown. Every number is in seconds, px or HP. */
+export type BossSkill =
+  /** Shoots webs onto random spots within `range` of the closest player. */
+  | { kind: 'webs'; cooldown: number; count: number; range: number; lifetime: number }
+  /** Summons `minion` enemies around itself, keeping at most `max` alive. */
+  | { kind: 'summon'; cooldown: number; count: number; max: number; minion: string; distance: number }
+  /** Releases pollen clouds that drift after the closest player and hurt anyone inside. */
+  | { kind: 'pollen'; cooldown: number; count: number; speed: number; lifetime: number; damage: number }
+  /** Stops, aims at the closest player for `charge` seconds (a red line shows where), then fires a beam. */
+  | { kind: 'beam'; cooldown: number; charge: number; length: number; width: number; duration: number; damage: number; color: number }
+  /** Opens whirlpools near random players that hurt anyone inside. */
+  | { kind: 'whirlpools'; cooldown: number; count: number; range: number; lifetime: number; damage: number }
+  /** Stops and raises its club for `windup` seconds (a red circle shows the reach), then a shockwave rolls out. */
+  | { kind: 'slam'; cooldown: number; windup: number; radius: number; duration: number; damage: number; band: number }
+  /** Throws clubs out in every direction; they slow down, then fly back to the boss. */
+  | { kind: 'clubs'; cooldown: number; count: number; speed: number; outTime: number; damage: number; lifetime: number };
+
+export interface BossInfo {
+  /** Shown on the HP bar and in the wiki. */
+  title: string;
+  description: string;
+  /** HP bar colour. */
+  color: number;
+  skills: BossSkill[];
 }
 
 export interface WaveRow {

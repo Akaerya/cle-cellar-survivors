@@ -7,7 +7,7 @@ A survivor-like for desktop browsers where you play as members of the Cle Cellar
 | Character | Kit | Ultimate (Q) |
 | --- | --- | --- |
 | **rsncle**, the banana monkey | Banana Throw (start), Tail Whip, Coconuts, Howler Aura | **Banana Storm**: a spiral of bananas around you for 15 s, 150 s cooldown |
-| **yookers**, the storm knight | Stormblade (start; a sword stab that reaches further with levels), Thunder Breath (a lightning cone on a cooldown), Thunderstrike (bolts land at random around you; more bolts and more often with levels), Storm Shield (blocks a hit every 30 s, absorbs 10-25% of the rest) | **Storm Drake**: a small dragon follows you and spits lightning orbs at enemies for 25 s, 150 s cooldown |
+| **yookers**, the storm knight | Stormblade (start; a sword stab that reaches further and stabs faster with every level), Thunder Breath (a lightning cone on a cooldown), Thunderstrike (bolts land at random around you; more bolts and more often with levels), Storm Shield (blocks a hit every 30 s, absorbs 10-25% of the rest) | **Storm Drake**: a small dragon follows you and spits lightning orbs at enemies for 25 s, 150 s cooldown |
 
 Each character has its own four weapons (level-up cards only offer your character's); items, modifications, powerups and base stats are shared.
 
@@ -15,6 +15,21 @@ Level-up cards can also offer:
 
 - **Modifications** (up to level 5, no slots) change every weapon that shares one of their tags. Projectile: Pierce, Splits, Chain, Additional Projectiles. AoE: Increased AoE, Reduced AoE, Echo Strike. Duration: Increase Duration, Less Duration, Reiterate. A modification is offered once you own a weapon it changes. rsncle's Banana Throw is tagged projectile, Coconuts projectile and AoE, Tail Whip and Howler Aura AoE; yookers' weapons have no tags yet, and no weapon has the duration tag yet.
 - **Generic powerups** (up to level 20, no slots): Damage, Maximum Health, Ability Haste, Movement Speed, Health Regen, Damage Taken. The HUD shows your ultimate under your build: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. In co-op every teammate's ultimate is shown the same way next to their name and HP.
+
+Each player has **5 rerolls** per run: R (or the REROLL button) replaces all three cards. When the run resumes after a pick you are invulnerable for 0.2 s.
+
+## Bosses
+
+A boss arrives at 5:00, 10:00 and 15:00: each run picks three different ones at random (seeded). The one at 15:00 holds dawn back: the run is won once it is defeated. Bosses are big, ignore knockback, have an HP bar over them and at the top of the screen, and scale their HP with time and players like every enemy.
+
+| Boss | Skills |
+| --- | --- |
+| **Broodmother**, a giant many-eyed spider (the fastest boss) | Spits webs on the ground near you that cut your move speed by 65% while you stand in them; they fade after 20 s |
+| **Corpse Bloom**, a carnivorous flower | Grows Bloom Sprouts around itself that spit slow petals at you; puffs pollen clouds that drift after you and hurt while you are inside |
+| **Leviathan**, a sea monster | Charges a water beam at you (a red line shows where); opens whirlpools around the players that hurt while you are inside |
+| **Cyclops**, a one-eyed giant with a club | Slams the ground (a red circle shows the reach) for a shockwave that rolls outward; throws clubs in every direction that slow down and fly back |
+
+Spawn pressure also grows over the run: the number of enemies kept on the field is multiplied by +4% per minute and +15% per extra player (`data/waves.ts`).
 
 After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing, shield blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate) with its level, damage, DPS, kills and share of their damage.
 
@@ -64,11 +79,11 @@ Code lives in `src/net/` (session, lobby profiles, message and snapshot format, 
 
 ## Wiki
 
-Title screen > **WIKI** (also in the pause menu) lists every character, ultimate, weapon, item, monster, wave, drop and co-op rule with its numbers, read straight from `src/data`. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
+Title screen > **WIKI** (also in the pause menu) lists every character, ultimate, weapon, modification, item, powerup, monster, boss, wave, drop and co-op rule with its numbers, read straight from `src/data`. Long pages have filter chips under the tabs (click, 1-9, or Q/E): by character on CHARACTERS and WEAPONS, by tag on MODS, by entry on POWERUPS and BOSSES. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
 
 ## Controls
 
-WASD or arrow keys to move. Weapons fire on their own. Q casts your ultimate. Esc or P pauses (the game also pauses when the window loses focus). M mutes. F3 opens the debug overlay. Level-up cards: 1, 2, 3, arrows and Enter, or click.
+WASD or arrow keys to move. Weapons fire on their own. Q casts your ultimate. Esc or P pauses (the game also pauses when the window loses focus). M mutes. F3 opens the debug overlay. Level-up cards: 1, 2, 3, arrows and Enter, or click; R rerolls.
 
 ## Layout
 
@@ -140,9 +155,11 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 
 **A modification** goes in `data/modifications.ts`: `tags` (the weapons it changes) and five `levels`, each with card text and `add` (summed over levels) or `set` (replaces the total) changes to pierce, damage, split, splitDepth, chain, area, echo, echoArea, echoRepeats, duration or reiterate. Split fan, chain range and echo radius and gap are constants at the top of that file.
 
-**An enemy** goes in `data/enemies.ts`, then gets a weight in a `data/waves.ts` row. New art needs a grid in `art/spriteData.ts` and an animation line in `art/textures.ts`.
+**An enemy** goes in `data/enemies.ts`, then gets a weight in a `data/waves.ts` row. New art needs a grid in `art/spriteData.ts` and an animation line in `art/textures.ts`. `scale` draws it larger (its `radius` stays in world px) and `mass` makes it shove lighter enemies aside.
 
-**Waves** are rows keyed by minute (`from` inclusive, `to` exclusive) with a target count and spawn weights. HP scales by `HP_SCALE_PER_MINUTE`; speed starts at `SPEED_SCALE_START` (70%) and reaches full speed by 4:00.
+**A boss** goes in `data/bosses.ts`: an enemy definition with a `boss` block (title, description, HP bar colour and `skills`). Skills are data: `webs`, `summon` (minions from `MINIONS`; a minion with `shooter` fires hazards), `pollen`, `beam`, `whirlpools`, `slam` and `clubs`, each with its own cooldown and numbers. What they leave in the world (webs, pollen, whirlpools, petals, clubs) is in `HAZARDS`: size, art, spin, fade and slow. `BOSS_TIMES` is the schedule. The boss logic is `systems/Bosses.ts`; a new skill kind needs a case there and a line in the wiki's `skillText`.
+
+**Waves** are rows keyed by minute (`from` inclusive, `to` exclusive) with a target count and spawn weights. HP scales by `HP_SCALE_PER_MINUTE`; speed starts at `SPEED_SCALE_START` (70%) and reaches full speed by 4:00. The target is multiplied by `spawnScaleFor` (`SPAWN_SCALE_PER_MINUTE`, `SPAWN_SCALE_PER_EXTRA_PLAYER`).
 
 **Drops**: every enemy has a `potionChance` for a health potion that heals 30% of max HP (`data/drops.ts`). A player at full HP leaves potions on the ground. Timed events (the 5:00 and 10:00 bat swarms) are in `WAVE_EVENTS`.
 
@@ -154,7 +171,7 @@ The spec names 0x72's CC0 [16x16 DungeonTileset II](https://0x72.itch.io/dungeon
 
 ## Debug overlay (F3)
 
-FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, toggle god mode, and make every ultimate ready.
+FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, toggle god mode, make every ultimate ready, and bring in a random boss.
 
 ## Decisions made while building
 

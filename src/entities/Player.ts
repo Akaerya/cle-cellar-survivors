@@ -3,7 +3,7 @@ import { ATLAS } from '../art/textures';
 import { COLOR, DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
 import { emptyRunStats, type PlayerRunStats } from '../core/events';
 import type { OwnedItem, OwnedMod } from '../core/progression';
-import { BASE_STATS, PLAYER_RADIUS } from '../data/player';
+import { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from '../data/player';
 import type { CharacterDef, PlayerStats } from '../data/types';
 import { text } from '../ui/widgets';
 import type { Ultimate } from '../systems/Ultimate';
@@ -40,6 +40,10 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   mods: OwnedMod[] = [];
   /** Level-up picks this player still has to make (fallen players keep collecting them). */
   pendingLevelUps = 0;
+  /** Level-up rerolls left this run. */
+  rerolls = REROLLS_PER_RUN;
+  /** Multiplies move speed this frame (boss webs slow it); set by the scene before steering. */
+  moveMult = 1;
   /** Co-op, while fallen: revive progress 0..1, and the HP fraction a revive restores. */
   revive = 0;
   reviveHp = 0;
@@ -123,7 +127,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.moving) {
       const nx = ix / len;
       const ny = iy / len;
-      body.setVelocity(nx * this.stats.moveSpeed, ny * this.stats.moveSpeed);
+      const speed = this.stats.moveSpeed * this.moveMult;
+      body.setVelocity(nx * speed, ny * speed);
       this.facing.set(nx, ny);
     } else {
       body.setVelocity(0, 0);
@@ -226,6 +231,12 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       this.hp = Math.max(0, this.hp - dmg);
     }
     return dmg;
+  }
+
+  /** At least `seconds` of invulnerability from now (a longer one already running is kept). */
+  grantInvuln(seconds: number): void {
+    if (this.invuln >= seconds) return;
+    this.invuln = this.invulnTotal = seconds;
   }
 
   showHurt(): void {

@@ -246,6 +246,12 @@ function buildAnimations(scene: Phaser.Scene): void {
   a.create({ key: 'elysia-hurt', frames: frames('elysia_hurt', 2), frameRate: 10, repeat: 0 });
   a.create({ key: 'drake-fly', frames: frames('drake', 2), frameRate: 8, repeat: -1 });
   a.create({ key: 'orb-pulse', frames: frames('orb', 2), frameRate: 12, repeat: -1 });
+  a.create({ key: 'spider-crawl', frames: frames('spider', 2), frameRate: 7, repeat: -1 });
+  a.create({ key: 'bloomboss-sway', frames: frames('bloomboss', 2), frameRate: 3, repeat: -1 });
+  a.create({ key: 'leviathan-swim', frames: frames('leviathan', 2), frameRate: 3, repeat: -1 });
+  a.create({ key: 'cyclops-stomp', frames: frames('cyclops', 2), frameRate: 2, repeat: -1 });
+  a.create({ key: 'sprout-sway', frames: frames('sprout', 2), frameRate: 3, repeat: -1 });
+  a.create({ key: 'pollen-drift', frames: frames('pollen', 2), frameRate: 3, repeat: -1 });
   a.create({ key: 'bat-fly', frames: frames('bat', 4), frameRate: 12, repeat: -1 });
   a.create({ key: 'zombie-walk', frames: frames('zombie', 4), frameRate: 6, repeat: -1 });
   a.create({ key: 'ghoul-run', frames: frames('ghoul', 4), frameRate: 12, repeat: -1 });

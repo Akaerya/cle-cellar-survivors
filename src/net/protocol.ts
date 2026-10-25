@@ -19,8 +19,8 @@ export type HostMsg =
   | { t: 'start'; seed: string; slots: number[]; profiles: Profiles }
   /** A player's weapons, items, modifications or powerups changed. */
   | { t: 'build'; slot: number; weapons: BuildPair[]; items: BuildPair[]; mods: BuildPair[]; powerups: BuildPair[] }
-  /** Level-up cards for the receiving player; `pending` counts this pick. */
-  | { t: 'choices'; choices: Choice[]; pending: number }
+  /** Level-up cards for the receiving player; `pending` counts this pick, `rerolls` is what they have left. */
+  | { t: 'choices'; choices: Choice[]; pending: number; rerolls: number; reroll?: boolean }
   /** The receiving player has picked everything; teammates are still choosing. */
   | { t: 'choicesDone' }
   /** Everyone has picked; the run continues. */
@@ -32,6 +32,8 @@ export type ClientMsg =
   /** The joiner's character (joiners move their own character; the host trusts it). */
   | { t: 'pos'; x: number; y: number; fx: number; fy: number; m: 0 | 1 }
   | { t: 'pick'; index: number }
+  /** Replace the three cards on offer (the host checks the player has rerolls left). */
+  | { t: 'reroll' }
   /** Name or character changed in the lobby. */
   | { t: 'profile'; name: string; character: string }
   /** Cast the ultimate (the host checks the cooldown). */
@@ -73,7 +75,9 @@ export type FxEvent =
   /** lingering beam: x1, y1, x2, y2, width, seconds, colour */
   | ['z', number, number, number, number, number, number, number]
   /** dome ultimate cast: caster slot, centre x, centre y */
-  | ['d', number, number, number];
+  | ['d', number, number, number]
+  /** boss wind-up warning circle: x, y, radius, seconds, colour */
+  | ['c', number, number, number, number, number];
 
 // ------------------------------------------------------------------ binary snapshots
 
@@ -104,9 +108,9 @@ export interface SnapPlayer {
 
 export interface SnapEntity {
   id: number;
-  /** Enemy: index into ENEMIES. Gem: 0 blue, 1 green, 2 red. Projectile: index into ATTACK_DEFS. */
+  /** Enemy: index into ALL_ENEMIES. Gem: 0 blue, 1 green, 2 red. Projectile: index into ATTACK_DEFS. Hazard: index into HAZARDS. */
   kind: number;
-  /** Enemy: EF flags. Projectile: scale x 32. Gem: unused. Potion: 1 while blinking. */
+  /** Enemy: EF flags. Projectile: scale x 32. Gem: unused. Potion: 1 while blinking. Hazard: alpha x 255. */
   extra: number;
   x: number;
   y: number;
@@ -126,7 +130,28 @@ export interface Snapshot {
   gems: SnapEntity[];
   projectiles: SnapEntity[];
   potions: SnapEntity[];
+  hazards: SnapEntity[];
+  /** Every living boss (not culled): HP bars are shown wherever it is. */
+  bosses: SnapBoss[];
   events: FxEvent[];
+}
+
+export interface SnapBoss {
+  id: number;
+  /** Index into ALL_ENEMIES. */
+  kind: number;
+  /** HP left, 0..1. */
+  frac: number;
+}
+
+/** Writes the boss list; must match decodeSnapshot. */
+export function writeBosses(w: Writer, bosses: SnapBoss[]): void {
+  w.u8(bosses.length);
+  for (const b of bosses) {
+    w.u16(b.id);
+    w.u8(b.kind);
+    w.u16(Math.round(Phaser.Math.Clamp(b.frac, 0, 1) * 65535));
+  }
 }
 
 const POS = 4; // positions are sent in quarter pixels as int16 (arena is 3200 px)
@@ -268,10 +293,19 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
   const gems = entities();
   const projectiles = entities();
   const potions = entities();
+  const hazards = entities();
+  const bosses: SnapBoss[] = [];
+  const nb = u8();
+  for (let i = 0; i < nb; i++) {
+    const id = u16();
+    const kind = u8();
+    const frac = u16() / 65535;
+    bosses.push({ id, kind, frac });
+  }
 
   const len = u32();
   const events = len > 0 ? (JSON.parse(decoder.decode(new Uint8Array(buf, o, len))) as FxEvent[]) : [];
-  return { runTime, state, frozen, kills, level, exp, need, teamDeaths, players, enemies, gems, projectiles, potions, events };
+  return { runTime, state, frozen, kills, level, exp, need, teamDeaths, players, enemies, gems, projectiles, potions, hazards, bosses, events };
 }
 
 /** Writes one entity record; must match `entities()` in decodeSnapshot. */

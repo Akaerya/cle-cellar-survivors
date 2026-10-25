@@ -68,5 +68,6 @@ export const ENEMIES: EnemyDef[] = [
     shadow: 'shadow_l',
     hover: 0,
     potionChance: 0.05,
+    mass: 5,
   },
 ];

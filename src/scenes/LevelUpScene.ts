@@ -3,7 +3,7 @@ import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
 import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { EV } from '../core/events';
 import { sfx } from '../core/sfx';
-import { drawPanel, onKey, text } from '../ui/widgets';
+import { Button, drawPanel, onKey, text } from '../ui/widgets';
 import type { Choice, GameScene } from './GameScene';
 
 const CARD_W = 176;
@@ -41,6 +41,7 @@ export class LevelUpScene extends Phaser.Scene {
   private hint!: Phaser.GameObjects.BitmapText;
   private closed = false;
   private shownOnce = false;
+  private rerollButton!: Button;
 
   constructor() {
     super(SCENES.levelUp);
@@ -58,6 +59,9 @@ export class LevelUpScene extends Phaser.Scene {
     this.tweens.add({ targets: title, scale: { from: 1.3, to: 1 }, duration: 260, ease: 'Back.easeOut' });
     this.subtitle = text(this, VIEW_W / 2, 70, '', { origin: [0.5, 0.5], color: COLOR.textDim });
     this.hint = text(this, VIEW_W / 2, VIEW_H - 22, 'PRESS 1 2 3 OR CLICK A CARD', { origin: [0.5, 0.5], color: COLOR.textDim });
+    this.rerollButton = new Button(this, VIEW_W / 2 - 80, 276, 160, 20, '', () => this.reroll());
+    this.rerollButton.setVisible(false);
+    onKey(this, 'keydown-R', () => this.reroll());
 
     onKey(this, 'keydown-ONE', () => this.choose(0));
     onKey(this, 'keydown-TWO', () => this.choose(1));
@@ -73,8 +77,8 @@ export class LevelUpScene extends Phaser.Scene {
     onKey(this, 'keydown-SPACE', () => this.choose(this.selected));
 
     const ev = this.run.events;
-    const listeners: [string, () => void][] = [
-      [EV.levelUpOffer, () => this.showOffer()],
+    const listeners: [string, (...a: any[]) => void][] = [
+      [EV.levelUpOffer, (reroll?: boolean) => this.showOffer(reroll === true)],
       [EV.levelUpWaiting, () => this.showWaiting()],
       [EV.levelUpOver, () => this.close()],
     ];
@@ -95,12 +99,27 @@ export class LevelUpScene extends Phaser.Scene {
     this.cards = [];
   }
 
-  private showOffer(): void {
+  private showOffer(reroll = false): void {
     const offer = this.run.offer;
     if (!offer || this.closed) return;
-    if (this.shownOnce) sfx.play('levelup');
+    if (this.shownOnce && !reroll) sfx.play('levelup');
     this.shownOnce = true;
     this.showChoices(offer.choices, offer.pending);
+    const left = offer.rerolls;
+    this.rerollButton.label.setText(left > 0 ? `REROLL (R) · ${left} LEFT` : 'NO REROLLS LEFT');
+    this.rerollButton.setVisible(true);
+    if (left <= 0) this.rerollButton.zone.disableInteractive();
+    this.rerollButton.label.setAlpha(left > 0 ? 1 : 0.5);
+  }
+
+  /** Replaces all three cards (5 rerolls per player per run). */
+  private reroll(): void {
+    const offer = this.run.offer;
+    if (this.busy || this.closed || !offer || offer.rerolls <= 0 || this.time.now < this.readyAt) return;
+    sfx.unlock();
+    sfx.play('select');
+    this.readyAt = this.time.now + INPUT_GUARD_MS;
+    this.run.rerollOffer();
   }
 
   /** Co-op: this player is done (or has nothing to pick); teammates are still choosing. */
@@ -108,6 +127,7 @@ export class LevelUpScene extends Phaser.Scene {
     if (this.closed || this.run.offer) return;
     this.clearCards();
     this.hint.setVisible(false);
+    this.rerollButton.setVisible(false);
     this.subtitle.setText(this.run.coop ? 'WAITING FOR TEAMMATES TO CHOOSE...' : '');
   }
 

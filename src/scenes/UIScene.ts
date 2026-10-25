@@ -21,12 +21,21 @@ interface UltBadge {
   num: Phaser.GameObjects.BitmapText;
 }
 
+/** Boss HP bars at the top of the screen: first bar's y, px between bars, width, and how many fit. */
+const BOSS_BAR_Y = 33;
+const BOSS_BAR_STEP = 20;
+const BOSS_BAR_W = 220;
+const MAX_BOSS_BARS = 2;
+
 /** HUD drawn in its own scene on top of the Game scene, so it stays fixed while the camera moves. */
 export class UIScene extends Phaser.Scene {
   private run!: GameScene;
   private expBar!: Phaser.GameObjects.Graphics;
   private levelText!: Phaser.GameObjects.BitmapText;
   private timerText!: Phaser.GameObjects.BitmapText;
+  /** Boss HP bars under the timer (up to MAX_BOSS_BARS), each with its name. */
+  private bossGfx!: Phaser.GameObjects.Graphics;
+  private bossNames: Phaser.GameObjects.BitmapText[] = [];
   private killText!: Phaser.GameObjects.BitmapText;
   private build!: Phaser.GameObjects.Container;
   private banner!: Phaser.GameObjects.BitmapText;
@@ -55,6 +64,10 @@ export class UIScene extends Phaser.Scene {
     this.expBar = this.add.graphics();
     this.levelText = text(this, VIEW_W - 4, 1, '', { origin: [1, 0] });
     this.timerText = text(this, VIEW_W / 2, 13, '00:00', { scale: 2, origin: [0.5, 0] });
+    this.bossGfx = this.add.graphics();
+    this.bossNames = Array.from({ length: MAX_BOSS_BARS }, (_, i) =>
+      text(this, VIEW_W / 2, BOSS_BAR_Y + i * BOSS_BAR_STEP, '', { origin: [0.5, 0] }).setVisible(false),
+    );
     this.add.image(VIEW_W - 6, 18, ATLAS, 'icon_skull').setOrigin(1, 0.5);
     this.killText = text(this, VIEW_W - 18, 14, '0', { origin: [1, 0] });
     this.build = this.add.container(0, 0);
@@ -122,12 +135,36 @@ export class UIScene extends Phaser.Scene {
   }
 
   update(_t: number, delta: number): void {
+    this.drawBosses();
     if (this.expFlash > 0) {
       this.expFlash = Math.max(0, this.expFlash - delta / 400);
       this.drawExp();
     }
     this.drawUltimate();
     if (this.run.coop) this.drawTeam();
+  }
+
+  /** One wide bar per living boss under the timer: name and title, then HP in the boss's colour. */
+  private drawBosses(): void {
+    const g = this.bossGfx;
+    g.clear();
+    const bars = this.run.bossBars;
+    this.bossNames.forEach((t, i) => {
+      const b = bars[i];
+      t.setVisible(!!b);
+      if (!b) return;
+      const y = BOSS_BAR_Y + i * BOSS_BAR_STEP;
+      t.setText(`${b.def.name.toUpperCase()} · ${b.def.boss?.title ?? ''}`).setTint(b.def.boss?.color ?? COLOR.bad);
+      const x = Math.round(VIEW_W / 2 - BOSS_BAR_W / 2);
+      g.fillStyle(COLOR.ink, 1);
+      g.fillRect(x - 1, y + 9, BOSS_BAR_W + 2, 7);
+      g.fillStyle(COLOR.hpDark, 1);
+      g.fillRect(x, y + 10, BOSS_BAR_W, 5);
+      g.fillStyle(b.def.boss?.color ?? COLOR.hp, 1);
+      g.fillRect(x, y + 10, Math.ceil(BOSS_BAR_W * b.frac), 5);
+      g.fillStyle(0xffffff, 0.35);
+      g.fillRect(x, y + 10, Math.ceil(BOSS_BAR_W * b.frac), 1);
+    });
   }
 
   private ultBadgeFor(p: Player, cx: number, cy: number): UltBadge {
@@ -329,6 +366,7 @@ export class UIScene extends Phaser.Scene {
       ['+1 MIN', DEBUG_EV.skipMinute],
       ['GOD', DEBUG_EV.god],
       ['ULT READY', DEBUG_EV.ultReady],
+      ['BOSS', DEBUG_EV.boss],
     ];
     this.debugButtons = defs.map(([label, name], i) => {
       const bx = x + 6 + (i % 2) * 80;

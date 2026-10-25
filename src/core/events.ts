@@ -11,7 +11,7 @@ export const EV = {
   debugStats: 'debug-stats', // (stats object)
   debugState: 'debug-state', // (on: boolean)
   runEnded: 'run-ended',
-  levelUpOffer: 'level-up-offer', // () new cards for the local player are in GameScene.offer
+  levelUpOffer: 'level-up-offer', // (reroll: boolean) new cards for the local player are in GameScene.offer
   levelUpWaiting: 'level-up-waiting', // () the local player is done; teammates are still picking
   levelUpOver: 'level-up-over', // () everyone has picked
 } as const;
@@ -24,6 +24,7 @@ export const DEBUG_EV = {
   skipMinute: 'debug-skip-minute',
   god: 'debug-god',
   ultReady: 'debug-ult-ready',
+  boss: 'debug-boss',
 } as const;
 
 export interface BuildEntry {
@@ -55,10 +56,12 @@ export interface PlayerRunStats {
   ultCasts: number;
   /** Critical strikes landed. */
   crits: number;
+  /** Level-up rerolls used. */
+  rerolls: number;
 }
 
 export function emptyRunStats(): PlayerRunStats {
-  return { damage: 0, kills: 0, taken: 0, healed: 0, deaths: 0, revives: 0, exp: 0, blocks: 0, ultCasts: 0, crits: 0 };
+  return { damage: 0, kills: 0, taken: 0, healed: 0, deaths: 0, revives: 0, exp: 0, blocks: 0, ultCasts: 0, crits: 0, rerolls: 0 };
 }
 
 /** One weapon (or the ultimate) on the party screen. */

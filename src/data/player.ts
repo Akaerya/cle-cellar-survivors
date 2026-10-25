@@ -18,5 +18,8 @@ export const BASE_STATS: PlayerStats = {
   expMult: 1,
 };
 
+/** Level-up rerolls each player gets per run: a reroll replaces all three cards on offer. */
+export const REROLLS_PER_RUN = 5;
+
 /** Collision circle radius of a character in px. */
 export const PLAYER_RADIUS = 6;

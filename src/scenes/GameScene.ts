@@ -4,6 +4,7 @@ import {
   COLOR,
   DEPTH,
   FALLBACK_HEAL,
+  LEVELUP_INVULN_SECONDS,
   MAX_ITEMS,
   MAX_LEVEL,
   MAX_WEAPONS,
@@ -19,8 +20,8 @@ import { computeStats, expToNext, itemMaxLevel, modReach, weaponLevelText } from
 import { Rng, seedFromUrl } from '../core/rng';
 import { sfx, type SfxName } from '../core/sfx';
 import {
+  ALL_ENEMIES,
   ATTACK_DEFS,
-  ENEMIES,
   ITEMS,
   MODIFICATIONS,
   POWERUPS,
@@ -48,6 +49,7 @@ import {
   decodeSnapshot,
   writeEntity,
   writeEvents,
+  writeBosses,
   writeHeader,
   type BuildPair,
   type ClientMsg,
@@ -58,6 +60,7 @@ import {
   type Snapshot,
 } from '../net/protocol';
 import { buildArena } from '../systems/Arena';
+import { Bosses, type BossBar } from '../systems/Bosses';
 import { Enemies } from '../systems/Enemies';
 import { Fx } from '../systems/Fx';
 import { Gems } from '../systems/Gems';
@@ -114,6 +117,8 @@ const POS_HZ = 30;
 const CULL_MARGIN = 96;
 /** Effects queued for one snapshot beyond this are dropped (only under extreme load). */
 const MAX_EVENTS = 400;
+/** px width of the HP bar drawn over a boss. */
+const BOSS_BAR_W = 64;
 
 /**
  * The run itself: owns the players' characters, the systems, progression, and the run clock.
@@ -134,6 +139,9 @@ export class GameScene extends Phaser.Scene {
   potions!: Potions;
   projectiles!: Phaser.Physics.Arcade.Group;
   spawner!: Spawner;
+  bosses!: Bosses;
+  /** Living bosses' HP bars (host: from the field; joiners: from the last snapshot). */
+  bossBars: BossBar[] = [];
   mirror: Mirror | null = null;
 
   state: RunState = 'playing';
@@ -147,8 +155,8 @@ export class GameScene extends Phaser.Scene {
   debug = false;
   /** Co-op: the run is held while players pick level-up cards. */
   frozen = false;
-  /** Level-up cards on offer to the local player. */
-  offer: { choices: Choice[]; pending: number } | null = null;
+  /** Level-up cards on offer to the local player, and the rerolls they have left. */
+  offer: { choices: Choice[]; pending: number; rerolls: number } | null = null;
   /** Host: cards on offer to each joiner, by slot. */
   private remoteOffers = new Map<number, Choice[]>();
   private inLevelUp = false;
@@ -191,6 +199,7 @@ export class GameScene extends Phaser.Scene {
     // The scene object is reused across restarts, so every run field is reset here.
     this.players = [];
     this.mirror = null;
+    this.bossBars = [];
     this.state = 'playing';
     this.runTime = 0;
     this.kills = 0;
@@ -241,6 +250,7 @@ export class GameScene extends Phaser.Scene {
     this.gems = new Gems(this);
     this.potions = new Potions(this);
     this.spawner = new Spawner(this);
+    this.bosses = new Bosses(this);
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, ARENA_SIZE, ARENA_SIZE);
@@ -298,6 +308,7 @@ export class GameScene extends Phaser.Scene {
       [DEBUG_EV.skipMinute, () => this.mode !== 'client' && (this.runTime = Math.min(RUN_SECONDS - 1, this.runTime + 60))],
       [DEBUG_EV.god, () => this.mode !== 'client' && (this.player.god = !this.player.god)],
       [DEBUG_EV.ultReady, () => this.mode !== 'client' && this.players.forEach((p) => p && (p.ultimate.cooldownLeft = 0))],
+      [DEBUG_EV.boss, () => this.mode !== 'client' && this.bosses.spawnRandom()],
       [DEBUG_EV.toggle, () => this.toggleDebug()],
     ];
     for (const [ev, fn] of listen) this.events.on(ev, fn);
@@ -344,6 +355,8 @@ export class GameScene extends Phaser.Scene {
     const held = !this.frozen && !this.menuOpen;
     const ix = held ? (down(k.right) ? 1 : 0) - (down(k.left) ? 1 : 0) : 0;
     const iy = held ? (down(k.down) ? 1 : 0) - (down(k.up) ? 1 : 0) : 0;
+    // Boss webs slow whoever stands in them; each browser slows the character it moves.
+    this.player.moveMult = this.mirror ? this.mirror.slowAt(this.player.x, this.player.y) : this.bosses.slowAt(this.player.x, this.player.y);
     this.player.steer(ix, iy, dt);
 
     if (this.mode === 'client') {
@@ -362,11 +375,15 @@ export class GameScene extends Phaser.Scene {
       if (playing) {
         this.runTime += dt;
         this.spawner.checkEvents(this.runTime);
-        if (this.runTime >= RUN_SECONDS) this.victory();
+        this.bosses.checkSchedule(this.runTime);
+        // A boss that arrived at the end of the run holds dawn back until it falls.
+        if (this.runTime >= RUN_SECONDS && !this.bosses.holdsDawn) this.victory();
       }
 
       const speedScale = speedScaleForMinute(this.runTime / 60);
       this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying', speedScale);
+      this.bosses.update(dt, this.state === 'playing');
+      this.bossBars = this.bosses.bars();
       for (const p of this.players) if (p?.alive) p.weapons.update(dt, this.state === 'playing');
       if (playing) this.enemies.updateEffects(dt);
       for (const p of this.players) if (p && !p.gone) p.ultimate.update(dt, p.alive && this.state === 'playing');
@@ -471,8 +488,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onTouchEnemy(p: Player, e: Enemy): void {
-    if (this.state !== 'playing' || this.frozen || !e.active || !p.alive) return;
-    const dmg = p.takeHit(e.def.damage);
+    if (this.state !== 'playing' || this.frozen || !e.active) return;
+    this.hurtPlayer(p, e.def.damage);
+  }
+
+  /** Host: `raw` damage to `p` (enemy touch, boss attacks), through invulnerability, shields and armor. */
+  hurtPlayer(p: Player, raw: number): void {
+    if (!p.alive) return;
+    const dmg = p.takeHit(raw);
     if (dmg <= 0) return;
     this.relay(['h', p.slot, dmg]);
     if (p === this.player) this.onLocalHurt(dmg);
@@ -524,15 +547,35 @@ export class GameScene extends Phaser.Scene {
     if (!this.scene.isActive(SCENES.levelUp)) this.scene.launch(SCENES.levelUp);
   }
 
-  private offerTo(p: Player): void {
-    const choices = this.rollChoices(p);
+  private offerTo(p: Player, avoid?: Choice[]): void {
+    const choices = this.rollChoices(p, avoid);
+    const reroll = avoid !== undefined;
     if (p === this.player) {
-      this.offer = { choices, pending: p.pendingLevelUps };
-      this.events.emit(EV.levelUpOffer);
+      this.offer = { choices, pending: p.pendingLevelUps, rerolls: p.rerolls };
+      this.events.emit(EV.levelUpOffer, reroll);
     } else {
       this.remoteOffers.set(p.slot, choices);
-      this.net?.sendTo(p.slot, { t: 'choices', choices, pending: p.pendingLevelUps });
+      this.net?.sendTo(p.slot, { t: 'choices', choices, pending: p.pendingLevelUps, rerolls: p.rerolls, reroll });
     }
+  }
+
+  /** The local player rerolls the cards on offer. Joiners ask the host. */
+  rerollOffer(): void {
+    const offer = this.offer;
+    if (!offer || offer.rerolls <= 0) return;
+    if (this.mode === 'client') {
+      this.net?.sendHost({ t: 'reroll' });
+      return;
+    }
+    this.reroll(this.player, offer.choices);
+  }
+
+  /** Host and solo: spends one reroll and offers three new cards (different ones where the pool allows). */
+  private reroll(p: Player, current: Choice[]): void {
+    if (p.rerolls <= 0 || !p.alive) return;
+    p.rerolls--;
+    p.runStats.rerolls++;
+    this.offerTo(p, current);
   }
 
   /** The local player picked card `index` of the current offer. */
@@ -564,6 +607,8 @@ export class GameScene extends Phaser.Scene {
     if (!this.inLevelUp) return;
     if (this.livePlayers().some((p) => p.pendingLevelUps > 0)) return;
     this.inLevelUp = false;
+    // A short grace period so a crowd standing on you does not hit the moment the run resumes.
+    if (this.mode !== 'client') for (const p of this.livePlayers()) p.grantInvuln(LEVELUP_INVULN_SECONDS);
     this.remoteOffers.clear();
     this.offer = null;
     if (this.mode === 'host') {
@@ -585,8 +630,9 @@ export class GameScene extends Phaser.Scene {
    * Up to 3 random cards from the character's weapons, the shared items, modifications, generic powerups
    * and upgrades of owned ones, respecting slot limits. A modification is only offered new while the player
    * owns a weapon it actually changes (sharing a tag is not enough when the weapon has no use for it).
+   * A reroll passes the cards it replaces in `avoid`: those are only offered again when the pool runs short.
    */
-  rollChoices(p: Player): Choice[] {
+  rollChoices(p: Player, avoid?: Choice[]): Choice[] {
     const pool: Choice[] = [];
     const weaponSlotsFull = p.weapons.list.length >= MAX_WEAPONS;
     const itemSlotsFull = p.items.length >= MAX_ITEMS;
@@ -649,7 +695,12 @@ export class GameScene extends Phaser.Scene {
         },
       ];
     }
-    return this.rng.shuffled(pool).slice(0, 3);
+    const shuffled = this.rng.shuffled(pool);
+    if (avoid) {
+      const old = (c: Choice) => avoid.some((a) => a.kind === c.kind && a.id === c.id);
+      shuffled.sort((a, b) => Number(old(a)) - Number(old(b)));
+    }
+    return shuffled.slice(0, 3);
   }
 
   applyChoice(p: Player, c: Choice): void {
@@ -832,6 +883,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.flash(900, 255, 236, 190);
     this.relay(['f', 900]);
     this.stopEffects();
+    this.bosses.clear();
     let puffs = 0;
     for (const e of this.enemies.active.slice()) {
       if (!e.active) continue;
@@ -924,6 +976,9 @@ export class GameScene extends Phaser.Scene {
       this.remoteOffers.delete(slot);
       this.applyChoice(p, c);
       this.afterPick(p);
+    } else if (msg.t === 'reroll') {
+      const offer = this.remoteOffers.get(slot);
+      if (offer && this.inLevelUp) this.reroll(p, offer);
     } else if (msg.t === 'ult') {
       if (this.state === 'playing' && !this.frozen) p.ultimate.cast();
     }
@@ -989,7 +1044,8 @@ export class GameScene extends Phaser.Scene {
       teamDeaths: this.teamDeaths,
     };
     const now = this.time.now;
-    const enemyKind = new Map(ENEMIES.map((d, i) => [d, i]));
+    const enemyKind = new Map(ALL_ENEMIES.map((d, i) => [d, i]));
+    const bosses = this.bossBars.map((b) => ({ id: b.id, kind: enemyKind.get(b.def) ?? 0, frac: b.frac }));
     const weaponKind = new Map(ATTACK_DEFS.map((d, i) => [d, i]));
 
     for (const slot of net.remoteSlots) {
@@ -1039,6 +1095,17 @@ export class GameScene extends Phaser.Scene {
       }
       w.patchU16(at, n);
 
+      at = w.o;
+      n = 0;
+      w.u16(0);
+      for (const h of this.bosses.hazards) {
+        if (!this.nearView(p, h.x, h.y)) continue;
+        writeEntity(w, h.netId, h.kind, Math.round(Bosses.alpha(h) * 255), h.x, h.y);
+        n++;
+      }
+      w.patchU16(at, n);
+      writeBosses(w, bosses);
+
       // Effects: only those near this player, and each sound at most once per snapshot.
       const sounds = new Set<string>();
       const mine = events.filter((ev) => {
@@ -1052,6 +1119,7 @@ export class GameScene extends Phaser.Scene {
           case 'x':
           case 'k':
           case 'z':
+          case 'c':
             return this.nearView(p, ev[1], ev[2]);
           case 's':
             if (sounds.has(ev[1])) return false;
@@ -1163,6 +1231,8 @@ export class GameScene extends Phaser.Scene {
     m.gems.apply(s.gems);
     m.projectiles.apply(s.projectiles);
     m.potions.apply(s.potions);
+    m.hazards.apply(s.hazards);
+    this.bossBars = s.bosses.map((b) => ({ id: b.id, def: ALL_ENEMIES[b.kind], frac: b.frac })).filter((b) => b.def);
     this.teamDeaths = s.teamDeaths;
 
     for (const ev of s.events) this.replay(ev);
@@ -1225,6 +1295,9 @@ export class GameScene extends Phaser.Scene {
       case 'd':
         this.players[ev[1]]?.ultimate.setDome(ev[2], ev[3]);
         break;
+      case 'c':
+        this.fx.warn(ev[1], ev[2], ev[3], ev[4], ev[5]);
+        break;
     }
   }
 
@@ -1245,13 +1318,13 @@ export class GameScene extends Phaser.Scene {
         break;
       }
       case 'choices':
-        this.offer = { choices: msg.choices, pending: msg.pending };
+        this.offer = { choices: msg.choices, pending: msg.pending, rerolls: msg.rerolls ?? 0 };
         this.inLevelUp = true;
         if (!this.scene.isActive(SCENES.levelUp)) {
           this.closeMenus();
           sfx.play('levelup');
           this.scene.launch(SCENES.levelUp);
-        } else this.events.emit(EV.levelUpOffer);
+        } else this.events.emit(EV.levelUpOffer, msg.reroll === true);
         break;
       case 'choicesDone':
         this.events.emit(EV.levelUpWaiting);
@@ -1269,9 +1342,31 @@ export class GameScene extends Phaser.Scene {
 
   // ------------------------------------------------------------------ HUD bits in world space
 
+  /** Where boss `id` is drawn: the enemy itself on the host, its mirror sprite on joiners (when on screen). */
+  private bossSprite(id: number): Phaser.GameObjects.Sprite | undefined {
+    if (this.mirror) return this.mirror.enemies.get(id);
+    return this.enemies.active.find((e) => e.active && e.netId === id);
+  }
+
   private drawHpBars(): void {
     const g = this.hpBar;
     g.clear();
+    // Bosses: a wide bar above the sprite, in the boss's colour.
+    for (const b of this.bossBars) {
+      const s = this.bossSprite(b.id);
+      if (!s) continue;
+      const w = BOSS_BAR_W;
+      const x = Math.round(s.x - w / 2);
+      const y = Math.round(s.y - s.displayHeight / 2 - 8);
+      g.fillStyle(COLOR.ink, 1);
+      g.fillRect(x - 1, y - 1, w + 2, 6);
+      g.fillStyle(COLOR.hpDark, 1);
+      g.fillRect(x, y, w, 4);
+      g.fillStyle(b.def.boss?.color ?? COLOR.hp, 1);
+      g.fillRect(x, y, Math.ceil(w * b.frac), 4);
+      g.fillStyle(0xffffff, 0.35);
+      g.fillRect(x, y, Math.ceil(w * b.frac), 1);
+    }
     for (const p of this.players) {
       if (!p || p.gone) continue;
       if (p.dead) {

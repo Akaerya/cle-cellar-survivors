@@ -3,7 +3,7 @@ import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, CHILL_TINT, DEPTH, MAX_EFFECT_STACKS, MAX_ENEMIES, SLOW_LINGER_MS } from '../constants';
 import { SpatialGrid } from '../core/spatialGrid';
 import type { EnemyDef } from '../data/types';
-import { Enemy, type EffectStack } from '../entities/Enemy';
+import { Enemy, SHADOW_W, type EffectStack } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 import type { WeaponInstance } from './Weapons';
@@ -14,7 +14,6 @@ const KB_TAU = 0.12;
 const SEP_STRENGTH = 150;
 const SEP_MAX = 170;
 
-const MASS: Record<string, number> = { brute: 5 };
 
 export class Enemies {
   readonly group: Phaser.Physics.Arcade.Group;
@@ -29,7 +28,12 @@ export class Enemies {
     this.shadows = game.add.blitter(0, 0, ATLAS).setDepth(DEPTH.shadows);
   }
 
-  spawn(def: EnemyDef, x: number, y: number, hpScale: number): Enemy | null {
+  /** `force` (bosses): when the field is full, a regular enemy is removed to make room. */
+  spawn(def: EnemyDef, x: number, y: number, hpScale: number, force = false): Enemy | null {
+    if (this.live >= MAX_ENEMIES && force) {
+      const victim = this.active.find((e) => e.active && !e.def.boss);
+      if (victim) this.kill(victim, false);
+    }
     if (this.live >= MAX_ENEMIES) return null;
     const e = this.group.get(x, y) as Enemy | null;
     if (!e) return null;
@@ -73,8 +77,8 @@ export class Enemies {
       const push = ((min - d) / min) * SEP_STRENGTH;
       const nx = dx / d;
       const ny = dy / d;
-      const ma = MASS[a.def.id] ?? 1;
-      const mb = MASS[b.def.id] ?? 1;
+      const ma = a.def.mass ?? 1;
+      const mb = b.def.mass ?? 1;
       const wa = (2 * mb) / (ma + mb);
       const wb = (2 * ma) / (ma + mb);
       a.sepX -= nx * push * wa;
@@ -87,7 +91,7 @@ export class Enemies {
     for (let i = 0; i < active.length; i++) {
       const e = active[i];
       const body = e.body as Phaser.Physics.Arcade.Body;
-      if (frozen || targets.length === 0) {
+      if (frozen || targets.length === 0 || now < e.rootedUntil) {
         body.setVelocity(0, 0);
       } else {
         let t = targets[0];
@@ -127,9 +131,8 @@ export class Enemies {
       }
       e.setDepth(DEPTH.units + e.y / ARENA_SIZE);
       const s = e.shadow!;
-      const sw = e.def.shadow === 'shadow_l' ? 24 : 12;
-      s.x = e.x - sw / 2;
-      s.y = e.y + e.height / 2 - 3 + e.def.hover;
+      s.x = e.x - SHADOW_W[e.def.shadow] / 2;
+      s.y = e.y + e.displayHeight / 2 - 3 * (e.def.scale ?? 1) + e.def.hover;
     }
   }
 
@@ -203,7 +206,7 @@ export class Enemies {
       weapon.owner.runStats.damage += dealt;
     }
     e.flash(this.game.time.now);
-    this.game.fx.damageNumber(e.x, e.y - e.height / 2, amount, crit ? 2 : amount >= 25 ? 1 : 0);
+    this.game.fx.damageNumber(e.x, e.y - e.displayHeight / 2, amount, crit ? 2 : amount >= 25 ? 1 : 0);
     const k = (knockback * (1 - e.def.knockbackResist)) / KB_TAU;
     e.kbx += dirX * k;
     e.kby += dirY * k;
@@ -223,7 +226,8 @@ export class Enemies {
 
   kill(e: Enemy, dropGem: boolean): void {
     if (!e.active) return;
-    this.game.fx.puff(e.x, e.y, e.def.puffColor, e.def.id === 'brute' ? 18 : 8);
+    this.game.fx.puff(e.x, e.y, e.def.puffColor, e.def.boss ? 40 : (e.def.mass ?? 1) > 1 ? 18 : 8);
+    if (e.def.boss) this.game.bosses.onBossGone(e, dropGem);
     if (dropGem) {
       this.game.gems.drop(e.x, e.y + 2, e.def.exp);
       this.game.potions.roll(e.x, e.y - 2, e.def.potionChance);
