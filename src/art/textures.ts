@@ -243,6 +243,8 @@ const ANIMS: { key: string; frames: string; once?: boolean }[] = [
   { key: 'cyclops-stomp', frames: 'cyclops' },
   { key: 'sprout-sway', frames: 'sprout' },
   { key: 'pollen-drift', frames: 'pollen' },
+  { key: 'caustic-bubble', frames: 'caustic' },
+  { key: 'crystalbud-grow', frames: 'crystalbud', once: true },
   { key: 'bat-fly', frames: 'bat' },
   { key: 'zombie-walk', frames: 'zombie' },
   { key: 'ghoul-run', frames: 'ghoul' },

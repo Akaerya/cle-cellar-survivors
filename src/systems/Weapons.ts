@@ -1060,8 +1060,8 @@ export class Weapons {
     // Blast-on-hit projectiles deal nothing themselves: every enemy they touch sets off the weapon's blast.
     if (pr.weapon.def.blastOnHit) this.blast(pr.weapon, en.x, en.y);
     else {
-      this.game.enemies.hit(en, pr.damage, dx, dy, pr.knockback, pr.weapon);
-      if (pr.weapon.def.effect) this.applyEffect(pr.weapon, this.eff(pr.weapon), en);
+      const landed = this.game.enemies.hit(en, pr.damage, dx, dy, pr.knockback, pr.weapon);
+      if (landed && pr.weapon.def.effect) this.applyEffect(pr.weapon, this.eff(pr.weapon), en);
     }
     if (pr.splitsLeft > 0) {
       this.split(pr, Math.atan2(dy, dx));
@@ -1117,12 +1117,13 @@ export class Weapons {
 
   /**
    * A hit from an area weapon (sweeps, auras, stabs, breaths, strikes, orbiting objects). Applies duration effects
-   * and queues Echo Strike echoes when the weapon has them (only AoE-tagged weapons do).
+   * and queues Echo Strike echoes when the weapon has them (only AoE-tagged weapons do). A hit a rare enemy ignores
+   * (blocked, shielded) does neither.
    */
   private areaHit(w: WeaponInstance, e: Effective, en: Enemy, dirX: number, dirY: number): void {
     const x = en.x;
     const y = en.y;
-    this.game.enemies.hit(en, e.damage, dirX, dirY, e.knockback, w);
+    if (!this.game.enemies.hit(en, e.damage, dirX, dirY, e.knockback, w)) return;
     this.applyEffect(w, e, en);
     for (let i = 0; i < e.echoRepeats; i++) {
       this.echoes.push({
@@ -1180,10 +1181,13 @@ export class Weapons {
     }
   }
 
-  /** Duration weapons: a hit applies the weapon's effect (refreshing the stack it applied before) and may reiterate. */
+  /**
+   * Duration weapons: a hit applies the weapon's effect (refreshing the stack it applied before) and may reiterate.
+   * Hexproof enemies take none.
+   */
   private applyEffect(w: WeaponInstance, e: Effective, en: Enemy): void {
     const def = w.def.effect;
-    if (!def || e.effectDuration <= 0 || !en.active) return;
+    if (!def || e.effectDuration <= 0 || !en.active || !this.game.enemyMods.debuffable(en)) return;
     let stack = def.stacks ? undefined : en.effects.find((st) => st.weapon === w && !st.copy);
     if (stack) stack.left = e.effectDuration;
     else {

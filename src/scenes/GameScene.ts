@@ -8,6 +8,7 @@ import {
   MAX_ITEMS,
   MAX_LEVEL,
   MAX_WEAPONS,
+  MIN_MOVE_MULT,
   RUN_SECONDS,
   SCENES,
   SPAWN_TICK_MS,
@@ -51,17 +52,21 @@ import {
   writeEvents,
   writeBosses,
   writeHeader,
+  writeRares,
   type BuildPair,
   type ClientMsg,
   type FxEvent,
   type HostMsg,
   type Profiles,
   type SnapPlayer,
+  type SnapRare,
   type Snapshot,
 } from '../net/protocol';
 import { buildArena } from '../systems/Arena';
 import { Bosses, type BossBar } from '../systems/Bosses';
 import { Enemies } from '../systems/Enemies';
+import { EnemyModifiers } from '../systems/EnemyModifiers';
+import { RareVisuals, type RareView } from '../systems/RareVisuals';
 import { Fx } from '../systems/Fx';
 import { Gems } from '../systems/Gems';
 import { Potions } from '../systems/Potions';
@@ -140,6 +145,10 @@ export class GameScene extends Phaser.Scene {
   projectiles!: Phaser.Physics.Arcade.Group;
   spawner!: Spawner;
   bosses!: Bosses;
+  /** Rare enemies' modifiers (host and solo). */
+  enemyMods!: EnemyModifiers;
+  /** Draws rare enemies (everyone). */
+  rareFx!: RareVisuals;
   /** Living bosses' HP bars (host: from the field; joiners: from the last snapshot). */
   bossBars: BossBar[] = [];
   mirror: Mirror | null = null;
@@ -251,6 +260,8 @@ export class GameScene extends Phaser.Scene {
     this.potions = new Potions(this);
     this.spawner = new Spawner(this);
     this.bosses = new Bosses(this);
+    this.enemyMods = new EnemyModifiers(this);
+    this.rareFx = new RareVisuals(this);
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, ARENA_SIZE, ARENA_SIZE);
@@ -309,6 +320,7 @@ export class GameScene extends Phaser.Scene {
       [DEBUG_EV.god, () => this.mode !== 'client' && (this.player.god = !this.player.god)],
       [DEBUG_EV.ultReady, () => this.mode !== 'client' && this.players.forEach((p) => p && (p.ultimate.cooldownLeft = 0))],
       [DEBUG_EV.boss, () => this.mode !== 'client' && this.bosses.spawnRandom()],
+      [DEBUG_EV.rare, () => this.mode !== 'client' && this.player.alive && this.spawner.spawnRare(this.player)],
       [DEBUG_EV.toggle, () => this.toggleDebug()],
     ];
     for (const [ev, fn] of listen) this.events.on(ev, fn);
@@ -355,9 +367,13 @@ export class GameScene extends Phaser.Scene {
     const held = !this.frozen && !this.menuOpen;
     const ix = held ? (down(k.right) ? 1 : 0) - (down(k.left) ? 1 : 0) : 0;
     const iy = held ? (down(k.down) ? 1 : 0) - (down(k.up) ? 1 : 0) : 0;
-    // Boss webs slow whoever stands in them; each browser slows the character it moves.
-    this.player.moveMult = this.mirror ? this.mirror.slowAt(this.player.x, this.player.y) : this.bosses.slowAt(this.player.x, this.player.y);
-    this.player.steer(ix, iy, dt);
+    // Webs and void fields slow whoever stands in them, and void fields pile Astral Chains on top; each browser
+    // slows the character it moves.
+    const me = this.player;
+    const hazards = this.mirror ?? this.bosses;
+    me.updateChains(this.frozen ? 0 : dt, hazards.chainsAt(me.x, me.y));
+    me.moveMult = Math.max(MIN_MOVE_MULT, hazards.slowAt(me.x, me.y) - me.chainSlow);
+    me.steer(ix, iy, dt);
 
     if (this.mode === 'client') {
       this.updateClient(dt);
@@ -382,6 +398,7 @@ export class GameScene extends Phaser.Scene {
 
       const speedScale = speedScaleForMinute(this.runTime / 60);
       this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying', speedScale);
+      this.enemyMods.update(dt, playing);
       this.bosses.update(dt, this.state === 'playing');
       this.bossBars = this.bosses.bars();
       for (const p of this.players) if (p?.alive) p.weapons.update(dt, this.state === 'playing');
@@ -393,6 +410,7 @@ export class GameScene extends Phaser.Scene {
       if (this.state === 'playing') this.updateRevives(dt);
     }
     this.fx.update(dt);
+    this.rareFx.update(dt, this.hostRareViews(), this.player);
     this.updateCamera();
     this.drawHpBars();
     this.emitTime();
@@ -489,15 +507,27 @@ export class GameScene extends Phaser.Scene {
 
   private onTouchEnemy(p: Player, e: Enemy): void {
     if (this.state !== 'playing' || this.frozen || !e.active) return;
-    this.hurtPlayer(p, e.def.damage);
+    this.hurtPlayer(p, this.enemyMods.outgoing(e, p, e.def.damage));
   }
 
-  /** Host: `raw` damage to `p` (enemy touch, boss attacks), through invulnerability, shields and armor. */
-  hurtPlayer(p: Player, raw: number): void {
+  /** Host and solo: what RareVisuals draws, from the rare enemies on the field. */
+  private hostRareViews(): RareView[] {
+    const out: RareView[] = [];
+    for (const e of this.enemyMods.rares) {
+      if (e.active) out.push({ sprite: e, radius: e.radius, mask: e.modMask, enrage: e.enrage, souls: e.souls });
+    }
+    return out;
+  }
+
+  /**
+   * Host: `raw` damage to `p` (enemy touch, boss attacks), through invulnerability, shields and armor. `dot`: a tick
+   * of damage over time, which ignores invulnerability and gives none (see Player.takeHit).
+   */
+  hurtPlayer(p: Player, raw: number, dot = false): void {
     if (!p.alive) return;
-    const dmg = p.takeHit(raw);
+    const dmg = p.takeHit(raw, dot);
     if (dmg <= 0) return;
-    this.relay(['h', p.slot, dmg]);
+    this.relay(dot ? ['h', p.slot, dmg, 1] : ['h', p.slot, dmg]);
     if (p === this.player) this.onLocalHurt(dmg);
     if (p.hp <= 0) this.die(p);
   }
@@ -884,6 +914,7 @@ export class GameScene extends Phaser.Scene {
     this.relay(['f', 900]);
     this.stopEffects();
     this.bosses.clear();
+    this.enemyMods.clear();
     let puffs = 0;
     for (const e of this.enemies.active.slice()) {
       if (!e.active) continue;
@@ -1059,7 +1090,7 @@ export class GameScene extends Phaser.Scene {
       w.u16(0);
       for (const e of this.enemies.active) {
         if (!e.active || !this.nearView(p, e.x, e.y)) continue;
-        const flags = (e.flipX ? EF.flip : 0) | (e.flashUntil > now ? EF.flash : 0) | (e.tintState === 2 ? EF.chill : 0);
+        const flags = (e.flipX ? EF.flip : 0) | (e.flashUntil > now ? EF.flash : 0) | (e.tintState === 2 ? EF.chill : 0) | (e.spirit ? EF.spirit : 0);
         writeEntity(w, e.netId, enemyKind.get(e.def) ?? 0, flags, e.x, e.y);
         n++;
       }
@@ -1105,6 +1136,11 @@ export class GameScene extends Phaser.Scene {
       }
       w.patchU16(at, n);
       writeBosses(w, bosses);
+      const rares: SnapRare[] = [];
+      for (const e of this.enemyMods.rares) {
+        if (e.active && this.nearView(p, e.x, e.y)) rares.push({ id: e.netId, mask: e.modMask, enrage: e.enrage, souls: e.souls });
+      }
+      writeRares(w, rares);
 
       // Effects: only those near this player, and each sound at most once per snapshot.
       const sounds = new Set<string>();
@@ -1120,6 +1156,7 @@ export class GameScene extends Phaser.Scene {
           case 'k':
           case 'z':
           case 'c':
+          case 't':
             return this.nearView(p, ev[1], ev[2]);
           case 's':
             if (sounds.has(ev[1])) return false;
@@ -1146,6 +1183,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.mirror!.update(dt);
     this.fx.update(dt);
+    this.rareFx.update(dt, this.mirror!.rareViews, this.player);
     this.drawHpBars();
     this.emitTime();
     this.updateDebug(dt);
@@ -1232,6 +1270,7 @@ export class GameScene extends Phaser.Scene {
     m.projectiles.apply(s.projectiles);
     m.potions.apply(s.potions);
     m.hazards.apply(s.hazards);
+    m.applyRares(s.rares);
     this.bossBars = s.bosses.map((b) => ({ id: b.id, def: ALL_ENEMIES[b.kind], frac: b.frac })).filter((b) => b.def);
     this.teamDeaths = s.teamDeaths;
 
@@ -1261,7 +1300,7 @@ export class GameScene extends Phaser.Scene {
       case 'h': {
         const p = this.players[ev[1]];
         if (!p) break;
-        p.showHurt();
+        if (!ev[3]) p.showHurt();
         if (p === this.player) this.onLocalHurt(ev[2]);
         break;
       }
@@ -1297,6 +1336,9 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'c':
         this.fx.warn(ev[1], ev[2], ev[3], ev[4], ev[5]);
+        break;
+      case 't':
+        this.fx.label(ev[1], ev[2], ev[3], ev[4]);
         break;
     }
   }

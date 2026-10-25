@@ -1,15 +1,18 @@
 import Phaser from 'phaser';
 import { ARENA_SIZE, DESPAWN_SCREENS, INNER, MAX_ENEMIES, VIEW_H, VIEW_W, COLOR } from '../constants';
-import { enemyDef, hpScaleForMinute, hpScaleForPlayers, spawnScaleFor, waveForMinute, WAVE_EVENTS } from '../data';
-import type { WaveEvent } from '../data/types';
+import { ENEMY_MODIFIERS, RARE_TIERS, enemyDef, hpScaleForMinute, hpScaleForPlayers, spawnScaleFor, waveForMinute, WAVE_EVENTS } from '../data';
+import type { EnemyDef, WaveEvent } from '../data/types';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 
 const RING_MARGIN = 24;
+/** Debug: px from the player a test rare enemy appears. */
+const DEBUG_RARE_DISTANCE = 140;
 
 /**
  * Tops the horde up toward the wave target every tick, and runs timed events such as bat swarms.
- * In co-op each new enemy appears just off the screen of a random living player.
+ * In co-op each new enemy appears just off the screen of a random living player. Every enemy it brings in may
+ * come out rare (EnemyModifiers.roll).
  */
 export class Spawner {
   private fired = new Set<number>();
@@ -50,8 +53,29 @@ export class Spawner {
       const def = enemyDef(id);
       const pt = this.ringPoint(def.radius, g.rng.pick(players));
       if (!pt) continue;
-      g.enemies.spawn(def, pt.x, pt.y, hpScale);
+      this.place(def, pt.x, pt.y, hpScale);
     }
+  }
+
+  /** One enemy from the spawner, which may roll rare. */
+  private place(def: EnemyDef, x: number, y: number, hpScale: number): void {
+    const e = this.game.enemies.spawn(def, x, y, hpScale);
+    if (e) this.game.enemyMods.roll(e);
+  }
+
+  /** Debug: a rare enemy of the current wave mix with as many modifiers as the top tier gives, close to `p`. */
+  spawnRare(p: Player): void {
+    const g = this.game;
+    const id = g.rng.weighted(waveForMinute(this.minute).weights);
+    if (!id) return;
+    const def = enemyDef(id);
+    const a = g.rng.angle();
+    const x = Phaser.Math.Clamp(p.x + Math.cos(a) * DEBUG_RARE_DISTANCE, INNER.left + def.radius + 2, INNER.right - def.radius - 2);
+    const y = Phaser.Math.Clamp(p.y + Math.sin(a) * DEBUG_RARE_DISTANCE, INNER.top + def.radius + 2, INNER.bottom - def.radius - 2);
+    const e = g.enemies.spawn(def, x, y, this.hpScale);
+    if (!e) return;
+    const n = Math.max(...RARE_TIERS.map((t) => t.modifiers));
+    g.enemyMods.apply(e, g.rng.shuffled(ENEMY_MODIFIERS).slice(0, n));
   }
 
   /** Spawns `count` enemies of the current wave mix on the ring (debug button). */
@@ -65,7 +89,7 @@ export class Spawner {
       if (!id) break;
       const def = enemyDef(id);
       const pt = this.ringPoint(def.radius, this.game.rng.pick(players));
-      if (pt) this.game.enemies.spawn(def, pt.x, pt.y, hpScale);
+      if (pt) this.place(def, pt.x, pt.y, hpScale);
     }
   }
 
@@ -90,7 +114,7 @@ export class Spawner {
         const x = p.x + Math.cos(a) * R;
         const y = p.y + Math.sin(a) * R;
         if (!this.insideArena(x, y, def.radius)) continue;
-        g.enemies.spawn(def, x, y, hpScale);
+        this.place(def, x, y, hpScale);
       }
     }
     g.playSfx('swarm');

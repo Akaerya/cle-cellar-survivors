@@ -5,8 +5,9 @@ import { sfx } from '../core/sfx';
 import { Button, onKey, text } from '../ui/widgets';
 import { WIKI_PAGES, type Block, type Cell } from '../wiki/pages';
 
-/** Top of the content when a page has no filters; filter chips push it down. */
-const TABS_BOTTOM = 26;
+/** Tab buttons: y of the first row and height. */
+const TABS_Y = 6;
+const TAB_H = 17;
 const BOTTOM = VIEW_H - 22;
 const LEFT = 20;
 const WIDTH = VIEW_W - 44;
@@ -18,7 +19,7 @@ const CHIP_H = 15;
 const CHIP_ROW = CHIP_H + 3;
 
 /**
- * Wiki: characters, weapons, modifications, items, powerups, monsters, bosses, waves, drops, co-op and rules,
+ * Wiki: characters, weapons, modifications, items, powerups, monsters, rare enemies, bosses, waves, drops, co-op and rules,
  * generated from the game data (see wiki/pages.ts). Long pages have filter chips (by character, tag or entry).
  * Opened from the title screen or the pause menu.
  */
@@ -29,7 +30,10 @@ export class WikiScene extends Phaser.Scene {
   private from: 'title' | 'pause' = 'title';
   private tab = 0;
   private filter = 0;
-  private top = TABS_BOTTOM + 4;
+  /** Below the tabs (more than one row if they wrap): the top of a page without filters; filter chips start here. */
+  private tabsBottom = TABS_Y + TAB_H + 3;
+  /** Top of the content: below the tabs and the filter chips. */
+  private top = 0;
   private content!: Phaser.GameObjects.Container;
   private contentH = 0;
   private scroll = 0;
@@ -56,10 +60,11 @@ export class WikiScene extends Phaser.Scene {
 
     this.tabs = this.buttonRow(
       WIKI_PAGES.map((p) => p.tab),
-      6,
-      17,
+      TABS_Y,
+      TAB_H,
       (i) => this.show(i),
     );
+    this.tabsBottom = this.tabs[this.tabs.length - 1].y + TAB_H + 3;
     this.source = text(this, 8, VIEW_H - 14, '', { color: COLOR.textDim, depth: 3 });
     this.hint = text(this, VIEW_W - 8, VIEW_H - 14, '', { origin: [1, 0], color: COLOR.textDim, depth: 3 });
 
@@ -137,10 +142,10 @@ export class WikiScene extends Phaser.Scene {
       c.zone.destroy();
     }
     const filters = page.filters?.() ?? [];
-    this.chips = filters.length ? this.buttonRow(filters, TABS_BOTTOM, CHIP_H, (k) => this.pickFilter(k, false)) : [];
+    this.chips = filters.length ? this.buttonRow(filters, this.tabsBottom, CHIP_H, (k) => this.pickFilter(k, false)) : [];
     const lastChip = this.chips[this.chips.length - 1];
-    const chipRows = lastChip ? Math.round((lastChip.y - TABS_BOTTOM) / CHIP_ROW) + 1 : 0;
-    this.top = TABS_BOTTOM + 4 + chipRows * CHIP_ROW;
+    const chipRows = lastChip ? Math.round((lastChip.y - this.tabsBottom) / CHIP_ROW) + 1 : 0;
+    this.top = this.tabsBottom + 4 + chipRows * CHIP_ROW;
     this.hint.setText(filters.length ? 'ARROWS SCROLL/TABS · 1-9 OR Q/E FILTER · ESC CLOSE' : 'ARROWS SCROLL/TABS · ESC CLOSE');
     this.drawFrame();
     this.filter = Math.min(WikiScene.lastFilter.get(this.tab) ?? 0, Math.max(0, filters.length - 1));

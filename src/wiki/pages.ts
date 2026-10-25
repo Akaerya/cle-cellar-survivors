@@ -22,11 +22,13 @@ import {
   RUN_SECONDS,
   DESPAWN_SCREENS,
   SPAWN_TICK_MS,
+  MIN_MOVE_MULT,
   COLOR,
 } from '../constants';
 import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffectAt, modReach, weaponLevelAt, weaponStatsAt } from '../core/progression';
 import { NAME_MAX } from '../core/profile';
 import {
+  ASTRAL_CHAINS,
   BASE_STATS,
   BOSSES,
   BOSS_TIMES,
@@ -35,12 +37,16 @@ import {
   ECHO_GAP,
   ECHO_RADIUS,
   ENEMIES,
+  ENEMY_MODIFIERS,
   GEM_TIERS,
   ITEMS,
+  MAX_SOUL_WISPS,
   MODIFICATIONS,
   POTION,
   POWERUPS,
   POWERUP_MAX_LEVEL,
+  RARE_HP_PER_MODIFIER,
+  RARE_TIERS,
   REROLLS_PER_RUN,
   SPLIT_ARC,
   REVIVE,
@@ -64,7 +70,7 @@ import {
   SPEED_SCALE_PER_MINUTE,
   SPEED_SCALE_START,
 } from '../data/waves';
-import type { BossSkill, EnemyDef, ItemDef, ModEffect, StatKey, Targeting, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
+import type { BossSkill, EnemyDef, EnemyModifierDef, ItemDef, ModEffect, StatKey, Targeting, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
 
 export type Cell = string | { text: string; color?: number };
 
@@ -534,7 +540,7 @@ function monstersPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Enemies walk straight at the nearest living player and hurt them on touch. HP grows ${pct(HP_SCALE_PER_MINUTE)} of base per minute; speed starts at ${pct(SPEED_SCALE_START)} and rises ${pct(SPEED_SCALE_PER_MINUTE, 1)} per minute up to 100%. In co-op HP is also multiplied by the player count (see CO-OP). Bosses and their minions are on the BOSSES page.`,
+      text: `Enemies walk straight at the nearest living player and hurt them on touch. HP grows ${pct(HP_SCALE_PER_MINUTE)} of base per minute; speed starts at ${pct(SPEED_SCALE_START)} and rises ${pct(SPEED_SCALE_PER_MINUTE, 1)} per minute up to 100%. In co-op HP is also multiplied by the player count (see CO-OP). Any of them can come out rare, with a coloured border and extra powers (see RARE). Bosses and their minions are on the BOSSES page.`,
     },
     { t: 'gap', h: 4 },
   ];
@@ -576,11 +582,116 @@ function monstersPage(): Block[] {
   return out;
 }
 
+/** Rare enemies: what a modifier looks like on the enemy. Players never see modifier names, so the wiki goes by this. */
+function rareLook(m: EnemyModifierDef): string {
+  switch (m.id) {
+    case 'astral_touched':
+      return 'VIOLET MOTES';
+    case 'invulnerability':
+      return 'GOLD RING';
+    case 'enrage':
+      return 'RED GLOW ONCE HURT';
+    case 'caustic_ground':
+      return 'ACID DRIPS';
+    case 'crystalline':
+      return 'CRYSTAL SHARDS';
+    case 'empower_allies':
+      return 'ORANGE RING';
+    case 'thorns':
+      return 'SPIKES';
+    case 'soul_absorption':
+      return 'SOUL WISPS';
+    case 'spirit_walker':
+      return 'DASHED RING';
+    case 'temporal_shield':
+      return 'BUBBLE';
+    default:
+      return 'NO MARK';
+  }
+}
+
+/** One line per enemy modifier, with every number from the data. "You" is any player, "monsters" its allies. */
+function rareText(m: EnemyModifierDef): string {
+  switch (m.id) {
+    case 'astral_touched': {
+      const h = hazardDef(m.hazard);
+      const c = ASTRAL_CHAINS;
+      return `Every ${secs(m.every)} a void field (${h.radius} px) opens at a random spot within ${m.spread} px of it for ${secs(m.life)}. Standing in one slows you by ${pct(h.slow ?? 0)}, and every ${secs(c.every)} it chains you: each chain slows you ${pct(c.slow)} more for ${secs(c.duration)}, also after you step out (up to ${c.max}, shown at your feet).`;
+    }
+    case 'invulnerability':
+      return `Other monsters within ${m.radius} px cannot drop below 1 HP while it lives (two of these do not protect each other). Kill it first.`;
+    case 'enrage':
+      return `The more HP it has lost, the harder it hits (up to +${pct(m.damage)} damage), the faster it moves (up to +${pct(m.speed)}) and the less it takes (up to ${pct(m.reduction)} less), all in full at ${pct(m.fullAt)} HP left.`;
+    case 'physical_resistant':
+      return `Takes ${pct(m.reduction)} less damage.`;
+    case 'caustic_ground': {
+      const h = hazardDef(m.hazard);
+      return `When it dies it leaves caustic ground (${h.radius} px) for ${secs(m.life)}, dealing ${num(m.damage)} every ${secs(m.interval)} to anyone inside. That is damage over time: it ignores invulnerability, gives none, and shields cannot block it.`;
+    }
+    case 'crystalline':
+      return `Every hit you land on it (not damage over time) grows a crystal bud under you that explodes after ${secs(m.charge)} for ${num(m.damage)} to anyone within ${m.radius} px. A circle shows the blast: step out of it.`;
+    case 'empower_allies':
+      return `Monsters within ${m.radius} px, itself included, get +${pct(m.health)} max HP, +${pct(m.speed)} move speed and +${pct(m.damage)} damage while inside (two of these do not stack).`;
+    case 'executioner':
+      return `Deals ${pct(m.more)} more damage for every full ${pct(m.per)} of max HP you are missing.`;
+    case 'extra_life':
+      return `+${pct(m.health)} max HP.`;
+    case 'hexproof':
+      return 'Duration effects and slows (freezing fields) do nothing to it.';
+    case 'thorns':
+      return `Every hit you land on it (not damage over time) deals ${num(m.flat)} plus ${pct(m.share)} of the hit back to you.`;
+    case 'ambush':
+      return `Every ${secs(m.cooldown)} it teleports to ${m.distance} px from the closest player, in a puff of smoke.`;
+    case 'soul_absorption':
+      return `Gains a soul whenever another monster dies within ${m.radius} px: +${pct(m.damage)} damage and ${num(m.haste)} Ability Haste each (its void fields and teleports come sooner). A wisp per soul circles it (up to ${MAX_SOUL_WISPS} shown).`;
+    case 'spirit_walker':
+      return `Monsters that die within ${m.radius} px of it, itself included, stand back up once with full HP, see-through. That death gives no EXP or kill, but still leaves acid and feeds souls. See-through monsters stay dead the next time.`;
+    case 'blocks_attacks':
+      return `${pct(m.chance)} chance to ignore any hit, damage over time included: BLOCK shows instead of a number.`;
+    case 'temporal_shield':
+      return `Takes no damage from players outside its ${m.radius} px bubble: IMMUNE shows instead of a number. Step inside to hurt it.`;
+  }
+}
+
+function raresPage(): Block[] {
+  const out: Block[] = [
+    {
+      t: 'p',
+      text: `Every enemy the spawner brings in (waves and bat swarms, not bosses or their minions) can come out rare: it gets extra modifiers, picked at random and all different, and +${pct(RARE_HP_PER_MODIFIER)} of its base HP per modifier. A border in the tier's colour shows how many it has. It drops the same EXP as a normal one.`,
+    },
+    {
+      t: 'table',
+      cols: [
+        { label: 'MODIFIERS', w: 80 },
+        { label: 'CHANCE', w: 60 },
+        { label: 'ABOUT 1 IN', w: 80 },
+        { label: 'BORDER', w: 60 },
+        { label: 'HP BONUS', w: 70 },
+      ],
+      rows: RARE_TIERS.map((t) => [
+        num(t.modifiers),
+        pct(t.chance, 1),
+        num(Math.round(1 / t.chance)),
+        { text: '####', color: t.color },
+        `+${pct(t.modifiers * RARE_HP_PER_MODIFIER)}`,
+      ]),
+    },
+    {
+      t: 'p',
+      text: 'Modifiers that add max HP, move speed or damage add up with each other; damage reductions multiply. What rare enemies do to you hurts like a touch: through armor and shields, then the usual invulnerability (caustic ground is damage over time, see below). A hit they ignore (BLOCK, IMMUNE) does nothing: no knockback, no effect, no echo. Their auras reach other monsters too, bosses included. Some modifiers have a look of their own (below); an enemy shows every one it has.',
+      color: COLOR.textDim,
+    },
+    { t: 'h', text: 'MODIFIERS' },
+  ];
+  for (const m of ENEMY_MODIFIERS) out.push({ t: 'p', text: `${rareLook(m)} · ${rareText(m)}` });
+  return out;
+}
+
 function wavesPage(): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `The run lasts ${formatTime(RUN_SECONDS)}. Every ${SPAWN_TICK_MS} ms the spawner tops the horde up toward ON FIELD, at most a sixth of it per tick, on a ring just outside a random living player's screen. ON FIELD grows over time and with more players: it is multiplied by (1 + ${pct(SPAWN_SCALE_PER_MINUTE)} per minute) × (1 + ${pct(SPAWN_SCALE_PER_EXTRA_PLAYER)} per extra player), so the horde also refills faster. At most ${MAX_ENEMIES} enemies exist at once. Enemies more than ${DESPAWN_SCREENS} screens away from every player are moved back near one, keeping their HP.`,
+      text: `The run lasts ${formatTime(RUN_SECONDS)}. Every ${SPAWN_TICK_MS} ms the spawner tops the horde up toward ON FIELD, at most a sixth of it per tick, on a ring just outside a random living player's screen. ON FIELD grows over time and with more players: it is multiplied by (1 + ${pct(SPAWN_SCALE_PER_MINUTE)} per minute) × (1 + ${pct(SPAWN_SCALE_PER_EXTRA_PLAYER)} per extra player), so the horde also refills faster. At most ${MAX_ENEMIES} enemies exist at once. Enemies more than ${DESPAWN_SCREENS} screens away from every player are moved back near one, keeping their HP. Any enemy it brings in may come out rare (see RARE).`,
     },
   ];
   out.push({
@@ -748,7 +859,7 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'TAKING DAMAGE' },
     {
       t: 'p',
-      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}, and for ${secs(LEVELUP_INVULN_SECONDS)} when the run resumes after a level-up pick. Boss attacks (beams, shockwaves, clubs, petals, pollen, whirlpools) hit the same way. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
+      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN (at least 1). A charged shield blocks the hit instead. After a hit you are invulnerable for ${secs(INVULN_SECONDS)}, and for ${secs(LEVELUP_INVULN_SECONDS)} when the run resumes after a level-up pick. Boss attacks (beams, shockwaves, clubs, petals, pollen, whirlpools) and what rare enemies do (thorns, crystal buds) hit the same way. Caustic ground from rare enemies is damage over time: each tick goes through armor and shield absorption, but ignores invulnerability, gives none and cannot be blocked. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
     },
     { t: 'h', text: 'CRITICAL STRIKES' },
     {
@@ -758,7 +869,7 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'SLOWS' },
     {
       t: 'p',
-      text: 'Some effects slow enemies (freezing fields): they walk slower while on the field and a moment after. Slows do not stack; the strongest one counts. Slowed or chilled enemies are tinted pale blue. Boss webs slow players the same way while they stand in one.',
+      text: `Some effects slow enemies (freezing fields): they walk slower while on the field and a moment after. Slows do not stack; the strongest one counts. Slowed or chilled enemies are tinted pale blue. Boss webs and rare enemies' void fields slow players the same way while they stand in one, and void fields also chain you, which does stack (see RARE). However much you are slowed, you keep ${pct(MIN_MOVE_MULT)} of your move speed.`,
     },
     { t: 'h', text: 'CARDS AND SLOTS' },
     {
@@ -858,6 +969,7 @@ export const WIKI_PAGES: WikiPage[] = [
   { tab: 'ITEMS', source: 'src/data/items.ts, src/data/player.ts', blocks: itemsPage },
   { tab: 'POWERUPS', source: 'src/data/powerups.ts', filters: () => ['ALL', ...POWERUPS.map((p) => p.name.toUpperCase())], blocks: powerupsPage },
   { tab: 'MONSTERS', source: 'src/data/enemies.ts', blocks: monstersPage },
+  { tab: 'RARE', source: 'src/data/enemyModifiers.ts', blocks: raresPage },
   { tab: 'BOSSES', source: 'src/data/bosses.ts', filters: () => ['ALL', ...BOSSES.map((b) => b.name.toUpperCase())], blocks: bossesPage },
   { tab: 'WAVES', source: 'src/data/waves.ts, src/data/bosses.ts', blocks: wavesPage },
   { tab: 'DROPS', source: 'src/data/drops.ts, src/core/progression.ts, src/data/player.ts', blocks: dropsPage },

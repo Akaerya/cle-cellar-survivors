@@ -349,9 +349,9 @@ export class UIScene extends Phaser.Scene {
 
   private buildDebugPanel(): void {
     const x = 4;
-    const y = VIEW_H - 151;
+    const y = VIEW_H - 170;
     const w = 168;
-    const h = 145;
+    const h = 164;
     this.debugPanel = this.add.container(0, 0);
     const g = this.add.graphics();
     drawPanel(g, x, y, w, h, COLOR.panelEdge, COLOR.ink, 0.85);
@@ -367,6 +367,7 @@ export class UIScene extends Phaser.Scene {
       ['GOD', DEBUG_EV.god],
       ['ULT READY', DEBUG_EV.ultReady],
       ['BOSS', DEBUG_EV.boss],
+      ['RARE', DEBUG_EV.rare],
     ];
     this.debugButtons = defs.map(([label, name], i) => {
       const bx = x + 6 + (i % 2) * 80;

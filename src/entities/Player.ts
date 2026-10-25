@@ -4,7 +4,7 @@ import { COLOR, DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS }
 import { emptyRunStats, type PlayerRunStats } from '../core/events';
 import type { OwnedItem, OwnedMod } from '../core/progression';
 import { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from '../data/player';
-import type { CharacterDef, PlayerStats } from '../data/types';
+import type { ChainsDef, CharacterDef, PlayerStats } from '../data/types';
 import { text } from '../ui/widgets';
 import type { Ultimate } from '../systems/Ultimate';
 import type { Weapons } from '../systems/Weapons';
@@ -42,8 +42,15 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   pendingLevelUps = 0;
   /** Level-up rerolls left this run. */
   rerolls = REROLLS_PER_RUN;
-  /** Multiplies move speed this frame (boss webs slow it); set by the scene before steering. */
+  /** Multiplies move speed this frame (boss webs and void fields slow it); set by the scene before steering. */
   moveMult = 1;
+  /**
+   * Stacking slow from void fields (Astral Chains): seconds left on each stack, oldest first, the slow per stack and
+   * seconds until the next stack while still in a field. Kept by the browser that moves this character.
+   */
+  readonly chains: number[] = [];
+  private chainSlowEach = 0;
+  private chainTimer = 0;
   /** Co-op, while fallen: revive progress 0..1, and the HP fraction a revive restores. */
   revive = 0;
   reviveHp = 0;
@@ -151,6 +158,34 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.animate(dt);
   }
 
+  /**
+   * Astral Chains: stacks run out, and while standing in a field (`def`, null when not) a new one is added every
+   * `def.every` seconds, the first right away. At `def.max` a new stack replaces the oldest.
+   */
+  updateChains(dt: number, def: ChainsDef | null): void {
+    for (let i = this.chains.length - 1; i >= 0; i--) {
+      this.chains[i] -= dt;
+      if (this.chains[i] <= 0) this.chains.splice(i, 1);
+    }
+    if (!this.alive) this.chains.length = 0;
+    if (!def || !this.alive) {
+      this.chainTimer = 0;
+      return;
+    }
+    this.chainSlowEach = def.slow;
+    this.chainTimer -= dt;
+    while (this.chainTimer <= 0) {
+      this.chainTimer += def.every;
+      if (this.chains.length >= def.max) this.chains.shift();
+      this.chains.push(def.duration);
+    }
+  }
+
+  /** Fraction of move speed Astral Chains take off, on top of the field's own slow. */
+  get chainSlow(): number {
+    return this.chains.length * this.chainSlowEach;
+  }
+
   /** Chance (0..1) that one of this player's hits is a critical strike: the stat plus passive weapons. */
   get critChance(): number {
     return Math.min(1, this.stats.critChance + this.weapons.critChance());
@@ -215,17 +250,18 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   /**
    * Returns the damage actually taken: 0 while invulnerable or when a charged shield blocks the hit.
    * Armor is subtracted first, then shields absorb their share, then Damage Taken applies; a hit always deals at least 1.
+   * `dot`: a tick of damage over time (caustic ground). It ignores invulnerability, gives none and cannot be blocked.
    */
-  takeHit(raw: number): number {
-    if (this.invuln > 0 || !this.alive) return 0;
-    if (this.weapons.tryBlock()) {
+  takeHit(raw: number, dot = false): number {
+    if (!this.alive || (this.invuln > 0 && !dot)) return 0;
+    if (!dot && this.weapons.tryBlock()) {
       // A blocked hit still grants the usual invulnerability, so the same enemy cannot hit next frame.
       this.invuln = this.invulnTotal = INVULN_SECONDS;
       this.runStats.blocks++;
       return 0;
     }
     const dmg = Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction()) * this.stats.damageTaken));
-    this.showHurt();
+    if (!dot) this.showHurt();
     if (!this.god) {
       this.runStats.taken += Math.min(this.hp, dmg);
       this.hp = Math.max(0, this.hp - dmg);

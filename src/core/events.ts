@@ -25,6 +25,7 @@ export const DEBUG_EV = {
   god: 'debug-god',
   ultReady: 'debug-ult-ready',
   boss: 'debug-boss',
+  rare: 'debug-rare',
 } as const;
 
 export interface BuildEntry {

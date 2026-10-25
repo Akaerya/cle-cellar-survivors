@@ -192,6 +192,12 @@ export class Fx {
     this.number(x, y, String(Math.max(1, Math.round(value))), tint, style === 2 ? CRIT_SCALE : 1);
   }
 
+  /** A word floating up like a damage number (BLOCK, IMMUNE: a rare enemy ignored a hit). */
+  label(x: number, y: number, word: string, color: number): void {
+    this.relay?.(['t', Math.round(x), Math.round(y), word, color]);
+    this.number(x, y, word, color);
+  }
+
   /** Green "+N" over a player that healed. */
   healNumber(x: number, y: number, value: number): void {
     this.relay?.(['g', Math.round(x), Math.round(y), Math.round(value)]);

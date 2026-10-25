@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, DEPTH } from '../constants';
-import type { EnemyDef } from '../data/types';
+import type { EnemyDef, EnemyModifierDef } from '../data/types';
 import { nextNetId } from '../net/ids';
 import type { WeaponInstance } from '../systems/Weapons';
 
 let nextUid = 1;
+const NO_MODS: readonly EnemyModifierDef[] = [];
 
 /** One stack of a duration weapon's effect on an enemy. */
 export interface EffectStack {
@@ -57,6 +58,30 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   readonly skillTimers: number[] = [];
   shadow: Phaser.GameObjects.Bob | null = null;
 
+  // Rare enemies (systems/EnemyModifiers.ts). The aura and revive fields apply to normal enemies too.
+  /** Modifiers of a rare enemy; empty for a normal one. */
+  mods: readonly EnemyModifierDef[] = NO_MODS;
+  /** Bit i set: has ENEMY_MODIFIERS[i] (see modifierBit). Sent to joiners. */
+  modMask = 0;
+  /** Seconds until each timed modifier (void fields, teleports) acts again, by index in `mods`. */
+  readonly modTimers: number[] = [];
+  /** HP before rare bonuses: the type's HP scaled by time and players. */
+  baseHp = 0;
+  /** Fraction of `baseHp` its modifiers add to max HP (Empower Allies comes on top while it lasts). */
+  hpBonus = 0;
+  /** Multiplies move speed (Enrage, Empower Allies). */
+  speedMult = 1;
+  /** Enrage: 0..1, how far it has enraged from missing HP. */
+  enrage = 0;
+  /** Soul Absorption: souls gathered. */
+  souls = 0;
+  /** Inside an Invulnerability aura this frame (Intervention): cannot drop below 1 HP. */
+  intervention = false;
+  /** The Empower Allies aura it stands in, if any. */
+  empower: Extract<EnemyModifierDef, { id: 'empower_allies' }> | null = null;
+  /** Already came back once through Spirit Walker: it will not again (drawn see-through). */
+  spirit = false;
+
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, ATLAS, 'bat_0');
   }
@@ -67,7 +92,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.enableBody(true, x, y, true, true);
     this.setTexture(ATLAS, def.firstFrame);
     this.play({ key: def.anim, startFrame: randomStartFrame(this.scene, def.anim) }, true);
-    this.hp = this.maxHp = Math.round(def.hp * hpScale);
+    this.baseHp = def.hp * hpScale;
+    this.hp = this.maxHp = Math.round(this.baseHp);
     this.radius = def.radius;
     // Arcade scales the circle with the sprite, so it is set in unscaled frame px.
     const scale = def.scale ?? 1;
@@ -85,6 +111,16 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.tintState = 0;
     this.rootedUntil = 0;
     this.skillTimers.length = 0;
+    this.mods = NO_MODS;
+    this.modMask = 0;
+    this.modTimers.length = 0;
+    this.hpBonus = 0;
+    this.speedMult = 1;
+    this.enrage = 0;
+    this.souls = 0;
+    this.intervention = false;
+    this.empower = null;
+    this.spirit = false;
     this.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
     this.setAlpha(1).setFlipX(false);
     this.setDepth(DEPTH.units + y / ARENA_SIZE);

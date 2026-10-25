@@ -111,7 +111,7 @@ export class Enemies {
         e.kby *= decay;
         const sl = Math.hypot(e.sepX, e.sepY);
         const sk = sl > SEP_MAX ? SEP_MAX / sl : 1;
-        const sp = e.def.speed * speedScale * (now < e.slowUntil ? 1 - e.slowAmount : 1);
+        const sp = e.def.speed * speedScale * e.speedMult * (now < e.slowUntil ? 1 - e.slowAmount : 1);
         body.setVelocity(
           (dx / d) * sp + e.kbx + e.sepX * sk,
           (dy / d) * sp + e.kby + e.sepY * sk,
@@ -160,7 +160,7 @@ export class Enemies {
         while (st.next <= 0 && st.next <= st.left + 1e-6 && e.active) {
           st.next += def.interval;
           const eff = st.weapon.owner.weapons.eff(st.weapon);
-          this.hit(e, eff.effectDamage, 0, 0, 0, st.weapon);
+          this.hit(e, eff.effectDamage, 0, 0, 0, st.weapon, true);
           this.reiterate(e, st, eff.reiterate);
         }
       }
@@ -171,8 +171,12 @@ export class Enemies {
     }
   }
 
-  /** Slows `e` by `amount` (0..1) for a moment; fields call this every frame. Slows do not stack: the strongest wins. */
+  /**
+   * Slows `e` by `amount` (0..1) for a moment; fields call this every frame. Slows do not stack: the strongest wins.
+   * Hexproof enemies are never slowed.
+   */
   slow(e: Enemy, amount: number, now: number): void {
+    if (!this.game.enemyMods.debuffable(e)) return;
     if (now >= e.slowUntil) e.slowAmount = 0;
     e.slowAmount = Math.max(e.slowAmount, Math.min(1, amount));
     e.slowUntil = now + SLOW_LINGER_MS;
@@ -187,9 +191,13 @@ export class Enemies {
     e.effects.push({ weapon: stack.weapon, left: stack.left, next: stack.next, copy: true });
   }
 
-  /** dirX/dirY: unit vector to push the enemy along. */
-  hit(e: Enemy, amount: number, dirX: number, dirY: number, knockback: number, weapon?: WeaponInstance): void {
-    if (!e.active || e.hp <= 0) return;
+  /**
+   * dirX/dirY: unit vector to push the enemy along. `dot`: a tick of a duration effect (damage over time), which
+   * Thorns and Crystalline do not answer. Returns false when the hit did not land: the enemy was already dead, or a
+   * rare enemy's modifiers ignored it (blocked, shielded).
+   */
+  hit(e: Enemy, amount: number, dirX: number, dirY: number, knockback: number, weapon?: WeaponInstance, dot = false): boolean {
+    if (!e.active || e.hp <= 0) return false;
     // Critical strikes: any hit from a player with crit chance (passive weapons, stats) can crit.
     let crit = false;
     if (weapon) {
@@ -199,8 +207,16 @@ export class Enemies {
         amount *= weapon.owner.stats.critDamage;
       }
     }
-    const dealt = Math.min(e.hp, amount);
-    e.hp -= amount;
+    const mods = this.game.enemyMods;
+    const attacker = weapon?.owner ?? null;
+    if (e.mods.length > 0) {
+      amount = mods.incoming(e, amount, attacker);
+      if (amount < 0) return false;
+    }
+    // Intervention (an Invulnerability aura): the hit lands, but cannot take the enemy below 1 HP.
+    const floor = e.intervention ? Math.min(e.hp, 1) : 0;
+    const dealt = Math.min(e.hp - floor, amount);
+    e.hp = Math.max(floor, e.hp - amount);
     if (weapon) {
       weapon.damage += dealt;
       weapon.owner.runStats.damage += dealt;
@@ -211,7 +227,8 @@ export class Enemies {
     e.kbx += dirX * k;
     e.kby += dirY * k;
     this.game.playSfx('hit', e.x, e.y);
-    if (e.hp <= 0) {
+    if (attacker && !dot && e.mods.length > 0) mods.afterHit(e, amount, attacker);
+    if (e.hp <= 0 && !mods.revive(e)) {
       this.kill(e, true);
       if (weapon) {
         weapon.kills++;
@@ -222,6 +239,7 @@ export class Enemies {
       weapon.owner.runStats.crits++;
       weapon.owner.weapons.onCrit();
     }
+    return true;
   }
 
   kill(e: Enemy, dropGem: boolean): void {
@@ -229,6 +247,7 @@ export class Enemies {
     this.game.fx.puff(e.x, e.y, e.def.puffColor, e.def.boss ? 40 : (e.def.mass ?? 1) > 1 ? 18 : 8);
     if (e.def.boss) this.game.bosses.onBossGone(e, dropGem);
     if (dropGem) {
+      this.game.enemyMods.onDeath(e);
       this.game.gems.drop(e.x, e.y + 2, e.def.exp);
       this.game.potions.roll(e.x, e.y - 2, e.def.potionChance);
     }

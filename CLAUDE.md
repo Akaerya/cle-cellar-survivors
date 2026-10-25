@@ -14,15 +14,15 @@ npm run build        # typecheck + static build in dist/
 npm run sprites      # re-export src/art/sprites/*.aseprite to PNG + sprites.json (needs Aseprite; ASEPRITE=path)
 ```
 
-There are no automated tests. Check changes in the browser: `?play` skips the title, `?seed=N` fixes the RNG, F3 opens the debug overlay (spawn 50, +1 level, +1 minute, god mode, ultimates ready, boss). The running game scene is on `window.__cleCellar`. The last character and name picked are in `localStorage` (`cle-cellar-survivors-profile`).
+There are no automated tests. Check changes in the browser: `?play` skips the title, `?seed=N` fixes the RNG, F3 opens the debug overlay (spawn 50, +1 level, +1 minute, god mode, ultimates ready, boss, a 6-modifier rare enemy). The running game scene is on `window.__cleCellar`. The last character and name picked are in `localStorage` (`cle-cellar-survivors-profile`).
 
 ## Where things live
 
-- `src/data/`: every gameplay number. Characters (kit, ultimate), ultimates, weapons, items, enemies, bosses (skills, minions, hazards, schedule), waves (HP, speed and spawn scaling, co-op HP scaling), drops (potions, gem tiers), co-op revives, player base stats and rerolls. Engine code reads these generically.
+- `src/data/`: every gameplay number. Characters (kit, ultimate), ultimates, weapons, items, enemies, rare enemy modifiers (`enemyModifiers.ts`: tiers, modifiers, their hazards), bosses (skills, minions, hazards, schedule), waves (HP, speed and spawn scaling, co-op HP scaling), drops (potions, gem tiers), co-op revives, player base stats and rerolls. Engine code reads these generically.
 - `src/constants.ts`: engine limits (run length, caps, slot counts, invulnerability).
 - `src/core/progression.ts`: level curve, weapon stats per level, stat formula.
 - `src/art/sprites/`: one `.aseprite` per sheet plus its exported `.png` and the shared `sprites.json`. Frame names come from tags (`<tag>_<i>`) or the file name (`<file>_<i>`); see README, "Art". After editing a `.aseprite`, run `npm run sprites` and commit the PNG and JSON with it. Animations are listed in `ANIMS` in `src/art/textures.ts`.
-- `src/entities/`, `src/systems/`: pooled game objects and the systems that run them (Enemies, Weapons, Ultimate, Bosses, Gems, Potions, Spawner, Fx). `Player.runStats` and each weapon's `damage`/`kills` feed the party screen (`GameOverScene`).
+- `src/entities/`, `src/systems/`: pooled game objects and the systems that run them (Enemies, EnemyModifiers, RareVisuals, Weapons, Ultimate, Bosses, Gems, Potions, Spawner, Fx). Rare enemy modifiers are kept apart from player abilities: `EnemyModifiers` runs them, `RareVisuals` draws them. Modifier names are internal; players only see their looks. `Player.runStats` and each weapon's `damage`/`kills` feed the party screen (`GameOverScene`).
 - `src/core/profile.ts`: display name and character (localStorage, sent to the co-op lobby).
 - `src/scenes/GameScene.ts`: the run. `mode` is `solo`, `host` (simulates for everyone) or `client` (draws the host's snapshots, moves only its own character).
 - `src/net/`: co-op session (`Net.ts`), message and binary snapshot format (`protocol.ts`), joiner-side renderer (`Mirror.ts`), scene transitions (`flow.ts`).
@@ -36,6 +36,7 @@ The in-game wiki (title screen > WIKI, or the pause menu) is how players and con
 - Prose in `src/wiki/pages.ts` is hand-written. Update it whenever you:
   - add a character, ultimate, weapon, item, enemy, boss, wave event or drop (also check its table has the right columns, e.g. a new stat or field; weapon tables pick their columns per targeting type in `COLUMNS`),
   - add a boss skill kind (`skillText`) or hazard,
+  - add a rare enemy modifier (`rareText` and `rareLook`; the wiki goes by its look, never its internal name),
   - add or change a mechanic or rule (damage, pickups, level-ups, spawning, co-op, revives, controls),
   - add a new targeting type (`TARGETING_NOTES` and `COLUMNS`), ultimate kind (the `how` text in the CHARACTERS page) or player stat (`STAT_LABELS`, `STAT_NOTES`),
   - add a tracked run stat (the PARTY SCREEN text on the RULES page),
@@ -52,6 +53,7 @@ The in-game wiki (title screen > WIKI, or the pause menu) is how players and con
 - Projectile kinds in snapshots index `ATTACK_DEFS` (weapons, then ultimate attacks); keep new projectile-firing things in that list. Enemy kinds index `ALL_ENEMIES` (wave enemies, minions, bosses), hazard kinds index `HAZARDS`.
 - Bosses run only on the host (`systems/Bosses.ts`). Joiners get hazards as a snapshot layer (drawn by `Mirror`), boss HP from the snapshot's boss list, and wind-ups and beams as relayed effects. Webs slow the character each browser moves, so `Mirror.slowAt` mirrors `Bosses.slowAt`. Boss attacks go through `GameScene.hurtPlayer`.
 - Rerolls: joiners send `{ t: 'reroll' }`; the host checks `Player.rerolls` and answers with new `choices`.
+- Rare enemies roll and act only on the host (`systems/EnemyModifiers.ts`). Joiners get the snapshot's rare list (net id, modifier bit mask, enrage, souls; `writeRares`/`decodeSnapshot`) and `EF.spirit`, and draw them with the same `RareVisuals` as the host. Void fields slow and chain the character each browser moves, so `Mirror.chainsAt` mirrors `Bosses.chainsAt`.
 - Test co-op with two browser windows that are both visible (hidden tabs stop the game loop): host in one, join with `?join=CODE` in the other.
 
 ## Style

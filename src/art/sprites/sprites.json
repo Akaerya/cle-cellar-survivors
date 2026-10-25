@@ -55,6 +55,14 @@
    "brute_3": [84, 0, 160]
   }
  },
+ "caustic": {
+  "w": 31,
+  "h": 31,
+  "frames": {
+   "caustic_0": [0, 0, 260],
+   "caustic_1": [31, 0, 260]
+  }
+ },
  "club": {
   "w": 14,
   "h": 14,
@@ -70,6 +78,16 @@
    "coconut_1": [10, 0, 100],
    "coconut_2": [20, 0, 100],
    "coconut_3": [30, 0, 100]
+  }
+ },
+ "crystalbud": {
+  "w": 12,
+  "h": 12,
+  "frames": {
+   "crystalbud_0": [0, 0, 250],
+   "crystalbud_1": [12, 0, 250],
+   "crystalbud_2": [24, 0, 250],
+   "crystalbud_3": [36, 0, 250]
   }
  },
  "cyclops": {
@@ -326,6 +344,13 @@
    "wall_face": [224, 0, 100],
    "wall_lip": [240, 0, 100],
    "wall_lip_w": [256, 0, 100]
+  }
+ },
+ "voidfield": {
+  "w": 31,
+  "h": 31,
+  "frames": {
+   "voidfield": [0, 0, 100]
   }
  },
  "web": {

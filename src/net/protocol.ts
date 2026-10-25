@@ -54,8 +54,8 @@ export type FxEvent =
   | ['s', SfxName, number?, number?]
   /** banner: text, colour */
   | ['b', string, number]
-  /** a player was hurt: slot, amount */
-  | ['h', number, number]
+  /** a player was hurt: slot, amount, 1 for a tick of damage over time (no hurt flash) */
+  | ['h', number, number, 1?]
   /** melee slash: slot, weapon index, angle, reach, arc, duration */
   | ['w', number, number, number, number, number, number]
   /** aura pulse: slot, weapon index */
@@ -77,14 +77,17 @@ export type FxEvent =
   /** dome ultimate cast: caster slot, centre x, centre y */
   | ['d', number, number, number]
   /** boss wind-up warning circle: x, y, radius, seconds, colour */
-  | ['c', number, number, number, number, number];
+  | ['c', number, number, number, number, number]
+  /** a word where a damage number would be (a rare enemy ignored a hit): x, y, word, colour */
+  | ['t', number, number, string, number];
 
 // ------------------------------------------------------------------ binary snapshots
 
 export const STATE_CODES = ['playing', 'dying', 'victory', 'ended'] as const;
 
 export const PF = { dead: 1, gone: 2, moving: 4, god: 8 } as const;
-export const EF = { flip: 1, flash: 2, chill: 4 } as const;
+/** Enemy flags. `spirit`: came back once through Spirit Walker (drawn see-through). */
+export const EF = { flip: 1, flash: 2, chill: 4, spirit: 8 } as const;
 
 export interface SnapPlayer {
   slot: number;
@@ -133,7 +136,31 @@ export interface Snapshot {
   hazards: SnapEntity[];
   /** Every living boss (not culled): HP bars are shown wherever it is. */
   bosses: SnapBoss[];
+  /** Rare enemies among `enemies`: what RareVisuals draws on them. */
+  rares: SnapRare[];
   events: FxEvent[];
+}
+
+export interface SnapRare {
+  /** Net id of the enemy (also in `enemies`). */
+  id: number;
+  /** Bit i set: has ENEMY_MODIFIERS[i]. */
+  mask: number;
+  /** Enrage, 0..1. */
+  enrage: number;
+  /** Soul Absorption souls (capped at 255 here). */
+  souls: number;
+}
+
+/** Writes the rare enemy list; must match decodeSnapshot. */
+export function writeRares(w: Writer, rares: SnapRare[]): void {
+  w.u16(rares.length);
+  for (const r of rares) {
+    w.u16(r.id);
+    w.u32(r.mask);
+    w.u8(Math.round(Phaser.Math.Clamp(r.enrage, 0, 1) * 255));
+    w.u8(Math.min(255, r.souls));
+  }
 }
 
 export interface SnapBoss {
@@ -302,10 +329,19 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
     const frac = u16() / 65535;
     bosses.push({ id, kind, frac });
   }
+  const rares: SnapRare[] = [];
+  const nr = u16();
+  for (let i = 0; i < nr; i++) {
+    const id = u16();
+    const mask = u32();
+    const enrage = u8() / 255;
+    const souls = u8();
+    rares.push({ id, mask, enrage, souls });
+  }
 
   const len = u32();
   const events = len > 0 ? (JSON.parse(decoder.decode(new Uint8Array(buf, o, len))) as FxEvent[]) : [];
-  return { runTime, state, frozen, kills, level, exp, need, teamDeaths, players, enemies, gems, projectiles, potions, hazards, bosses, events };
+  return { runTime, state, frozen, kills, level, exp, need, teamDeaths, players, enemies, gems, projectiles, potions, hazards, bosses, rares, events };
 }
 
 /** Writes one entity record; must match `entities()` in decodeSnapshot. */

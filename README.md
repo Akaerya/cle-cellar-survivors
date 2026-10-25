@@ -31,6 +31,12 @@ A boss arrives at 5:00, 10:00 and 15:00: each run picks three different ones at 
 
 Spawn pressure also grows over the run: the number of enemies kept on the field is multiplied by +4% per minute and +15% per extra player (`data/waves.ts`).
 
+## Rare enemies
+
+Any enemy the spawner brings in (waves and bat swarms, not bosses or minions) can come out **rare** with extra modifiers, all different, picked at random: 6 modifiers 0.4% of the time, 4 modifiers 0.8%, 2 modifiers 1.5%. Each modifier adds 70% of the enemy's base HP. Rare enemies get a 1 px border in the colour of their tier (gold, purple, blue), and some modifiers have a look of their own (rings, motes, spikes, wisps, a bubble), so an enemy with several shows them all. Modifier names stay in the code: players learn them by their look and in the wiki's RARE page.
+
+The 16 modifiers (`data/enemyModifiers.ts`, run by `systems/EnemyModifiers.ts`) leave void fields that slow and chain you, keep nearby monsters from dropping below 1 HP, enrage as they lose HP, resist damage, leave caustic ground on death, grow crystal buds under whoever hits them, empower nearby monsters, hit harder the more HP you are missing, have extra HP, ignore debuffs, reflect damage, teleport to you, gather souls from nearby deaths, bring nearby monsters back from death once, block half of all hits, or ignore damage from outside a small bubble.
+
 After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing, shield blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate) with its level, damage, DPS, kills and share of their damage.
 
 Phaser 4.2.1, TypeScript, Vite, Arcade Physics. No backend. Sprites and tiles are Aseprite files in `src/art/sprites` (exported to PNG); fonts and sounds are generated at boot.
@@ -80,7 +86,7 @@ Code lives in `src/net/` (session, lobby profiles, message and snapshot format, 
 
 ## Wiki
 
-Title screen > **WIKI** (also in the pause menu) lists every character, ultimate, weapon, modification, item, powerup, monster, boss, wave, drop and co-op rule with its numbers, read straight from `src/data`. Long pages have filter chips under the tabs (click, 1-9, or Q/E): by character on CHARACTERS and WEAPONS, by tag on MODS, by entry on POWERUPS and BOSSES. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
+Title screen > **WIKI** (also in the pause menu) lists every character, ultimate, weapon, modification, item, powerup, monster, rare enemy modifier, boss, wave, drop and co-op rule with its numbers, read straight from `src/data`. Long pages have filter chips under the tabs (click, 1-9, or Q/E): by character on CHARACTERS and WEAPONS, by tag on MODS, by entry on POWERUPS and BOSSES. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
 
 ## Controls
 
@@ -93,7 +99,7 @@ src/
   main.ts              game config: 640x360, pixelArt, FIT scaling, Arcade at a fixed 60 Hz
   constants.ts         engine constants (arena size, caps, depths, colours, scene keys)
   data/                everything a designer tunes
-    characters.ts ultimates.ts weapons.ts modifications.ts items.ts powerups.ts enemies.ts waves.ts drops.ts coop.ts player.ts types.ts
+    characters.ts ultimates.ts weapons.ts modifications.ts items.ts powerups.ts enemies.ts enemyModifiers.ts bosses.ts waves.ts drops.ts coop.ts player.ts types.ts
   wiki/pages.ts        in-game wiki pages, built from data/
   core/
     progression.ts     level curve, weapon stats per level, player stat calculation
@@ -109,7 +115,7 @@ src/
 scripts/
   export-sprites.mjs   npm run sprites: Aseprite -> PNG strips + sprites.json
   entities/            Player, Enemy, Projectile, Gem, Potion (pooled)
-  systems/             Arena, Enemies, Weapons, Ultimate, Gems, Potions, Spawner, Fx
+  systems/             Arena, Enemies, EnemyModifiers (rare enemies), RareVisuals, Weapons, Ultimate, Bosses, Gems, Potions, Spawner, Fx
   scenes/              Boot, Title, CharacterSelect, Lobby, Game, UI (HUD), LevelUp, Pause, GameOver (party screen), Wiki
   ui/widgets.ts        bitmap text, panels, buttons, keyboard menus
 ```
@@ -160,7 +166,9 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 
 **An enemy** goes in `data/enemies.ts`, then gets a weight in a `data/waves.ts` row. New art needs a sheet in `art/sprites` (see Art) and an animation line in `ANIMS` in `art/textures.ts`. `scale` draws it larger (its `radius` stays in world px) and `mass` makes it shove lighter enemies aside.
 
-**A boss** goes in `data/bosses.ts`: an enemy definition with a `boss` block (title, description, HP bar colour and `skills`). Skills are data: `webs`, `summon` (minions from `MINIONS`; a minion with `shooter` fires hazards), `pollen`, `beam`, `whirlpools`, `slam` and `clubs`, each with its own cooldown and numbers. What they leave in the world (webs, pollen, whirlpools, petals, clubs) is in `HAZARDS`: size, art, spin, fade and slow. `BOSS_TIMES` is the schedule. The boss logic is `systems/Bosses.ts`; a new skill kind needs a case there and a line in the wiki's `skillText`.
+**A boss** goes in `data/bosses.ts`: an enemy definition with a `boss` block (title, description, HP bar colour and `skills`). Skills are data: `webs`, `summon` (minions from `MINIONS`; a minion with `shooter` fires hazards), `pollen`, `beam`, `whirlpools`, `slam` and `clubs`, each with its own cooldown and numbers. What they leave in the world (webs, pollen, whirlpools, petals, clubs) is in `BOSS_HAZARDS`: size, art, spin, fade and slow. `BOSS_TIMES` is the schedule. The boss logic is `systems/Bosses.ts`; a new skill kind needs a case there and a line in the wiki's `skillText`.
+
+**A rare enemy modifier** goes in `ENEMY_MODIFIERS` in `data/enemyModifiers.ts`: a new `id` in the `EnemyModifierDef` union in `data/types.ts` with its numbers, an internal `name` (never shown to players) and the `color` of its look. What it does goes in `systems/EnemyModifiers.ts` (the hooks are `update`, `incoming`, `afterHit`, `outgoing`/`damageMult`, `onDeath` and `revive`), a look in `systems/RareVisuals.ts` if it should have one, and a line in the wiki's `rareText` and `rareLook`. `RARE_TIERS` sets how often an enemy rolls 2, 4 or 6 modifiers and the border colours, `RARE_HP_PER_MODIFIER` the HP per modifier. What modifiers leave in the world (void fields, caustic ground, crystal buds) is in `RARE_HAZARDS`, added to `HAZARDS` so joiners draw it like boss hazards. Snapshots send the modifier list as a bit mask, so there is room for 32.
 
 **Waves** are rows keyed by minute (`from` inclusive, `to` exclusive) with a target count and spawn weights. HP scales by `HP_SCALE_PER_MINUTE`; speed starts at `SPEED_SCALE_START` (70%) and reaches full speed by 4:00. The target is multiplied by `spawnScaleFor` (`SPAWN_SCALE_PER_MINUTE`, `SPAWN_SCALE_PER_EXTRA_PLAYER`).
 
@@ -182,7 +190,7 @@ Style: a single dark outline (`#1c1322`), light from the top left, 3-4 shades pe
 
 ## Debug overlay (F3)
 
-FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, toggle god mode, make every ultimate ready, and bring in a random boss.
+FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, toggle god mode, make every ultimate ready, bring in a random boss, and spawn a rare enemy with 6 random modifiers next to you.
 
 ## Decisions made while building
 

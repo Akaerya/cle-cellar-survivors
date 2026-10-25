@@ -3,7 +3,7 @@ import { ATLAS } from '../art/textures';
 import { COLOR, DEPTH, INNER, RUN_SECONDS } from '../constants';
 import { BOSSES, BOSS_TIMES, HAZARDS, enemyDef, hazardDef, hpScaleForMinute, hpScaleForPlayers } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
-import type { BossSkill, EnemyDef, HazardDef } from '../data/types';
+import type { BossSkill, ChainsDef, EnemyDef, HazardDef } from '../data/types';
 import type { Enemy } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
 import { nextNetId } from '../net/ids';
@@ -38,6 +38,12 @@ export interface Hazard {
   age: number;
   life: number;
   damage: number;
+  /**
+   * Seconds between damage-over-time ticks to every player inside (caustic ground: they ignore invulnerability), and
+   * seconds to the next one. 0: it hurts on touch every frame instead (once per invulnerability).
+   */
+  interval: number;
+  tick: number;
   /** px/s it drifts toward the closest living player (pollen). */
   follow: number;
   /** Vanishes when it hits a player (petals). */
@@ -165,7 +171,7 @@ export class Bosses {
     return out;
   }
 
-  /** Move speed multiplier for a player at (x, y): webs slow them. */
+  /** Move speed multiplier for a player at (x, y): webs and void fields slow them. */
   slowAt(x: number, y: number): number {
     let slow = 0;
     for (const h of this.hazards) {
@@ -174,6 +180,16 @@ export class Bosses {
       if ((h.x - x) ** 2 + (h.y - y) ** 2 <= r * r) slow = Math.max(slow, h.def.slow);
     }
     return 1 - slow;
+  }
+
+  /** The stacking slow a player at (x, y) is standing in (a void field's Astral Chains), if any. */
+  chainsAt(x: number, y: number): ChainsDef | null {
+    for (const h of this.hazards) {
+      if (!h.def.chains) continue;
+      const r = h.def.radius + PLAYER_RADIUS;
+      if ((h.x - x) ** 2 + (h.y - y) ** 2 <= r * r) return h.def.chains;
+    }
+    return null;
   }
 
   /** `playing` false (dying, dawn) only lets hazards fade out: no skills and no damage. */
@@ -368,11 +384,12 @@ export class Bosses {
 
   // ---------------------------------------------------------------- hazards and attacks
 
-  private addHazard(
+  /** Leaves hazard `id` at (x, y). Bosses, and rare enemies' modifiers (systems/EnemyModifiers.ts), use it. */
+  addHazard(
     id: string,
     x: number,
     y: number,
-    o: { life: number; damage?: number; follow?: number; vx?: number; vy?: number; consume?: boolean; back?: Hazard['back'] },
+    o: { life: number; damage?: number; interval?: number; follow?: number; vx?: number; vy?: number; consume?: boolean; back?: Hazard['back'] },
   ): void {
     const def = hazardDef(id);
     const sprite = this.game.add.sprite(x, y, ATLAS, def.frame).setScale(def.radius / def.artRadius);
@@ -389,6 +406,8 @@ export class Bosses {
       age: 0,
       life: o.life,
       damage: o.damage ?? 0,
+      interval: o.interval ?? 0,
+      tick: 0,
       follow: o.follow ?? 0,
       consume: o.consume ?? false,
       back: o.back ?? null,
@@ -441,11 +460,19 @@ export class Bosses {
       h.x += h.vx * dt;
       h.y += h.vy * dt;
       if (h.x < INNER.left || h.x > INNER.right || h.y < INNER.top || h.y > INNER.bottom) gone = true;
-      if (!gone && playing && h.damage > 0) {
+      // Ticking hazards deal damage over time to everyone inside on each tick; the others hurt on touch.
+      const ticking = h.interval > 0;
+      let hurts = !gone && playing && h.damage > 0;
+      if (hurts && ticking) {
+        h.tick -= dt;
+        hurts = h.tick <= 0;
+        if (hurts) h.tick += h.interval;
+      }
+      if (hurts) {
         const r = h.def.radius + PLAYER_RADIUS;
         for (const p of live) {
           if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 > r * r) continue;
-          g.hurtPlayer(p, h.damage);
+          g.hurtPlayer(p, h.damage, ticking);
           if (h.consume) {
             gone = true;
             break;

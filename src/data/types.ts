@@ -300,7 +300,7 @@ export interface EnemyDef {
 export interface ShooterDef {
   interval: number;
   range: number;
-  /** Hazard id (data/bosses.ts HAZARDS) fired. */
+  /** Hazard id (HAZARDS in data/index.ts) fired. */
   hazard: string;
   speed: number;
   damage: number;
@@ -328,7 +328,69 @@ export interface HazardDef {
   fade?: number;
   /** Fraction of move speed a player standing in it loses (webs). */
   slow?: number;
+  /** Standing in it also piles a stacking slow on the player (void fields: Astral Chains). */
+  chains?: ChainsDef;
 }
+
+/**
+ * A stacking slow a hazard puts on players standing in it: a stack every `every` seconds, each lasting `duration`
+ * seconds (also after leaving) and slowing by `slow` on top of the hazard's own slow, at most `max` stacks.
+ */
+export interface ChainsDef {
+  every: number;
+  duration: number;
+  slow: number;
+  max: number;
+}
+
+/** How many modifiers a rare enemy gets, how often (0..1 per spawn), and the colour of its border. */
+export interface RareTier {
+  modifiers: number;
+  chance: number;
+  color: number;
+}
+
+/**
+ * One modifier a rare enemy can have (data/enemyModifiers.ts). Written from the enemy's side: "enemies" are the
+ * players, "allies" are the other monsters (bosses and minions too). `name` is internal and never shown to players.
+ * `color` is the colour of its look (when it has one). Every number is in seconds, px, HP or a fraction.
+ */
+export type EnemyModifierDef = { name: string; color: number } & (
+  /** Every `every` seconds a `hazard` (void field) appears at a random spot within `spread` px, for `life` seconds. */
+  | { id: 'astral_touched'; every: number; spread: number; hazard: string; life: number }
+  /** Other allies within `radius` px cannot drop below 1 HP (Intervention). Never protects units that have this modifier. */
+  | { id: 'invulnerability'; radius: number }
+  /** Increased damage and move speed and less damage taken, growing with missing HP; full at `fullAt` of max HP left. */
+  | { id: 'enrage'; damage: number; speed: number; reduction: number; fullAt: number }
+  /** Takes `reduction` less damage. */
+  | { id: 'physical_resistant'; reduction: number }
+  /** On death a `hazard` (caustic ground) is left for `life` seconds, dealing `damage` every `interval` seconds. */
+  | { id: 'caustic_ground'; hazard: string; life: number; damage: number; interval: number }
+  /** When hit, a `hazard` (crystal bud) grows under the attacker and explodes after `charge` seconds for `damage` within `radius` px. */
+  | { id: 'crystalline'; hazard: string; charge: number; radius: number; damage: number }
+  /** Allies within `radius` px, itself included, get these increases to max HP, move speed and damage. */
+  | { id: 'empower_allies'; radius: number; health: number; speed: number; damage: number }
+  /** `more` more damage per `per` of the target's max HP missing. */
+  | { id: 'executioner'; per: number; more: number }
+  /** `health` increased max HP. */
+  | { id: 'extra_life'; health: number }
+  /** Debuffs (duration effects, slows) cannot be applied to it. */
+  | { id: 'hexproof' }
+  /** When hit (not by damage over time), deals `flat` plus `share` of the hit's damage back to the attacker. */
+  | { id: 'thorns'; flat: number; share: number }
+  /** Every `cooldown` seconds teleports `distance` px from the closest player (when further away than that). */
+  | { id: 'ambush'; cooldown: number; distance: number }
+  /** Gains a soul whenever an ally dies within `radius` px: `damage` increased damage and `haste` Ability Haste per soul. */
+  | { id: 'soul_absorption'; radius: number; damage: number; haste: number }
+  /** It and allies within `radius` px come back once with full HP when they die (drawn see-through at `alpha` after). */
+  | { id: 'spirit_walker'; radius: number; alpha: number }
+  /** `chance` (0..1) to ignore any damage instance. */
+  | { id: 'blocks_attacks'; chance: number }
+  /** Takes no damage from players further than `radius` px away (their body outside the bubble). */
+  | { id: 'temporal_shield'; radius: number }
+);
+
+export type EnemyModifierId = EnemyModifierDef['id'];
 
 /** One thing a boss does on its own cooldown. Every number is in seconds, px or HP. */
 export type BossSkill =

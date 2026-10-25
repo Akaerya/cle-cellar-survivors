@@ -142,7 +142,8 @@ export const MINIONS: EnemyDef[] = [
   },
 ];
 
-export const HAZARDS: HazardDef[] = [
+/** What bosses and their minions leave in the world (data/index.ts adds rare enemies' ones to make HAZARDS). */
+export const BOSS_HAZARDS: HazardDef[] = [
   { id: 'web', frame: 'web', radius: 26, artRadius: 13, ground: true, fade: 3, slow: 0.65 },
   { id: 'pollen', frame: 'pollen_0', anim: 'pollen-drift', radius: 24, artRadius: 11, ground: false, fade: 1.5 },
   { id: 'whirlpool', frame: 'whirlpool', radius: 30, artRadius: 13, spin: -4, ground: true, fade: 1 },

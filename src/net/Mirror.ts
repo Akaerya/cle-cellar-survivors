@@ -1,14 +1,18 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, CHILL_TINT, DEPTH } from '../constants';
-import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS } from '../data';
+import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS, enemyModifier } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
+import type { ChainsDef } from '../data/types';
 import { SHADOW_W, randomStartFrame } from '../entities/Enemy';
-import { EF, type SnapEntity } from './protocol';
+import type { RareView } from '../systems/RareVisuals';
+import { EF, type SnapEntity, type SnapRare } from './protocol';
 
 export const SNAPSHOT_HZ = 20;
 const STEP = 1 / SNAPSHOT_HZ;
 const GEM_COLORS = ['blue', 'green', 'red'] as const;
+/** How see-through an enemy Spirit Walker brought back is drawn. */
+const SPIRIT_ALPHA = enemyModifier('spirit_walker').alpha;
 
 interface Shown {
   s: Phaser.GameObjects.Sprite;
@@ -98,6 +102,11 @@ class Layer {
     return this.shown.get(id)?.s;
   }
 
+  /** The kind of the object with net id `id`, if it is on screen. */
+  kindOf(id: number): number | undefined {
+    return this.shown.get(id)?.kind;
+  }
+
   forEach(fn: (o: Shown) => void): void {
     for (const o of this.shown.values()) fn(o);
   }
@@ -118,6 +127,8 @@ export class Mirror {
   readonly projectiles: Layer;
   readonly potions: Layer;
   readonly hazards: Layer;
+  /** Rare enemies from the last snapshot that are on screen, for RareVisuals. */
+  rareViews: RareView[] = [];
 
   constructor(scene: Phaser.Scene) {
     const shadows = scene.add.blitter(0, 0, ATLAS).setDepth(DEPTH.shadows);
@@ -129,9 +140,10 @@ export class Mirror {
         if (fresh || o.kind !== e.kind) {
           o.kind = e.kind;
           o.s.setTexture(ATLAS, def.firstFrame).play({ key: def.anim, startFrame: randomStartFrame(scene, def.anim) }, true);
-          o.s.setAlpha(1).setScale(def.scale ?? 1).setRotation(0);
+          o.s.setScale(def.scale ?? 1).setRotation(0);
           this.enemies.shadowFor(o, def.shadow);
         }
+        o.s.setAlpha(e.extra & EF.spirit ? SPIRIT_ALPHA : 1);
         o.s.setFlipX((e.extra & EF.flip) !== 0);
         if (e.extra & EF.flash) o.s.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
         else if (e.extra & EF.chill) o.s.setTint(CHILL_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
@@ -220,6 +232,28 @@ export class Mirror {
       if ((o.s.x - x) ** 2 + (o.s.y - y) ** 2 <= r * r) slow = Math.max(slow, def.slow);
     });
     return 1 - slow;
+  }
+
+  /** Mirrors Bosses.chainsAt: the void field's Astral Chains this joiner's character stands in, if any. */
+  chainsAt(x: number, y: number): ChainsDef | null {
+    let chains: ChainsDef | null = null;
+    this.hazards.forEach((o) => {
+      const def = HAZARDS[o.kind];
+      if (chains || !def?.chains) return;
+      const r = def.radius + PLAYER_RADIUS;
+      if ((o.s.x - x) ** 2 + (o.s.y - y) ** 2 <= r * r) chains = def.chains;
+    });
+    return chains;
+  }
+
+  /** The snapshot's rare enemies; call after `enemies.apply` so their sprites are known. */
+  applyRares(list: SnapRare[]): void {
+    this.rareViews = [];
+    for (const r of list) {
+      const sprite = this.enemies.get(r.id);
+      const def = ALL_ENEMIES[this.enemies.kindOf(r.id) ?? -1];
+      if (sprite && def) this.rareViews.push({ sprite, radius: def.radius, mask: r.mask, enrage: r.enrage, souls: r.souls });
+    }
   }
 
   update(dt: number): void {
