@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { DEPTH, INNER, MAX_EFFECT_STACKS, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
 import { applyLevelBonuses, hasteFactor, modsForWeapon, weaponLevelAt, type WeaponLevelStats } from '../core/progression';
-import { CHAIN_RANGE, ECHO_GAP, ECHO_RADIUS, SPLIT_ARC, weaponDef } from '../data';
+import { CHAIN_RANGE, CHAIN_SPEED, ECHO_GAP, ECHO_RADIUS, SPLIT_ARC, weaponDef } from '../data';
 import type { ModEffect, WeaponDef, WeaponStats } from '../data/types';
 import type { Enemy } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
