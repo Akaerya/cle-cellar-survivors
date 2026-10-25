@@ -1111,7 +1111,8 @@ export class Weapons {
       }
     }
     const angle = target ? Math.atan2(target.y - pr.y, target.x - pr.x) : this.game.rng.angle();
-    pr.bounce(angle, CHAIN_RANGE / Math.max(1, pr.speed) + 0.1);
+    pr.speed = this.eff(pr.weapon).speed * CHAIN_SPEED;
+	pr.bounce(angle, CHAIN_RANGE / Math.max(1, pr.speed) + 0.1);
   }
 
   /**

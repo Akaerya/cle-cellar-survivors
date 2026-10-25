@@ -12,6 +12,8 @@ import type { ModificationDef } from './types';
 export const SPLIT_ARC = 90;
 /** Chain: how far (px) a projectile looks for an enemy to bounce to. */
 export const CHAIN_RANGE = 140;
+/** Chain: speed of a projectile after it bounces, as a multiple of its weapon's speed (1 = unchanged). */
+export const CHAIN_SPEED = 1.9;
 /** Echo Strike: radius (px) of each echo before AREA, area modifications and Echo Strike's own area bonus. */
 export const ECHO_RADIUS = 20;
 /** Echo Strike: seconds between echoes when an echo goes off more than once. */

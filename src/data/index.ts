@@ -10,7 +10,7 @@ import type { CharacterDef, EnemyDef, ItemDef, ModificationDef, UltimateDef, Wea
 export * from './types';
 export { ENEMIES } from './enemies';
 export { ITEMS } from './items';
-export { MODIFICATIONS, SPLIT_ARC, CHAIN_RANGE, ECHO_RADIUS, ECHO_GAP } from './modifications';
+export { MODIFICATIONS, SPLIT_ARC, CHAIN_RANGE, CHAIN_SPEED, ECHO_RADIUS, ECHO_GAP } from './modifications';
 export { POWERUPS, POWERUP_MAX_LEVEL } from './powerups';
 export { WEAPONS } from './weapons';
 export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute, hpScaleForPlayers, speedScaleForMinute } from './waves';
