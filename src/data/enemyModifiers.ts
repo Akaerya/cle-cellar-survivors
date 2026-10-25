@@ -38,12 +38,12 @@ export const ENEMY_MODIFIERS: EnemyModifierDef[] = [
   { id: 'executioner', name: 'Executioner', color: 0xc0392b, per: 0.1, more: 0.2 },
   { id: 'extra_life', name: 'Extra Life', color: 0xff7a8a, health: 0.4 },
   { id: 'hexproof', name: 'Hexproof', color: 0xe8e8f4 },
-  { id: 'thorns', name: 'Thorns', color: 0xd08a4a, flat: 3, share: 0.4 },
+  { id: 'thorns', name: 'Thorns', color: 0xd08a4a, flat: 3, share: 0.02 },
   { id: 'ambush', name: 'Ambush', color: 0x6a4a9a, cooldown: 4, distance: 28 },
   { id: 'soul_absorption', name: 'Soul Absorption', color: 0xb8f0ff, radius: 130, damage: 0.01, haste: 1 },
   { id: 'spirit_walker', name: 'Spirit Walker', color: 0x9ff0c8, radius: 130, alpha: 0.55 },
   { id: 'blocks_attacks', name: 'Blocks Attacks', color: 0xd0d0e0, chance: 0.5 },
-  { id: 'temporal_shield', name: 'Temporal Shield', color: 0x8ad8ff, radius: 40 },
+  { id: 'temporal_shield', name: 'Temporal Shield', color: 0x8ad8ff, radius: 75 },
 ];
 
 /** Most souls drawn circling a Soul Absorption enemy (it keeps gaining them past this). */
