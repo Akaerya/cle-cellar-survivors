@@ -15,7 +15,7 @@ export const REVIVE = {
   minHpPercent: 0.1,
   /** Revive progress drains at this multiple of the fill rate when nobody stands on the body. */
   drainRate: 1,
-  /** Seconds of invulnerability after standing up. */
+  /** Seconds of invulnerability after standing up. Every revive uses it, Ragebaiter's included. */
   invulnSeconds: 2,
 };
 

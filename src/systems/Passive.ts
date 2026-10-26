@@ -1,5 +1,6 @@
 import { COLOR } from '../constants';
 import type { OwnedItem } from '../core/progression';
+import { REVIVE } from '../data/coop';
 import type { ItemDef, PassiveDef } from '../data/types';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
@@ -95,8 +96,8 @@ export class Passive {
   }
 
   /**
-   * Ragebaiter: the owner just reached 0 HP. True when it stands right back up; a banner tells everyone to put a
-   * random other player in the bin (`fallback` when nobody else is in the run).
+   * Ragebaiter: the owner just reached 0 HP. True when it stands right back up, invulnerable as after a co-op revive;
+   * a banner tells everyone to put a random other player in the bin (`fallback` when nobody else is in the run).
    */
   rebirth(): boolean {
     const d = this.def;
@@ -104,7 +105,8 @@ export class Passive {
     if (d?.kind !== 'rebirth' || !this.ready) return false;
     this.cooldownLeft = d.cooldown;
     p.hp = Math.max(1, Math.round(p.stats.maxHp * d.hp));
-    p.grantInvuln(d.invuln);
+    // Standing back up is a revive: the same invulnerability as a co-op revive.
+    p.grantInvuln(REVIVE.invulnSeconds);
     const others = this.game.players.filter((q) => q && q !== p && !q.gone);
     const name = others.length > 0 ? this.game.rng.pick(others).displayName : d.fallback;
     this.game.banner(`PUT ${name.toUpperCase()} IN THE BIN!`, COLOR.gold);

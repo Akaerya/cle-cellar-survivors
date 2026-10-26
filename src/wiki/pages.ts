@@ -6,6 +6,7 @@
  * or change a mechanic, a weapon behaviour, a drop or a co-op rule, update the matching text here.
  */
 import {
+  ENEMY_HIT_COOLDOWN,
   FALLBACK_HEAL,
   INVULN_SECONDS,
   LEVELUP_INVULN_SECONDS,
@@ -191,7 +192,7 @@ const TARGETING_NOTES: Record<Targeting, string> = {
   breath: 'Every COOLDOWN, sprays a cone at the closest enemy within REACH px: everything inside the ARC (degrees) and REACH is hit. Holds while nothing is in reach. REACH is scaled by AREA.',
   strike:
     'Every COOLDOWN, BOLTS lightning bolts land within RANGE px of you. Each bolt picks a different random enemy in range, or a random spot when there are none, and hits everything within RADIUS px of where it lands. RADIUS is scaled by AREA.',
-  shield: `Puts Aegis on you: it blocks one hit completely, then the shield takes RECHARGE seconds to put it back (shortened by COOLDOWN and ABILITY HASTE; it only recharges while you have no Aegis). Aegis is an effect, so duration modifications change RECHARGE (Increase Duration +20%: RECHARGE / 1.2, Less Duration: longer) and Reiterate may put a second Aegis on you when it is applied. Every hit that is not blocked is reduced by ABSORBS (after armor, at most ${pct(MAX_SHIELD_REDUCTION)}, still at least 1). A blocked hit gives the usual invulnerability. Every hit you take, blocked or not (not damage over time), deals REFLECT of its full damage back to whoever dealt it, as a melee hit of the shield: your DAMAGE, the shield's damage bonuses and melee modifications apply. The bubble around you shows Aegis (a ring per extra stack) and the recharge.`,
+  shield: `Puts Aegis on you: it blocks one hit completely, then the shield takes RECHARGE seconds to put it back (shortened by COOLDOWN and ABILITY HASTE; it only recharges while you have no Aegis). Aegis is an effect, so duration modifications change RECHARGE (Increase Duration +20%: RECHARGE / 1.2, Less Duration: longer) and Reiterate may put a second Aegis on you when it is applied. Every hit that is not blocked is reduced by ABSORBS (after armor, at most ${pct(MAX_SHIELD_REDUCTION)}, still at least 1). Every hit you take, blocked or not (not damage over time), deals REFLECT of its full damage back to whoever dealt it, as a melee hit of the shield: your DAMAGE, the shield's damage bonuses and melee modifications apply. The bubble around you shows Aegis (a ring per extra stack) and the recharge.`,
   field:
     'Every COOLDOWN, conjures FIELDS freezing fields of RADIUS px: one under the closest enemy within RANGE, the others under different random enemies in range (holds while nothing is in range). A field stays where it appeared for DURATION seconds and slows every enemy on it by SLOW (slows do not stack). When it appears and then every second, it applies its effect to every enemy on it; each field applies its own, so two fields give two stacks. The field itself deals no damage. RADIUS is scaled by AREA, DURATION by duration modifications.',
   passive:
@@ -200,7 +201,7 @@ const TARGETING_NOTES: Record<Targeting, string> = {
   wave: 'Cuts a sword wave at the closest enemy within LENGTH px (holds while nothing is that close). The wave flies LENGTH px at SPEED and cuts every enemy it passes without using pierce until it touches the enemy it was aimed at; from that hit on it is a normal projectile: that hit uses 1 PIERCE, then it splits or chains (Pierce lets it go on). Extra COUNT sends more waves, each at a random enemy within LENGTH.',
   spin: 'Every COOLDOWN, once an enemy is within RADIUS, swings all around you: everything within RADIUS px is hit. RADIUS is scaled by AREA.',
   flicker:
-    'Every COOLDOWN, teleports you just past a random enemy on your screen and cuts it (holds while there is none). The jump is instant, so Momentum adds nothing. Every enemy its hits reach (Impact splashes and echoes included) has SHADOW chance to give you a Shadow Charge, which is soon spent on another Flicker Strike (see below).',
+    'Every COOLDOWN, teleports you just past a random enemy on your screen and cuts it (holds while there is none). The jump is instant, so Momentum adds nothing. Every enemy its hits reach (Impact splashes and echoes included) has SHADOW chance to give you a Shadow Charge, and every enemy they kill another chance, and each charge is soon spent on another Flicker Strike (see below).',
   infusion:
     'Does nothing on its own. The first hit of each of your attacks (any weapon) has CHANCE to give you a random charge for a few seconds: Brutal, Siphoning or Vicissitude. EFFECT multiplies what every charge does.',
 };
@@ -308,7 +309,7 @@ function weaponsPage(filter: string): Block[] {
       if (def.shadow) {
         out.push({
           t: 'p',
-          text: `SHADOW CHARGES: you hold up to ${def.shadow.max}. Every ${secs(def.shadow.check)} one is spent on another Flicker Strike (when an enemy is on screen), whatever the cooldown, which keeps counting. Those strikes are attacks too: Ruthless counts them and Multistrike's chance can repeat them.`,
+          text: `SHADOW CHARGES: you hold up to ${def.shadow.max}. Besides SHADOW per enemy reached, every enemy a strike, its splash or its echo kills has another ${pct(def.shadow.onKill)} chance to give one. Every ${secs(def.shadow.check)} one is spent on another Flicker Strike (when an enemy is on screen), whatever the cooldown, which keeps counting. Those strikes are attacks too: Ruthless counts them and Multistrike's chance can repeat them.`,
           color: COLOR.textDim,
         });
       }
@@ -366,13 +367,13 @@ function burstText(def: WeaponDef): string {
 function passiveText(d: PassiveDef): string {
   switch (d.kind) {
     case 'dodge':
-      return `Every hit you take (not damage over time) has a ${pct(d.chance)} chance to be dodged: it does nothing, DODGE shows, and you get the usual invulnerability as after a block. It comes before Aegis, so a dodged hit keeps your Aegis.`;
+      return `Every hit you take (not damage over time) has a ${pct(d.chance)} chance to be dodged: it does nothing and DODGE shows. The enemy that missed still has to wait ${secs(ENEMY_HIT_COOLDOWN)} to try again. It comes before Aegis, so a dodged hit keeps your Aegis.`;
     case 'rebirth':
-      return `On reaching 0 HP you stand right back up with ${pct(d.hp)} of your max HP and ${secs(d.invuln)} of invulnerability instead of falling. A banner tells everyone to put a random other player in the bin (${d.fallback.toUpperCase()} when nobody else is in the run). Once every ${d.cooldown}S; it is not a death, so it costs no team death in co-op.`;
+      return `On reaching 0 HP you stand right back up with ${pct(d.hp)} of your max HP instead of falling, invulnerable for ${secs(REVIVE.invulnSeconds)} as after a co-op revive. A banner tells everyone to put a random other player in the bin (${d.fallback.toUpperCase()} when nobody else is in the run). Once every ${d.cooldown}S; it is not a death, so it costs no team death in co-op.`;
     case 'growth':
       return `Every ${d.every}S of the run (fallen or not) you gain a stack for the rest of the run. Each stack: ${d.perStack.map((m) => bonusText(m, 1)).join(', ')}. Stacks add up with items and powerups like any other bonus (see ITEMS).`;
     case 'reprieve':
-      return `When damage (damage over time included) would leave you below ${pct(d.below)} of your max HP, it is not taken: you heal ${pct(d.heal)} of your max HP over ${secs(d.over)} instead, with the usual invulnerability as after a hit. Once every ${d.cooldown}S.`;
+      return `When damage (damage over time included) would leave you below ${pct(d.below)} of your max HP, it is not taken: you heal ${pct(d.heal)} of your max HP over ${secs(d.over)} instead. Once every ${d.cooldown}S.`;
   }
 }
 
@@ -697,8 +698,8 @@ function monstersPage(): Block[] {
   });
   out.push({
     t: 'p',
-    text: 'SPEED is px per second at full speed. DAMAGE is per hit before armor; a player cannot be hit again for ' +
-      `${secs(INVULN_SECONDS)} after a hit. KB RESIST is how much knockback is ignored. SIZE is the collision radius in px.`,
+    text: 'SPEED is px per second at full speed. DAMAGE is per hit before armor; each monster can hit the same player once every ' +
+      `${secs(ENEMY_HIT_COOLDOWN)}, so a crowd hurts as much as it has members touching you. KB RESIST is how much knockback is ignored. SIZE is the collision radius in px.`,
     color: COLOR.textDim,
   });
   return out;
@@ -800,7 +801,7 @@ function raresPage(): Block[] {
     },
     {
       t: 'p',
-      text: 'Modifiers that add max HP, move speed or damage add up with each other; damage reductions multiply. What rare enemies do to you hurts like a touch: through armor and shields, then the usual invulnerability (caustic ground is damage over time, see below). A hit they ignore (BLOCK, IMMUNE) does nothing: no knockback, no effect, no echo. Their auras reach other monsters too, bosses included. Some modifiers have a look of their own (below); an enemy shows every one it has.',
+      text: 'Modifiers that add max HP, move speed or damage add up with each other; damage reductions multiply. What rare enemies do to you hurts like a touch: through armor and shields, and its thorns share one hit timer with its touch (caustic ground is damage over time, see below). A hit they ignore (BLOCK, IMMUNE) does nothing: no knockback, no effect, no echo. Their auras reach other monsters too, bosses included. Some modifiers have a look of their own (below); an enemy shows every one it has.',
       color: COLOR.textDim,
     },
     { t: 'h', text: 'MODIFIERS' },
@@ -981,11 +982,11 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'TAKING DAMAGE' },
     {
       t: 'p',
-      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN and a Vicissitude charge if you have one (at least 1). After a hit you are invulnerable for ${secs(INVULN_SECONDS)}, and for ${secs(LEVELUP_INVULN_SECONDS)} when the run resumes after a level-up pick. Boss attacks (beams, shockwaves, clubs, petals, pollen, whirlpools) and what rare enemies do (thorns, crystal buds) hit the same way. Caustic ground from rare enemies is damage over time: each tick goes through armor and shield absorption, but ignores invulnerability, gives none and cannot be dodged or blocked. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
+      text: `Touching an enemy deals its DAMAGE minus your ARMOR, then minus what your shields absorb, then times your DAMAGE TAKEN and a Vicissitude charge if you have one (at least 1). ${INVULN_SECONDS > 0 ? `After a hit you are invulnerable for ${secs(INVULN_SECONDS)}.` : 'A hit gives no invulnerability: every enemy touching you can hurt you.'} Instead each enemy (its touch and its thorns) and each boss hazard can hurt the same player once every ${secs(ENEMY_HIT_COOLDOWN)}, whether that hit got through, was dodged or was blocked. The only invulnerability is the ${secs(LEVELUP_INVULN_SECONDS)} you get when the run resumes after a level-up pick, and the ${secs(REVIVE.invulnSeconds)} after any revive (a co-op revive, Ragebaiter). Boss attacks (beams, shockwaves, clubs, petals, pollen, whirlpools) and what rare enemies do (thorns, crystal buds) hit the same way; a shockwave, beam or crystal bud hits each player once. Caustic ground from rare enemies is damage over time: each tick goes through armor and shield absorption, but ignores invulnerability and cannot be dodged or blocked. Regen keeps healing right after a hit. Hits push enemies back by the weapon's KNOCKBACK in px, reduced by the enemy's KB RESIST.`,
     },
     {
       t: 'p',
-      text: 'A hit is checked in this order: nothing while you are invulnerable or mist (Mistwalker); Shroud may dodge it; Aegis may block it (dodges and blocks still give the usual invulnerability); then the damage above, which Death Defied may refuse. Storm Shield deals its share back to whoever hit you, blocked or not. At 0 HP Ragebaiter may stand you right back up; otherwise you fall.',
+      text: 'A hit is checked in this order: nothing while you are invulnerable or mist (Mistwalker), or while that enemy or hazard is still waiting out its last hit on you; Shroud may dodge it; Aegis may block it; then the damage above, which Death Defied may refuse. Storm Shield deals its share back to whoever hit you, blocked or not. At 0 HP Ragebaiter may stand you right back up; otherwise you fall.',
       color: COLOR.textDim,
     },
     { t: 'h', text: 'CRITICAL STRIKES' },
@@ -1057,7 +1058,7 @@ function bossesPage(filter: string): Block[] {
     },
     {
       t: 'p',
-      text: 'Boss attacks hurt like a touch: through armor and shields, then the usual invulnerability, so standing in pollen or a whirlpool hurts once per invulnerability. Webs deal no damage but slow you.',
+      text: `Boss attacks hurt like a touch: through armor and shields. Every pollen cloud, whirlpool, club and petal can hurt you once every ${secs(ENEMY_HIT_COOLDOWN)}, so standing in two clouds hurts twice as often. Webs deal no damage but slow you.`,
       color: COLOR.textDim,
     },
   ];

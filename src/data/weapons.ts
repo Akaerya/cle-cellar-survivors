@@ -380,7 +380,7 @@ export const WEAPONS: WeaponDef[] = [
     description: 'Draws and cuts a short sword wave at the nearest enemy. It cuts through everything on the way until it reaches that enemy.',
     icon: 'icon_iaijutsu',
     targeting: 'wave',
-    tags: ['melee', 'projectile'],
+    tags: ['projectile'],
     projectileAnim: 'wave-cut',
     artRadius: 6,
     orient: true,
@@ -388,7 +388,7 @@ export const WEAPONS: WeaponDef[] = [
     // RANGE is the length of the wave: how far it travels. Its lifetime is worked out from that and SPEED.
     stats: {
       cooldown: 1,
-      damage: 10,
+      damage: 5,
       projectileCount: 1,
       speed: 520,
       pierce: 1,
@@ -411,8 +411,8 @@ export const WEAPONS: WeaponDef[] = [
     tags: ['melee', 'aoe'],
     color: 0xe8ecff,
     stats: {
-      cooldown: 1.4,
-      damage: 7,
+      cooldown: 2,
+      damage: 6,
       projectileCount: 1,
       speed: 0,
       pierce: Infinity,
@@ -429,12 +429,12 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'flicker_strike',
     name: 'Flicker Strike',
-    description: 'Teleports to a random enemy on screen and cuts it. Hits can give Shadow Charges: each one is spent on another Flicker Strike right away.',
+    description: 'Teleports to a random enemy on screen and cuts it. Hits and kills can give Shadow Charges: each one is spent on another Flicker Strike right away.',
     icon: 'icon_flicker',
     targeting: 'flicker',
     tags: ['melee'],
     color: 0xb48cff,
-    shadow: { check: 0.1, max: 10 },
+    shadow: { check: 0.1, max: 6, onKill: 0.14 },
     // One strike at a time: the cooldown's strike, then its Multistrike repeats, then Shadow Charge strikes.
     strikeTime: 0.1,
     stats: {

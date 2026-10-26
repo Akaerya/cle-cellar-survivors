@@ -534,28 +534,29 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Host: `raw` damage to `p` from `source` (an enemy's touch, a boss attack, a rare enemy's thorns or crystal bud;
-   * null when nothing living is behind it). Nothing happens while `p` is invulnerable or mist. Then, in order: Shroud
-   * may dodge it and Aegis may block it (both grant the usual invulnerability), armor, shields, DAMAGE TAKEN and
-   * Vicissitude reduce it, and Death Defied may refuse it. Storm Shield reflects a share of `raw` at the source
-   * whether or not it got through, and at 0 HP Ragebaiter may stand `p` right back up. `dot`: a tick of damage over
-   * time, which ignores invulnerability, gives none, cannot be dodged or blocked and is not reflected.
+   * null when nothing living is behind it). There is no invulnerability between hits; instead `hitter` (the enemy, or
+   * the hazard for boss hazards) cannot hurt `p` again for ENEMY_HIT_COOLDOWN, whatever became of its hit. Nothing
+   * happens while `p` is invulnerable (after a level-up pick, a revive) or mist. Then, in order: Shroud may dodge it,
+   * Aegis may block it, armor, shields, DAMAGE TAKEN and Vicissitude reduce it, and Death Defied may refuse it. Storm
+   * Shield reflects a share of `raw` at the source whether or not it got through, and at 0 HP Ragebaiter may stand `p`
+   * right back up. `dot`: a tick of damage over time, which ignores invulnerability and hit timers, cannot be dodged or
+   * blocked and is not reflected.
    */
-  hurtPlayer(p: Player, raw: number, dot = false, source: Enemy | null = null): void {
+  hurtPlayer(p: Player, raw: number, dot = false, source: Enemy | null = null, hitter: object | null = source): void {
     if (!p.canBeHit(dot)) return;
-    if (!dot && p.passive.dodge()) {
-      p.shrugOff();
-      return;
+    if (hitter && !dot) {
+      const now = this.time.now;
+      if (p.hitCooling(hitter, now)) return;
+      p.markHit(hitter, now);
     }
+    if (!dot && p.passive.dodge()) return;
     let dmg = 0;
     if (!dot && p.weapons.tryBlock()) {
-      p.shrugOff();
       p.runStats.blocks++;
     } else {
       dmg = p.damageFrom(raw);
-      if (p.passive.defy(dmg)) {
-        dmg = 0;
-        if (!dot) p.shrugOff();
-      } else p.takeDamage(dmg, dot);
+      if (p.passive.defy(dmg)) dmg = 0;
+      else p.takeDamage(dmg, dot);
     }
     if (dmg > 0) {
       this.relay(dot ? ['h', p.slot, dmg, 1] : ['h', p.slot, dmg]);

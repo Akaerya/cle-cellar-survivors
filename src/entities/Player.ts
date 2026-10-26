@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { COLOR, DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
+import { COLOR, DEPTH, ENEMY_HIT_COOLDOWN, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
 import { emptyRunStats, type PlayerRunStats } from '../core/events';
 import { computeStats, type OwnedItem, type OwnedMod } from '../core/progression';
 import { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from '../data/player';
@@ -11,6 +11,8 @@ import type { Ultimate } from '../systems/Ultimate';
 import type { Weapons } from '../systems/Weapons';
 
 export const CHARGE_KINDS: readonly ChargeKind[] = ['brutal', 'siphon', 'vicissitude'];
+/** Past this many hit timers, the ones that ran out are cleared away. */
+const MAX_HIT_COOLDOWNS = 64;
 
 /** What the HUD shows about a character's buffs and passive. The host sends it to joiners in every snapshot. */
 export interface PlayerStatus {
@@ -52,6 +54,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   dead = false;
   /** Co-op: the player disconnected. Their character is hidden and ignored. */
   gone = false;
+  /** Host: scene time (ms) until which each enemy or hazard that just hurt this character cannot hurt it again. */
+  private readonly hitCooldowns = new Map<object, number>();
   weapons!: Weapons;
   ultimate!: Ultimate;
   passive!: Passive;
@@ -397,12 +401,21 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return this.alive && !this.misted && (dot || this.invuln <= 0);
   }
 
+  /** True when `hitter` (an enemy or hazard) hurt this character less than ENEMY_HIT_COOLDOWN ago. */
+  hitCooling(hitter: object, now: number): boolean {
+    const until = this.hitCooldowns.get(hitter);
+    return until !== undefined && now < until;
+  }
+
   /**
-   * A hit that did no damage (blocked, dodged, defied) still grants the usual invulnerability, so the same enemy
-   * cannot hit next frame.
+   * `hitter` just tried to hurt this character, whether the hit got through or was dodged or blocked: it waits
+   * ENEMY_HIT_COOLDOWN before it can try again (touching enemies would otherwise hit every frame).
    */
-  shrugOff(): void {
-    this.invuln = this.invulnTotal = INVULN_SECONDS;
+  markHit(hitter: object, now: number): void {
+    if (this.hitCooldowns.size > MAX_HIT_COOLDOWNS) {
+      for (const [k, until] of this.hitCooldowns) if (until <= now) this.hitCooldowns.delete(k);
+    }
+    this.hitCooldowns.set(hitter, now + ENEMY_HIT_COOLDOWN * 1000);
   }
 
   /**
@@ -415,7 +428,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction()) * this.stats.damageTaken * (1 - vicissitude)));
   }
 
-  /** Takes `dmg` off HP (not in god mode). A hit (not `dot`) flashes the character and grants invulnerability. */
+  /** Takes `dmg` off HP (not in god mode). A hit (not `dot`) plays the hurt animation. */
   takeDamage(dmg: number, dot: boolean): void {
     if (!dot) this.showHurt();
     if (this.god) return;

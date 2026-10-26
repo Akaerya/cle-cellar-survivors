@@ -22,8 +22,9 @@ export class Enemies {
   readonly active: Enemy[] = [];
   private shadows: Phaser.GameObjects.Blitter;
   live = 0;
-  /** HP the last `hit` took off (0 when it did not land). */
+  /** HP the last `hit` took off (0 when it did not land), and whether it killed the enemy. */
   lastDealt = 0;
+  lastKilled = false;
 
   constructor(private game: GameScene) {
     this.group = game.physics.add.group({ classType: Enemy, maxSize: MAX_ENEMIES, runChildUpdate: false });
@@ -212,6 +213,7 @@ export class Enemies {
    */
   hit(e: Enemy, amount: number, dirX: number, dirY: number, knockback: number, weapon?: WeaponInstance, dot = false): boolean {
     this.lastDealt = 0;
+    this.lastKilled = false;
     if (!e.active || e.hp <= 0) return false;
     // Critical strikes: any hit from a player with crit chance (passive weapons, stats) can crit.
     let crit = false;
@@ -241,7 +243,6 @@ export class Enemies {
     const floor = e.intervention ? Math.min(e.hp, 1) : 0;
     const dealt = Math.min(e.hp - floor, amount);
     e.hp = Math.max(floor, e.hp - amount);
-    this.lastDealt = dealt;
     if (weapon) {
       weapon.damage += dealt;
       weapon.owner.runStats.damage += dealt;
@@ -254,7 +255,9 @@ export class Enemies {
     e.kby += dirY * k;
     this.game.playSfx('hit', e.x, e.y);
     if (attacker && !dot && e.mods.length > 0) mods.afterHit(e, amount, attacker);
+    let killed = false;
     if (e.hp <= 0 && !mods.revive(e)) {
+      killed = true;
       this.kill(e, true);
       if (weapon) {
         weapon.kills++;
@@ -265,6 +268,9 @@ export class Enemies {
       weapon.owner.runStats.crits++;
       weapon.owner.weapons.onCrit();
     }
+    // Set last: Thorns can set off a reflected hit (another `hit`) in the middle of this one.
+    this.lastDealt = dealt;
+    this.lastKilled = killed;
     return true;
   }
 

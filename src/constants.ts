@@ -35,9 +35,12 @@ export const MIN_MOVE_MULT = 0.1;
 export const MAX_WEAPONS = 4;
 export const MAX_ITEMS = 4;
 export const MAX_LEVEL = 5;
-export const INVULN_SECONDS = 0.5;
+/** Invulnerability after taking a hit: none, so every enemy in a crowd can hurt you (see ENEMY_HIT_COOLDOWN). */
+export const INVULN_SECONDS = 0;
+/** Seconds before the same enemy (its touch or its thorns) or the same hazard can hurt the same player again. */
+export const ENEMY_HIT_COOLDOWN = 0.5;
 /** Invulnerability each living player gets when the run resumes after a level-up pick. */
-export const LEVELUP_INVULN_SECONDS = 0.2;
+export const LEVELUP_INVULN_SECONDS = 0.25;
 export const SPAWN_TICK_MS = 500;
 export const FALLBACK_HEAL = 30;
 /** `stab` weapons thrust at enemies this many px beyond the blade's reach, so the stab lands as they close in. */

@@ -40,7 +40,7 @@ export interface Hazard {
   damage: number;
   /**
    * Seconds between damage-over-time ticks to every player inside (caustic ground: they ignore invulnerability), and
-   * seconds to the next one. 0: it hurts on touch every frame instead (once per invulnerability).
+   * seconds to the next one. 0: it hurts on touch instead (once per ENEMY_HIT_COOLDOWN for each player).
    */
   interval: number;
   tick: number;
@@ -500,7 +500,8 @@ export class Bosses {
         const r = h.def.radius + PLAYER_RADIUS;
         for (const p of live) {
           if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 > r * r) continue;
-          g.hurtPlayer(p, h.damage, ticking, stillAlive(h.source, h.sourceId));
+          // Each hazard has its own hit timer (pollen, whirlpools and clubs touch a player for many frames).
+          g.hurtPlayer(p, h.damage, ticking, stillAlive(h.source, h.sourceId), h);
           if (h.consume) {
             gone = true;
             break;

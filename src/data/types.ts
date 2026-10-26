@@ -123,6 +123,8 @@ export interface ShadowDef {
   check: number;
   /** Most Shadow Charges held at once. */
   max: number;
+  /** Chance (0..1) to gain one when the weapon's hit (or splash, or echo) kills its enemy, on top of the chance per hit. */
+  onKill: number;
 }
 
 /** How a weapon fires its extra projectiles one after another instead of all at once. */
@@ -293,10 +295,11 @@ export type PassiveDef = { id: string; name: string; description: string; icon: 
   /** Shroud: `chance` (0..1) to dodge a hit entirely. */
   | { kind: 'dodge'; chance: number }
   /**
-   * Ragebaiter: on falling, stands right back up with `hp` of max HP and `invuln` seconds of invulnerability, once
-   * every `cooldown` seconds. A banner tells a random other player to be put in the bin (`fallback` when alone).
+   * Ragebaiter: on falling, stands right back up with `hp` of max HP, once every `cooldown` seconds, invulnerable as
+   * long as after a co-op revive (REVIVE.invulnSeconds). A banner tells a random other player to be put in the bin
+   * (`fallback` when alone).
    */
-  | { kind: 'rebirth'; hp: number; invuln: number; cooldown: number; fallback: string }
+  | { kind: 'rebirth'; hp: number; cooldown: number; fallback: string }
   /** Dragonborn: a stack every `every` seconds of the run, each giving the stat changes in `perStack`. */
   | { kind: 'growth'; every: number; perStack: StatModifier[] }
   /**

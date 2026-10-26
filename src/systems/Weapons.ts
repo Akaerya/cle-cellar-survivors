@@ -1517,6 +1517,7 @@ export class Weapons {
     const enemies = this.game.enemies;
     if (!enemies.hit(en, amount, dirX, dirY, knockback, w)) return false;
     const dealt = enemies.lastDealt;
+    const killed = enemies.lastKilled;
     this.applyEffect(w, e, en);
     if (area) this.queueEchoes(w, en, x, y, amount * e.echo, e.echoRadius, e.echoRepeats, serial);
     if (e.stunChance > 0 && this.game.rng.float() < e.stunChance) {
@@ -1524,7 +1525,7 @@ export class Weapons {
       enemies.stun(en, STUN_SECONDS * (1 + dealt / Math.max(1, en.maxHp)), e.stunBonus, this.game.time.now);
     }
     if (e.impact > 0) this.splash(w, e, en, x, y, amount * e.impact);
-    this.afterHit(w, serial);
+    this.afterHit(w, serial, killed);
     return true;
   }
 
@@ -1567,8 +1568,9 @@ export class Weapons {
         const x = en.x;
         const y = en.y;
         if (!this.game.enemies.hit(en, amount, 0, 0, 0, w)) continue;
+        const killed = this.game.enemies.lastKilled;
         this.queueEchoes(w, en, x, y, amount * e.splashEcho, e.splashEchoRadius, e.splashEchoRepeats, w.serial);
-        this.afterHit(w, w.serial);
+        this.afterHit(w, w.serial, killed);
       }
       sums.clear();
     }
@@ -1614,22 +1616,24 @@ export class Weapons {
     this.echoes.length = keep;
     for (const [w, sums] of this.echoSums) {
       const serial = serials.get(w) ?? w.serial;
-      for (const [en, amount] of sums) if (this.game.enemies.hit(en, amount, 0, 0, 0, w)) this.afterHit(w, serial);
+      for (const [en, amount] of sums) if (this.game.enemies.hit(en, amount, 0, 0, 0, w)) this.afterHit(w, serial, this.game.enemies.lastKilled);
       sums.clear();
     }
   }
 
   /**
-   * Something of `w` landed on an enemy (a hit, splash or echo of attack `serial`; not an effect tick). Flicker
-   * Strike may give a Shadow Charge for every enemy reached; Unstable Infusion rolls once per attack, on its first hit.
+   * Something of `w` landed on an enemy (a hit, splash or echo of attack `serial`; not an effect tick), and `killed`
+   * it or not. Flicker Strike may give a Shadow Charge for every enemy reached, and has another chance for every
+   * enemy killed; Unstable Infusion rolls once per attack, on its first hit.
    */
-  private afterHit(w: WeaponInstance, serial: number): void {
+  private afterHit(w: WeaponInstance, serial: number, killed: boolean): void {
     const p = this.owner;
     const rng = this.game.rng;
     const shadow = w.def.shadow;
-    if (shadow && p.shadow < shadow.max) {
+    if (shadow) {
       const chance = w.stats.chargeChance ?? 0;
-      if (chance > 0 && rng.float() < chance) p.shadow++;
+      if (p.shadow < shadow.max && chance > 0 && rng.float() < chance) p.shadow++;
+      if (killed && p.shadow < shadow.max && rng.float() < shadow.onKill) p.shadow++;
     }
     const inf = this.infusion();
     if (!inf || w.infused === serial) return;

@@ -9,7 +9,6 @@ export const PASSIVES: PassiveDef[] = [
     icon: 'icon_passive_ragebait',
     kind: 'rebirth',
     hp: 0.5,
-    invuln: 1.5,
     cooldown: 120,
     // Named in the banner when nobody else is in the run.
     fallback: 'bearizm',
