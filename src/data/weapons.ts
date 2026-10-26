@@ -223,7 +223,7 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'storm_shield',
     name: 'Storm Shield',
-    description: 'Every 30 seconds puts Aegis on you, which blocks one hit completely. Absorbs part of every other hit and deals 40% of every hit back to the attacker.',
+    description: 'Every 30 seconds puts Aegis on you, which blocks one hit completely. Absorbs part of every other hit and deals 70% of every hit back to the attacker.',
     icon: 'icon_shield',
     targeting: 'shield',
     // Melee: the reflected damage is a melee hit. Duration: Aegis is an effect on you, so duration modifications
@@ -245,7 +245,7 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
       reduction: 0.1,
-      reflect: 0.4,
+      reflect: 0.7,
     },
     levels: [
       { text: 'Absorbs 15% of every hit.', add: { reduction: 0.05 } },
