@@ -76,7 +76,14 @@ export interface WeaponInstance {
   infused: number;
   /** Flicker Strike: seconds until the next check for a Shadow Charge to spend. */
   checkTimer: number;
+  /** Flicker Strike: strikes waiting their turn (highest priority first), and seconds until the current one is done. */
+  strikeQueue: StrikeSource[];
+  strikeBusy: number;
 }
+
+/** What set off a Flicker Strike, in order of priority: the cooldown, a Multistrike repeat, a Shadow Charge. */
+type StrikeSource = 'cooldown' | 'repeat' | 'shadow';
+const STRIKE_PRIORITY: readonly StrikeSource[] = ['cooldown', 'repeat', 'shadow'];
 
 /** Stats after the owner's multipliers (damage, cooldown, area) and modifications. */
 export interface Effective extends WeaponStats {
@@ -165,6 +172,8 @@ const DEG = Math.PI / 180;
 const DOME_INSET = 1;
 /** Seconds of slack for field timers, so a check due at the very end of a field's time does not run. */
 const FIELD_EPSILON = 1e-6;
+/** Seconds of slack for Flicker Strike's strike time, so float drift does not push the next strike a frame late. */
+const STRIKE_EPSILON = 1e-6;
 /** Targeting types drawn with the slash graphics (redrawn every frame while effects play). */
 const SLASHERS = new Set(['facing', 'stab', 'breath', 'spin', 'flicker']);
 /** Flicker Strike lands this many px past the edge of the enemy it cuts. */
@@ -257,6 +266,8 @@ export class Weapons {
       serial: 0,
       infused: -1,
       checkTimer: 0,
+      strikeQueue: [],
+      strikeBusy: 0,
     };
   }
 
@@ -374,10 +385,7 @@ export class Weapons {
           if (firing) this.tickShooter(w, e, dt, locked);
           break;
         case 'flicker':
-          if (firing) {
-            this.tickShooter(w, e, dt, locked);
-            if (!locked) this.spendShadow(w, e, dt);
-          }
+          if (firing) this.updateFlicker(w, e, dt, locked);
           break;
         case 'shield':
           this.updateShield(w, e, dt, firing);
@@ -526,8 +534,6 @@ export class Weapons {
       fired = this.castFields(w, e);
     } else if (t === 'wave') {
       fired = this.waves(w, e);
-    } else if (t === 'flicker') {
-      fired = this.flicker(w, e);
     } else {
       const base = Math.atan2(p.facing.y, p.facing.x);
       if (e.speed > 0) this.volley(w, e, base);
@@ -699,15 +705,73 @@ export class Weapons {
     return true;
   }
 
-  /** Flicker Strike: every `shadow.check` seconds a Shadow Charge, if there is one, is spent on another strike (cooldown or not). */
-  private spendShadow(w: WeaponInstance, e: Effective, dt: number): void {
-    const def = w.def.shadow;
-    if (!def) return;
-    w.checkTimer -= dt;
-    if (w.checkTimer > 0) return;
-    w.checkTimer = def.check;
+  /**
+   * Flicker Strike. Strikes come from three sources, in this order of priority: the cooldown running out (it starts
+   * again right away), Multistrike repeats, and Shadow Charges (every `shadow.check` seconds one is spent, unless a
+   * Shadow Charge strike is already waiting). One strike happens at a time and takes `strikeTime`; strikes that come up
+   * meanwhile wait their turn, highest priority first. While the owner is mist, the cooldown counts but nothing else
+   * happens.
+   */
+  private updateFlicker(w: WeaponInstance, e: Effective, dt: number, locked: boolean): void {
     const p = this.owner;
-    if (p.shadow > 0 && this.perform(w, e)) p.shadow--;
+    const shadow = w.def.shadow;
+    w.timer = Math.max(0, w.timer - dt);
+    w.strikeBusy = Math.max(0, w.strikeBusy - dt);
+    w.checkTimer -= dt;
+    if (locked) return;
+    // With nothing on screen to strike, the cooldown stays ready and charges are kept.
+    const target = this.anyOnScreen();
+    if (w.timer <= 0 && target) {
+      w.timer = e.cooldown;
+      w.refundable = this.refundShare() * e.cooldown;
+      this.queueStrike(w, 'cooldown');
+    }
+    if (shadow && w.checkTimer <= 0) {
+      w.checkTimer = shadow.check;
+      if (p.shadow > 0 && target && !w.strikeQueue.includes('shadow')) {
+        p.shadow--;
+        this.queueStrike(w, 'shadow');
+      }
+    }
+    if (w.strikeBusy > STRIKE_EPSILON || w.strikeQueue.length === 0) return;
+    const source = w.strikeQueue.shift()!;
+    w.strikeBusy = w.def.strikeTime ?? 0;
+    this.flickerStrike(w, e, source);
+  }
+
+  /** Puts a Flicker Strike from `source` in the queue, behind those of the same or a higher priority. */
+  private queueStrike(w: WeaponInstance, source: StrikeSource): void {
+    const rank = STRIKE_PRIORITY.indexOf(source);
+    const q = w.strikeQueue;
+    let i = q.length;
+    while (i > 0 && STRIKE_PRIORITY.indexOf(q[i - 1]) > rank) i--;
+    q.splice(i, 0, source);
+  }
+
+  /**
+   * One Flicker Strike, counted as an attack (Ruthless). The cooldown's strike brings Multistrike's sure repeats, and
+   * any strike may bring one more by chance; repeats never spend a Shadow Charge. With nothing left on screen, the
+   * cooldown is ready again, a Shadow Charge is given back and a repeat is lost.
+   */
+  private flickerStrike(w: WeaponInstance, e: Effective, source: StrikeSource): void {
+    const p = this.owner;
+    w.serial++;
+    const ruthless = e.ruthless > 0 && w.serial % RUTHLESS_EVERY === 0;
+    if (!this.flicker(w, ruthless ? this.ruthlessOf(e) : e)) {
+      w.serial--;
+      if (source === 'cooldown') w.timer = 0;
+      else if (source === 'shadow') p.shadow++;
+      return;
+    }
+    let more = source === 'cooldown' ? Math.round(e.multistrike) : 0;
+    if (e.repeatChance > 0 && this.game.rng.float() < e.repeatChance) more++;
+    for (let i = 0; i < more; i++) this.queueStrike(w, 'repeat');
+  }
+
+  /** True when a living enemy is on the owner's screen. */
+  private anyOnScreen(): boolean {
+    for (const en of this.game.enemies.active) if (en.active && this.game.onScreen(this.owner, en.x, en.y)) return true;
+    return false;
   }
 
   // ---------------------------------------------------------------- freezing fields
@@ -1676,6 +1740,8 @@ export class Weapons {
       w.slashes.length = 0;
       w.repeatsLeft = 0;
       w.burstLeft = 0;
+      w.strikeQueue.length = 0;
+      w.strikeBusy = 0;
     }
     this.echoes.length = 0;
     this.splashSums.clear();

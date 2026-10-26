@@ -435,6 +435,8 @@ export const WEAPONS: WeaponDef[] = [
     tags: ['melee'],
     color: 0xb48cff,
     shadow: { check: 0.1, max: 10 },
+    // One strike at a time: the cooldown's strike, then its Multistrike repeats, then Shadow Charge strikes.
+    strikeTime: 0.1,
     stats: {
       cooldown: 4,
       damage: 7,

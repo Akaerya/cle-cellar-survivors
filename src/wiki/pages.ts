@@ -308,7 +308,14 @@ function weaponsPage(filter: string): Block[] {
       if (def.shadow) {
         out.push({
           t: 'p',
-          text: `SHADOW CHARGES: you hold up to ${def.shadow.max}. Every ${secs(def.shadow.check)} one is spent on another Flicker Strike right away (when an enemy is on screen), whatever the cooldown, which keeps counting. Those strikes are attacks too: Ruthless counts them and Multistrike can repeat them.`,
+          text: `SHADOW CHARGES: you hold up to ${def.shadow.max}. Every ${secs(def.shadow.check)} one is spent on another Flicker Strike (when an enemy is on screen), whatever the cooldown, which keeps counting. Those strikes are attacks too: Ruthless counts them and Multistrike's chance can repeat them.`,
+          color: COLOR.textDim,
+        });
+      }
+      if (def.strikeTime) {
+        out.push({
+          t: 'p',
+          text: `ONE STRIKE AT A TIME: each strike takes ${secs(def.strikeTime)}. Strikes that come up meanwhile wait their turn in this order: the cooldown's strike first, then Multistrike repeats, then Shadow Charge strikes. The cooldown's strike brings Multistrike's sure repeats, any strike may bring one more by chance, and repeats never spend a Shadow Charge. While you are mist (Mistwalker) nothing strikes and no charge is spent.`,
           color: COLOR.textDim,
         });
       }
@@ -604,7 +611,7 @@ function modsPage(filter: string): Block[] {
     { t: 'h', text: 'MELEE' },
     {
       t: 'p',
-      text: `MULTISTRIKE: every attack of a melee weapon is done again right away (${secs(MULTISTRIKE_GAP)} apart, or the weapon's own repeat delay, squeezed so the sure ones land before the next attack), and any attack, repeats included, may be repeated once more by chance. Repeats ignore the cooldown and count as attacks of their own. Shields have no attack to repeat. STUN: a stunned enemy stands still and takes more damage from everyone for ${secs(STUN_SECONDS)}, longer by the share of its max HP the hit took (a hit taking 15% of it stuns 15% longer). Stunned enemies are tinted yellow; bosses and enemies that ignore debuffs are never stunned. MOMENTUM: adds a share of your move speed right now to each hit's base damage (none while standing still; Flicker Strike counts as standing still). IMPACT: every melee hit also splashes a share of its damage on everything else within ${IMPACT_RADIUS} px of the enemy hit (scaled by AREA). With Impact, AoE modifications are offered for melee weapons and change only the splash: area modifications its radius, Echo Strike makes it echo, and their damage bonus adds to it (weapons that are AOE already have it in the hit). Splash from one weapon on one enemy in one frame counts as one hit; splashes never splash again. RUTHLESS: every ${RUTHLESS_EVERY}rd attack of a weapon (repeats and Shadow Charge strikes count) adds its bonus to the damage sum.`,
+      text: `MULTISTRIKE: every attack of a melee weapon is done again right away (${secs(MULTISTRIKE_GAP)} apart, or the weapon's own repeat delay, squeezed so the sure ones land before the next attack; Flicker Strike queues them, see WEAPONS), and any attack, repeats included, may be repeated once more by chance. Repeats ignore the cooldown and count as attacks of their own. Shields have no attack to repeat. STUN: a stunned enemy stands still and takes more damage from everyone for ${secs(STUN_SECONDS)}, longer by the share of its max HP the hit took (a hit taking 15% of it stuns 15% longer). Stunned enemies are tinted yellow; bosses and enemies that ignore debuffs are never stunned. MOMENTUM: adds a share of your move speed right now to each hit's base damage (none while standing still; Flicker Strike counts as standing still). IMPACT: every melee hit also splashes a share of its damage on everything else within ${IMPACT_RADIUS} px of the enemy hit (scaled by AREA). With Impact, AoE modifications are offered for melee weapons and change only the splash: area modifications its radius, Echo Strike makes it echo, and their damage bonus adds to it (weapons that are AOE already have it in the hit). Splash from one weapon on one enemy in one frame counts as one hit; splashes never splash again. RUTHLESS: every ${RUTHLESS_EVERY}rd attack of a weapon (repeats and Shadow Charge strikes count) adds its bonus to the damage sum.`,
     },
     { t: 'h', text: 'DAMAGE' },
     {

@@ -207,6 +207,11 @@ export interface WeaponDef {
   charges?: ChargesDef;
   /** `flicker`: its Shadow Charges. */
   shadow?: ShadowDef;
+  /**
+   * `flicker`: seconds one strike takes. Strikes that come up meanwhile (the cooldown, Multistrike repeats, Shadow
+   * Charges) wait their turn in that order of priority and go one after another.
+   */
+  strikeTime?: number;
 }
 
 /**
