@@ -4,10 +4,11 @@ import { ENEMIES } from './enemies';
 import { ENEMY_MODIFIERS, RARE_HAZARDS } from './enemyModifiers';
 import { ITEMS } from './items';
 import { MODIFICATIONS } from './modifications';
+import { PASSIVES } from './passives';
 import { POWERUPS } from './powerups';
 import { ULTIMATES } from './ultimates';
 import { WEAPONS } from './weapons';
-import type { CharacterDef, EnemyDef, EnemyModifierDef, EnemyModifierId, HazardDef, ItemDef, ModificationDef, UltimateDef, WeaponDef } from './types';
+import type { CharacterDef, EnemyDef, EnemyModifierDef, EnemyModifierId, HazardDef, ItemDef, ModificationDef, PassiveDef, UltimateDef, WeaponDef } from './types';
 
 export * from './types';
 export { ENEMIES } from './enemies';
@@ -23,7 +24,19 @@ export const HAZARDS: HazardDef[] = [...BOSS_HAZARDS, ...RARE_HAZARDS];
  */
 export const ALL_ENEMIES: EnemyDef[] = [...ENEMIES, ...MINIONS, ...BOSSES];
 export { ITEMS } from './items';
-export { MODIFICATIONS, SPLIT_ARC, CHAIN_RANGE, CHAIN_SPEED, ECHO_RADIUS, ECHO_GAP } from './modifications';
+export {
+  MODIFICATIONS,
+  SPLIT_ARC,
+  CHAIN_RANGE,
+  CHAIN_SPEED,
+  ECHO_RADIUS,
+  ECHO_GAP,
+  MULTISTRIKE_GAP,
+  STUN_SECONDS,
+  IMPACT_RADIUS,
+  RUTHLESS_EVERY,
+} from './modifications';
+export { PASSIVES } from './passives';
 export { POWERUPS, POWERUP_MAX_LEVEL } from './powerups';
 export { WEAPONS } from './weapons';
 export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute, hpScaleForPlayers, speedScaleForMinute, spawnScaleFor } from './waves';
@@ -47,6 +60,7 @@ const enemyMap = byId(ALL_ENEMIES);
 const hazardMap = byId(HAZARDS);
 const characterMap = byId(CHARACTERS);
 const ultimateMap = byId(ULTIMATES);
+const passiveMap = byId(PASSIVES);
 
 export function weaponDef(id: string): WeaponDef {
   const d = weaponMap.get(id);
@@ -103,6 +117,12 @@ export function characterDef(id: string | undefined): CharacterDef {
 export function ultimateDef(id: string): UltimateDef {
   const d = ultimateMap.get(id);
   if (!d) throw new Error(`Unknown ultimate ${id}`);
+  return d;
+}
+
+export function passiveDef(id: string): PassiveDef {
+  const d = passiveMap.get(id);
+  if (!d) throw new Error(`Unknown passive ${id}`);
   return d;
 }
 

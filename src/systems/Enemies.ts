@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { ARENA_SIZE, CHILL_TINT, DEPTH, MAX_EFFECT_STACKS, MAX_ENEMIES, SLOW_LINGER_MS } from '../constants';
+import { ARENA_SIZE, CHILL_TINT, DEPTH, MAX_EFFECT_STACKS, MAX_ENEMIES, SLOW_LINGER_MS, STUN_TINT } from '../constants';
 import { SpatialGrid } from '../core/spatialGrid';
 import type { EnemyDef } from '../data/types';
 import { Enemy, SHADOW_W, type EffectStack } from '../entities/Enemy';
@@ -22,6 +22,8 @@ export class Enemies {
   readonly active: Enemy[] = [];
   private shadows: Phaser.GameObjects.Blitter;
   live = 0;
+  /** HP the last `hit` took off (0 when it did not land). */
+  lastDealt = 0;
 
   constructor(private game: GameScene) {
     this.group = game.physics.add.group({ classType: Enemy, maxSize: MAX_ENEMIES, runChildUpdate: false });
@@ -91,7 +93,7 @@ export class Enemies {
     for (let i = 0; i < active.length; i++) {
       const e = active[i];
       const body = e.body as Phaser.Physics.Arcade.Body;
-      if (frozen || targets.length === 0 || now < e.rootedUntil) {
+      if (frozen || targets.length === 0 || now < e.rootedUntil || e.stunned(now)) {
         body.setVelocity(0, 0);
       } else {
         let t = targets[0];
@@ -120,9 +122,10 @@ export class Enemies {
       }
       if (e.flashUntil !== 0 && now >= e.flashUntil) e.flashUntil = 0;
       if (e.flashUntil === 0) {
-        // Back from a hit flash, or chilled / no longer chilled: only touch the tint when it changes.
-        const chill = e.chillTint(now, CHILL_TINT);
-        const want = chill !== null ? 2 : 0;
+        // Back from a hit flash, or stunned, chilled or neither: only touch the tint when it changes.
+        const stun = e.stunned(now);
+        const chill = stun ? STUN_TINT : e.chillTint(now, CHILL_TINT);
+        const want = stun ? 3 : chill !== null ? 2 : 0;
         if (want !== e.tintState) {
           e.tintState = want;
           if (chill !== null) e.setTint(chill).setTintMode(Phaser.TintModes.MULTIPLY);
@@ -182,6 +185,17 @@ export class Enemies {
     e.slowUntil = now + SLOW_LINGER_MS;
   }
 
+  /**
+   * Stun: `e` stands still for `seconds` and takes `bonus` more damage meanwhile (a stronger stun extends a weaker
+   * one). Bosses and hexproof enemies are never stunned. Returns true when it took.
+   */
+  stun(e: Enemy, seconds: number, bonus: number, now: number): boolean {
+    if (e.def.boss || !this.game.enemyMods.debuffable(e)) return false;
+    e.stunBonus = e.stunned(now) ? Math.max(e.stunBonus, bonus) : bonus;
+    e.stunUntil = Math.max(e.stunUntil, now + seconds * 1000);
+    return true;
+  }
+
   /** Reiterate: with `chance`, the stack copies itself (same time left), up to MAX_EFFECT_STACKS per weapon. */
   reiterate(e: Enemy, stack: EffectStack, chance: number): void {
     if (chance <= 0 || stack.left <= 0 || !e.active) return;
@@ -197,16 +211,26 @@ export class Enemies {
    * rare enemy's modifiers ignored it (blocked, shielded).
    */
   hit(e: Enemy, amount: number, dirX: number, dirY: number, knockback: number, weapon?: WeaponInstance, dot = false): boolean {
+    this.lastDealt = 0;
     if (!e.active || e.hp <= 0) return false;
     // Critical strikes: any hit from a player with crit chance (passive weapons, stats) can crit.
     let crit = false;
+    let brutal = false;
     if (weapon) {
-      const chance = weapon.owner.critChance;
+      const owner = weapon.owner;
+      const chance = owner.critChance;
       if (chance > 0 && this.game.rng.float() < chance) {
         crit = true;
-        amount *= weapon.owner.stats.critDamage;
+        amount *= owner.stats.critDamage;
+      }
+      // Brutal charges (Unstable Infusion): double damage, which is not a critical strike.
+      const brutalChance = owner.brutalChance;
+      if (brutalChance > 0 && this.game.rng.float() < brutalChance) {
+        brutal = true;
+        amount *= 2;
       }
     }
+    if (e.stunned(this.game.time.now)) amount *= 1 + e.stunBonus;
     const mods = this.game.enemyMods;
     const attacker = weapon?.owner ?? null;
     if (e.mods.length > 0) {
@@ -217,12 +241,14 @@ export class Enemies {
     const floor = e.intervention ? Math.min(e.hp, 1) : 0;
     const dealt = Math.min(e.hp - floor, amount);
     e.hp = Math.max(floor, e.hp - amount);
+    this.lastDealt = dealt;
     if (weapon) {
       weapon.damage += dealt;
       weapon.owner.runStats.damage += dealt;
+      weapon.owner.lifeStealFrom(dealt);
     }
     e.flash(this.game.time.now);
-    this.game.fx.damageNumber(e.x, e.y - e.displayHeight / 2, amount, crit ? 2 : amount >= 25 ? 1 : 0);
+    this.game.fx.damageNumber(e.x, e.y - e.displayHeight / 2, amount, crit ? 2 : brutal || amount >= 25 ? 1 : 0);
     const k = (knockback * (1 - e.def.knockbackResist)) / KB_TAU;
     e.kbx += dirX * k;
     e.kby += dirY * k;

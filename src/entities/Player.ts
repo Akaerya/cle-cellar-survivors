@@ -2,12 +2,33 @@ import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { COLOR, DEPTH, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
 import { emptyRunStats, type PlayerRunStats } from '../core/events';
-import type { OwnedItem, OwnedMod } from '../core/progression';
+import { computeStats, type OwnedItem, type OwnedMod } from '../core/progression';
 import { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from '../data/player';
-import type { ChainsDef, CharacterDef, PlayerStats } from '../data/types';
+import type { ChainsDef, ChargeKind, ChargesDef, CharacterDef, PlayerStats } from '../data/types';
 import { text } from '../ui/widgets';
+import type { Passive } from '../systems/Passive';
 import type { Ultimate } from '../systems/Ultimate';
 import type { Weapons } from '../systems/Weapons';
+
+export const CHARGE_KINDS: readonly ChargeKind[] = ['brutal', 'siphon', 'vicissitude'];
+
+/** What the HUD shows about a character's buffs and passive. The host sends it to joiners in every snapshot. */
+export interface PlayerStatus {
+  /** Aegis stacks (Storm Shield). */
+  aegis: number;
+  /** Unstable Infusion charges held, by kind. */
+  brutal: number;
+  siphon: number;
+  vicissitude: number;
+  /** Shadow Charges (Flicker Strike). */
+  shadow: number;
+  /** Mistwalker amplification: total added to DAMAGE, and seconds the longest stack has left. */
+  amp: number;
+  ampLeft: number;
+  /** Seconds until the passive can trigger again, and its stacks (Dragonborn). */
+  passiveCd: number;
+  stacks: number;
+}
 
 /** A playable character. The player only steers it (and casts the ultimate); weapons fire on their own. */
 export class Player extends Phaser.Physics.Arcade.Sprite {
@@ -33,6 +54,21 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   gone = false;
   weapons!: Weapons;
   ultimate!: Ultimate;
+  passive!: Passive;
+  /** Aegis stacks (Storm Shield): each blocks one hit completely. */
+  aegis = 0;
+  /** Unstable Infusion charges: seconds left on each, oldest first, by kind. */
+  readonly charges: Record<ChargeKind, number[]> = { brutal: [], siphon: [], vicissitude: [] };
+  /** Shadow Charges (Flicker Strike), each spent on an extra strike. */
+  shadow = 0;
+  /** Mistwalker amplification stacks: seconds left and what each adds to DAMAGE. */
+  readonly amps: { left: number; amount: number }[] = [];
+  /** px/s this character moves at right now. The browser moving it measures it (joiners report theirs). */
+  speedNow = 0;
+  /** Co-op: times the host has teleported this character (Flicker Strike). Positions sent before the last are ignored. */
+  teleports = 0;
+  /** Joiners: the host's numbers for the HUD (null on the host and in solo, where the live values are used). */
+  synced: PlayerStatus | null = null;
   items: OwnedItem[] = [];
   /** Generic powerups (stat boosts up to level 20, no slots). Stats come from items and powerups together. */
   powerups: OwnedItem[] = [];
@@ -104,6 +140,109 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.hp = Math.min(this.hp, stats.maxHp);
   }
 
+  /** Stats from items, powerups and the passive's stacks (Dragonborn), added up as usual. */
+  recomputeStats(): void {
+    this.setStats(computeStats([...this.items, ...this.powerups, ...(this.passive?.statSources() ?? [])]));
+  }
+
+  /** Mistwalker: abilities are locked, nothing can hurt it and enemies do not go after it. */
+  get misted(): boolean {
+    return this.ultimate?.misted ?? false;
+  }
+
+  /** Enemies and bosses can go after it. */
+  get targetable(): boolean {
+    return this.alive && !this.misted;
+  }
+
+  /** The DAMAGE stat with Mistwalker's amplification added. */
+  get damageMult(): number {
+    let amp = 0;
+    for (const a of this.amps) amp += a.amount;
+    return this.stats.damageMult + amp;
+  }
+
+  /** Mistwalker: amplification of `amount` for `seconds` (another stack when one is already running). */
+  addAmp(amount: number, seconds: number): void {
+    this.amps.push({ left: seconds, amount });
+  }
+
+  /** What `count` charges of one kind are worth: `per` charge from the owned Unstable Infusion, times its effect. */
+  private chargeValue(count: number, per: (def: ChargesDef) => number): number {
+    if (count <= 0) return 0;
+    const inf = this.weapons?.infusion();
+    const def = inf?.def.charges;
+    return inf && def ? count * per(def) * (inf.stats.chargeEffect ?? 1) : 0;
+  }
+
+  /** Brutal charges: chance that a hit deals double damage. */
+  get brutalChance(): number {
+    return this.chargeValue(this.charges.brutal.length, (d) => d.brutal);
+  }
+
+  /** Share of damage dealt recovered as health: the stat plus Siphoning charges. */
+  get lifeSteal(): number {
+    return this.stats.lifeSteal + this.chargeValue(this.charges.siphon.length, (d) => d.siphon);
+  }
+
+  /** Host: life steal from a hit that dealt `dealt`. */
+  lifeStealFrom(dealt: number): void {
+    const ls = this.lifeSteal;
+    if (ls > 0 && dealt > 0 && this.alive) this.heal(dealt * ls);
+  }
+
+  /** Unstable Infusion: a charge of `kind` for `def.duration` seconds; past `def.max` it replaces the oldest. */
+  gainCharge(kind: ChargeKind, def: ChargesDef): void {
+    const list = this.charges[kind];
+    if (list.length >= def.max) list.shift();
+    list.push(def.duration);
+  }
+
+  /** Host: charges and amplification run out. */
+  updateBuffs(dt: number): void {
+    for (const kind of CHARGE_KINDS) {
+      const list = this.charges[kind];
+      for (let i = list.length - 1; i >= 0; i--) {
+        list[i] -= dt;
+        if (list[i] <= 0) list.splice(i, 1);
+      }
+    }
+    for (let i = this.amps.length - 1; i >= 0; i--) {
+      this.amps[i].left -= dt;
+      if (this.amps[i].left <= 0) this.amps.splice(i, 1);
+    }
+  }
+
+  /** Drops every charge, Aegis and amplification (fallen, run over). */
+  clearBuffs(): void {
+    for (const kind of CHARGE_KINDS) this.charges[kind].length = 0;
+    this.amps.length = 0;
+    this.aegis = 0;
+    this.shadow = 0;
+  }
+
+  /** What the HUD shows: the host's numbers on joiners, the live ones elsewhere. */
+  status(): PlayerStatus {
+    if (this.synced) return this.synced;
+    let amp = 0;
+    let ampLeft = 0;
+    for (const a of this.amps) {
+      amp += a.amount;
+      ampLeft = Math.max(ampLeft, a.left);
+    }
+    return {
+      aegis: this.aegis,
+      brutal: this.charges.brutal.length,
+      siphon: this.charges.siphon.length,
+      vicissitude: this.charges.vicissitude.length,
+      shadow: this.shadow,
+      amp,
+      ampLeft,
+      passiveCd: this.passive?.cooldownLeft ?? 0,
+      stacks: this.passive?.stacks ?? 0,
+    };
+  }
+
   private spinTime = 0;
   private lookLeft = false;
 
@@ -126,17 +265,20 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.dead || this.gone) {
       body.setVelocity(0, 0);
       this.moving = false;
+      this.speedNow = 0;
       this.animate(dt);
       return;
     }
     const len = Math.hypot(ix, iy);
     this.moving = len > 0;
+    this.speedNow = 0;
     if (this.moving) {
       const nx = ix / len;
       const ny = iy / len;
       const speed = this.stats.moveSpeed * this.moveMult;
       body.setVelocity(nx * speed, ny * speed);
       this.facing.set(nx, ny);
+      this.speedNow = speed;
     } else {
       body.setVelocity(0, 0);
     }
@@ -248,25 +390,37 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   /**
-   * Returns the damage actually taken: 0 while invulnerable or when a charged shield blocks the hit.
-   * Armor is subtracted first, then shields absorb their share, then Damage Taken applies; a hit always deals at least 1.
-   * `dot`: a tick of damage over time (caustic ground). It ignores invulnerability, gives none and cannot be blocked.
+   * True when a hit can reach this character: alive, not mist, and not invulnerable (`dot`, a tick of damage over
+   * time such as caustic ground, ignores invulnerability).
    */
-  takeHit(raw: number, dot = false): number {
-    if (!this.alive || (this.invuln > 0 && !dot)) return 0;
-    if (!dot && this.weapons.tryBlock()) {
-      // A blocked hit still grants the usual invulnerability, so the same enemy cannot hit next frame.
-      this.invuln = this.invulnTotal = INVULN_SECONDS;
-      this.runStats.blocks++;
-      return 0;
-    }
-    const dmg = Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction()) * this.stats.damageTaken));
+  canBeHit(dot: boolean): boolean {
+    return this.alive && !this.misted && (dot || this.invuln <= 0);
+  }
+
+  /**
+   * A hit that did no damage (blocked, dodged, defied) still grants the usual invulnerability, so the same enemy
+   * cannot hit next frame.
+   */
+  shrugOff(): void {
+    this.invuln = this.invulnTotal = INVULN_SECONDS;
+  }
+
+  /**
+   * The damage `raw` would deal: armor is subtracted first, then shields absorb their share, then DAMAGE TAKEN and a
+   * Vicissitude charge (used up here) apply. Always at least 1.
+   */
+  damageFrom(raw: number): number {
+    const vicissitude = Math.min(1, this.chargeValue(Math.min(1, this.charges.vicissitude.length), (d) => d.vicissitude));
+    if (vicissitude > 0) this.charges.vicissitude.shift();
+    return Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction()) * this.stats.damageTaken * (1 - vicissitude)));
+  }
+
+  /** Takes `dmg` off HP (not in god mode). A hit (not `dot`) flashes the character and grants invulnerability. */
+  takeDamage(dmg: number, dot: boolean): void {
     if (!dot) this.showHurt();
-    if (!this.god) {
-      this.runStats.taken += Math.min(this.hp, dmg);
-      this.hp = Math.max(0, this.hp - dmg);
-    }
-    return dmg;
+    if (this.god) return;
+    this.runStats.taken += Math.min(this.hp, dmg);
+    this.hp = Math.max(0, this.hp - dmg);
   }
 
   /** At least `seconds` of invulnerability from now (a longer one already running is kept). */

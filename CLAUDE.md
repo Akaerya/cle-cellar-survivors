@@ -18,11 +18,11 @@ There are no automated tests. Check changes in the browser: `?play` skips the ti
 
 ## Where things live
 
-- `src/data/`: every gameplay number. Characters (kit, ultimate), ultimates, weapons, items, enemies, rare enemy modifiers (`enemyModifiers.ts`: tiers, modifiers, their hazards), bosses (skills, minions, hazards, schedule), waves (HP, speed and spawn scaling, co-op HP scaling), drops (potions, gem tiers), co-op revives, player base stats and rerolls. Engine code reads these generically.
+- `src/data/`: every gameplay number. Characters (kit, ultimate, passive), ultimates, passives, weapons, items, enemies, rare enemy modifiers (`enemyModifiers.ts`: tiers, modifiers, their hazards), bosses (skills, minions, hazards, schedule), waves (HP, speed and spawn scaling, co-op HP scaling), drops (potions, gem tiers), co-op revives, player base stats and rerolls. Engine code reads these generically.
 - `src/constants.ts`: engine limits (run length, caps, slot counts, invulnerability).
 - `src/core/progression.ts`: level curve, weapon stats per level, stat formula.
 - `src/art/sprites/`: one `.aseprite` per sheet plus its exported `.png` and the shared `sprites.json`. Frame names come from tags (`<tag>_<i>`) or the file name (`<file>_<i>`); see README, "Art". After editing a `.aseprite`, run `npm run sprites` and commit the PNG and JSON with it. Animations are listed in `ANIMS` in `src/art/textures.ts`.
-- `src/entities/`, `src/systems/`: pooled game objects and the systems that run them (Enemies, EnemyModifiers, RareVisuals, Weapons, Ultimate, Bosses, Gems, Potions, Spawner, Fx). Rare enemy modifiers are kept apart from player abilities: `EnemyModifiers` runs them, `RareVisuals` draws them. Modifier names are internal; players only see their looks. `Player.runStats` and each weapon's `damage`/`kills` feed the party screen (`GameOverScene`).
+- `src/entities/`, `src/systems/`: pooled game objects and the systems that run them (Enemies, EnemyModifiers, RareVisuals, Weapons, Ultimate, Passive, Bosses, Gems, Potions, Spawner, Fx). Every hit a player takes goes through `GameScene.hurtPlayer` (dodge, Aegis, reductions, Death Defied, reflect, Ragebaiter, in that order); every weapon hit through `Weapons.directHit` (effects, echoes, Stun, Impact, Shadow Charges, Unstable Infusion). Rare enemy modifiers are kept apart from player abilities: `EnemyModifiers` runs them, `RareVisuals` draws them. Modifier names are internal; players only see their looks. `Player.runStats` and each weapon's `damage`/`kills` feed the party screen (`GameOverScene`).
 - `src/core/profile.ts`: display name and character (localStorage, sent to the co-op lobby).
 - `src/scenes/GameScene.ts`: the run. `mode` is `solo`, `host` (simulates for everyone) or `client` (draws the host's snapshots, moves only its own character).
 - `src/net/`: co-op session (`Net.ts`), message and binary snapshot format (`protocol.ts`), joiner-side renderer (`Mirror.ts`), scene transitions (`flow.ts`).
@@ -34,7 +34,8 @@ The in-game wiki (title screen > WIKI, or the pause menu) is how players and con
 
 - Numbers in the wiki are read from `src/data` and `src/constants.ts`, so changing an existing value needs no wiki edit. Check the page still reads correctly.
 - Prose in `src/wiki/pages.ts` is hand-written. Update it whenever you:
-  - add a character, ultimate, weapon, item, enemy, boss, wave event or drop (also check its table has the right columns, e.g. a new stat or field; weapon tables pick their columns per targeting type in `COLUMNS`),
+  - add a character, ultimate, passive, weapon, item, enemy, boss, wave event or drop (also check its table has the right columns, e.g. a new stat or field; weapon tables pick their columns per targeting type in `COLUMNS`),
+  - add a passive kind (`passiveText`) or a modification field (`modSummary`, and the MODS rules text),
   - add a boss skill kind (`skillText`) or hazard,
   - add a rare enemy modifier (`rareText` and `rareLook`; the wiki goes by its look, never its internal name),
   - add or change a mechanic or rule (damage, pickups, level-ups, spawning, co-op, revives, controls),
@@ -49,7 +50,9 @@ The in-game wiki (title screen > WIKI, or the pause menu) is how players and con
 - The host is authoritative. Gameplay randomness uses the run's seeded `rng` on the host; joiners never simulate enemies, hits or drops.
 - Anything a joiner must see goes through the snapshot (`protocol.ts` writer and `decodeSnapshot` must stay in step) or a relayed `FxEvent` (`game.relay`, `fx.relay`, `game.playSfx`). New visible effects need a relay and a `replay` case in `GameScene`.
 - Use `game.livePlayers()` and per-player state; never assume a single `player` in shared systems.
-- Ultimates are cast on the host (joiners send `{ t: 'ult' }`); their timers travel in `SnapPlayer.ultCd`/`ultActive`. Per-weapon state a joiner must draw goes in `Weapons.phases()` / `setPhases` (orbit angle, shield charge).
+- Ultimates are cast on the host (joiners send `{ t: 'ult' }`); their timers travel in `SnapPlayer.ultCd`/`ultActive`. Per-weapon state a joiner must draw goes in `Weapons.phases()` / `setPhases` (orbit angle, shield charge). Per-player buffs, charges and passive state the HUD shows go in `PlayerStatus` (`Player.status()`, sent as `SnapPlayer.status`).
+- Joiners move their own character. When the host moves one (Flicker Strike), use `GameScene.teleport`: it relays an `'m'` event and ignores the joiner's positions sent before it saw the teleport (the `k` count in `pos`). Joiners also report their speed (`v`) for Momentum.
+- Enemies and bosses pick targets from `game.targetablePlayers()` (Mistwalker's mist is not targetable); `livePlayers()` is still right for pickups, spawning and revives.
 - Projectile kinds in snapshots index `ATTACK_DEFS` (weapons, then ultimate attacks); keep new projectile-firing things in that list. Enemy kinds index `ALL_ENEMIES` (wave enemies, minions, bosses), hazard kinds index `HAZARDS`.
 - Bosses run only on the host (`systems/Bosses.ts`). Joiners get hazards as a snapshot layer (drawn by `Mirror`), boss HP from the snapshot's boss list, and wind-ups and beams as relayed effects. Webs slow the character each browser moves, so `Mirror.slowAt` mirrors `Bosses.slowAt`. Boss attacks go through `GameScene.hurtPlayer`.
 - Rerolls: joiners send `{ t: 'reroll' }`; the host checks `Player.rerolls` and answers with new `choices`.

@@ -24,6 +24,11 @@ export function randomStartFrame(scene: Phaser.Scene, key: string): number {
   return Math.floor(Math.random() * (scene.anims.get(key)?.frames.length ?? 1));
 }
 
+/** `e` if it is still the same living enemy as spawn `id` (pooled enemies are reused), else null. */
+export function stillAlive(e: Enemy | null, id: number): Enemy | null {
+  return e && e.active && e.netId === id ? e : null;
+}
+
 /** Shadow sprite widths in px, by frame name. */
 export const SHADOW_W: Record<string, number> = { shadow_s: 12, shadow_l: 24, shadow_xl: 48 };
 
@@ -50,10 +55,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Slowed (e.g. standing on a freezing field) until this scene time, by this fraction of its speed. */
   slowUntil = 0;
   slowAmount = 0;
-  /** Tint shown right now: 0 none, 1 hit flash, 2 chilled (slowed or carrying a tinted effect). */
+  /** Tint shown right now: 0 none, 1 hit flash, 2 chilled (slowed or carrying a tinted effect), 3 stunned. */
   tintState = 0;
   /** Stands still until this scene time (a boss winding up an attack). */
   rootedUntil = 0;
+  /** Stunned (Stun modification) until this scene time: stands still and takes `stunBonus` more damage. */
+  stunUntil = 0;
+  stunBonus = 0;
   /** Bosses and shooters: seconds until each skill (or the next shot) is ready, by skill index. */
   readonly skillTimers: number[] = [];
   shadow: Phaser.GameObjects.Bob | null = null;
@@ -110,6 +118,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.slowAmount = 0;
     this.tintState = 0;
     this.rootedUntil = 0;
+    this.stunUntil = 0;
+    this.stunBonus = 0;
     this.skillTimers.length = 0;
     this.mods = NO_MODS;
     this.modMask = 0;
@@ -131,6 +141,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.flashUntil = now + 100;
     this.tintState = 1;
     this.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
+  }
+
+  stunned(now: number): boolean {
+    return now < this.stunUntil;
   }
 
   /** The colour of a tinted effect on this enemy, or of a slow, or null. */

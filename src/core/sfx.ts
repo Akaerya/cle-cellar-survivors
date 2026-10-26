@@ -28,7 +28,9 @@ export type SfxName =
   | 'shatter'
   | 'freeze'
   | 'laser'
-  | 'roar';
+  | 'roar'
+  | 'slash'
+  | 'blink';
 
 const THROTTLE_MS: Partial<Record<SfxName, number>> = {
   throw: 60,
@@ -45,6 +47,8 @@ const THROTTLE_MS: Partial<Record<SfxName, number>> = {
   shatter: 70,
   freeze: 120,
   laser: 90,
+  slash: 70,
+  blink: 60,
 };
 
 class SfxEngine {
@@ -191,6 +195,15 @@ class SfxEngine {
         break;
       case 'revive':
         [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(t + i * 0.08, f, f, 0.18, 'triangle', 0.07));
+        break;
+      case 'slash':
+        // A blade leaving its sheath: an airy swish with a thin metallic ring.
+        this.noiseBurst(t, 0.1, 0.1, 'highpass', 2500, 7000);
+        this.tone(t + 0.01, 2600, 3400, 0.12, 'triangle', 0.025);
+        break;
+      case 'blink':
+        this.noiseBurst(t, 0.12, 0.08, 'bandpass', 600, 5000);
+        this.tone(t, 300, 1200, 0.08, 'sine', 0.05);
         break;
     }
   }

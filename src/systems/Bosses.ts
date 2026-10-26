@@ -4,7 +4,7 @@ import { COLOR, DEPTH, INNER, RUN_SECONDS } from '../constants';
 import { BOSSES, BOSS_TIMES, HAZARDS, enemyDef, hazardDef, hpScaleForMinute, hpScaleForPlayers } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
 import type { BossSkill, ChainsDef, EnemyDef, HazardDef } from '../data/types';
-import type { Enemy } from '../entities/Enemy';
+import { stillAlive, type Enemy } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
 import { nextNetId } from '../net/ids';
 import type { GameScene } from '../scenes/GameScene';
@@ -50,11 +50,16 @@ export interface Hazard {
   consume: boolean;
   /** Boomerang: flies out for `outTime`, slowing down, then back to the thrower. */
   back: { owner: Enemy; ownerId: number; outTime: number; speed: number } | null;
+  /** The enemy that made it (and its spawn id): Storm Shield reflects damage at it while it lives. */
+  source: Enemy | null;
+  sourceId: number;
   sprite: Phaser.GameObjects.Sprite;
 }
 
 /** Shockwave ring rolling out from a slam; hits each player once as its front passes. */
 interface Shock {
+  source: Enemy;
+  sourceId: number;
   x: number;
   y: number;
   radius: number;
@@ -67,6 +72,8 @@ interface Shock {
 
 /** A firing beam; hits each player once while it lasts. */
 interface Beam {
+  source: Enemy;
+  sourceId: number;
   x1: number;
   y1: number;
   x2: number;
@@ -199,7 +206,8 @@ export class Bosses {
       for (const e of g.enemies.active) {
         if (!e.active) continue;
         if (e.def.boss) this.think(e, dt);
-        else if (e.def.shooter) this.shoot(e, dt);
+        // Stunned shooters hold their fire.
+        else if (e.def.shooter && !e.stunned(g.time.now)) this.shoot(e, dt);
       }
       for (let i = this.pending.length - 1; i >= 0; i--) {
         const p = this.pending[i];
@@ -246,7 +254,7 @@ export class Bosses {
   private nearestPlayer(x: number, y: number, maxDist = Infinity): Player | null {
     let best: Player | null = null;
     let bestD = maxDist * maxDist;
-    for (const p of this.game.livePlayers()) {
+    for (const p of this.game.targetablePlayers()) {
       const d = (p.x - x) ** 2 + (p.y - y) ** 2;
       if (d < bestD) {
         bestD = d;
@@ -293,7 +301,7 @@ export class Bosses {
         for (let i = 0; i < s.count; i++) {
           const x = e.x + rng.range(-24, 24);
           const y = e.y + rng.range(-24, 24);
-          this.addHazard('pollen', x, y, { life: s.lifetime, damage: s.damage, follow: s.speed });
+          this.addHazard('pollen', x, y, { life: s.lifetime, damage: s.damage, follow: s.speed, source: e });
         }
         g.fx.puff(e.x, e.y - 10, 0xeef88c, 14);
         return;
@@ -313,7 +321,7 @@ export class Bosses {
           bossId: e.netId,
           left: s.charge,
           fire: () => {
-            this.beams.push({ x1, y1, x2, y2, width: s.width, t: 0, dur: s.duration, damage: s.damage, hit: new Set() });
+            this.beams.push({ source: e, sourceId: e.netId, x1, y1, x2, y2, width: s.width, t: 0, dur: s.duration, damage: s.damage, hit: new Set() });
             g.fx.beam(x1, y1, x2, y2, s.width, s.duration + 0.3, s.color);
             g.playSfx('laser', x1, y1);
           },
@@ -321,13 +329,13 @@ export class Bosses {
         return;
       }
       case 'whirlpools': {
-        const players = g.livePlayers();
+        const players = g.targetablePlayers();
         if (players.length === 0) return;
         for (let i = 0; i < s.count; i++) {
           const p = rng.pick(players);
           const a = rng.angle();
           const r = rng.range(60, s.range);
-          this.addHazard('whirlpool', clampX(p.x + Math.cos(a) * r), clampY(p.y + Math.sin(a) * r), { life: s.lifetime, damage: s.damage });
+          this.addHazard('whirlpool', clampX(p.x + Math.cos(a) * r), clampY(p.y + Math.sin(a) * r), { life: s.lifetime, damage: s.damage, source: e });
         }
         g.playSfx('freeze');
         return;
@@ -342,7 +350,7 @@ export class Bosses {
           bossId: e.netId,
           left: s.windup,
           fire: () => {
-            this.shocks.push({ x, y, radius: s.radius, t: 0, dur: s.duration, damage: s.damage, band: s.band, hit: new Set() });
+            this.shocks.push({ source: e, sourceId: e.netId, x, y, radius: s.radius, t: 0, dur: s.duration, damage: s.damage, band: s.band, hit: new Set() });
             g.fx.ring(x, y, 0xf0b030, s.radius, s.duration * 1000);
             g.fx.puff(x, y + 16, 0x9a8a52, 20);
             g.playSfx('boom', x, y);
@@ -360,6 +368,7 @@ export class Bosses {
             vx: Math.cos(a) * s.speed,
             vy: Math.sin(a) * s.speed,
             back: { owner: e, ownerId: e.netId, outTime: s.outTime, speed: s.speed },
+            source: e,
           });
         }
         g.playSfx('whip', e.x, e.y);
@@ -379,7 +388,14 @@ export class Bosses {
     const t = this.nearestPlayer(e.x, e.y, sh.range);
     if (!t) return;
     const a = Math.atan2(t.y - e.y, t.x - e.x);
-    this.addHazard(sh.hazard, e.x, e.y - 4, { life: sh.lifetime, damage: sh.damage, vx: Math.cos(a) * sh.speed, vy: Math.sin(a) * sh.speed, consume: true });
+    this.addHazard(sh.hazard, e.x, e.y - 4, {
+      life: sh.lifetime,
+      damage: sh.damage,
+      vx: Math.cos(a) * sh.speed,
+      vy: Math.sin(a) * sh.speed,
+      consume: true,
+      source: e,
+    });
   }
 
   // ---------------------------------------------------------------- hazards and attacks
@@ -389,7 +405,17 @@ export class Bosses {
     id: string,
     x: number,
     y: number,
-    o: { life: number; damage?: number; interval?: number; follow?: number; vx?: number; vy?: number; consume?: boolean; back?: Hazard['back'] },
+    o: {
+      life: number;
+      damage?: number;
+      interval?: number;
+      follow?: number;
+      vx?: number;
+      vy?: number;
+      consume?: boolean;
+      back?: Hazard['back'];
+      source?: Enemy;
+    },
   ): void {
     const def = hazardDef(id);
     const sprite = this.game.add.sprite(x, y, ATLAS, def.frame).setScale(def.radius / def.artRadius);
@@ -411,6 +437,8 @@ export class Bosses {
       follow: o.follow ?? 0,
       consume: o.consume ?? false,
       back: o.back ?? null,
+      source: o.source ?? null,
+      sourceId: o.source?.netId ?? 0,
       sprite,
     });
   }
@@ -472,7 +500,7 @@ export class Bosses {
         const r = h.def.radius + PLAYER_RADIUS;
         for (const p of live) {
           if ((p.x - h.x) ** 2 + (p.y - h.y) ** 2 > r * r) continue;
-          g.hurtPlayer(p, h.damage, ticking);
+          g.hurtPlayer(p, h.damage, ticking, stillAlive(h.source, h.sourceId));
           if (h.consume) {
             gone = true;
             break;
@@ -502,7 +530,7 @@ export class Bosses {
           const d = Math.hypot(p.x - s.x, p.y - s.y);
           if (Math.abs(d - r) > s.band + PLAYER_RADIUS) continue;
           s.hit.add(p);
-          this.game.hurtPlayer(p, s.damage);
+          this.game.hurtPlayer(p, s.damage, false, stillAlive(s.source, s.sourceId));
         }
       }
       if (s.t >= s.dur) this.shocks.splice(i, 1);
@@ -518,7 +546,7 @@ export class Bosses {
           if (b.hit.has(p)) continue;
           if (distToSegment(p.x, p.y, b.x1, b.y1, b.x2, b.y2) > b.width / 2 + PLAYER_RADIUS) continue;
           b.hit.add(p);
-          this.game.hurtPlayer(p, b.damage);
+          this.game.hurtPlayer(p, b.damage, false, stillAlive(b.source, b.sourceId));
         }
       }
       if (b.t >= b.dur) this.beams.splice(i, 1);

@@ -7,10 +7,13 @@ import type { Player } from '../entities/Player';
 import { Button, drawPanel, text } from '../ui/widgets';
 import type { GameScene } from './GameScene';
 
-/** Own ultimate box under the build rows, and the teammate list under it. */
+/** Own ultimate box under the build rows, the passive box and buff line under it, then the teammate list. */
 const ULT_Y = 53;
 const ULT_SIZE = 24;
-const TEAM_Y = 84;
+const PASSIVE_Y = 84;
+const PASSIVE_H = 20;
+const BUFFS_Y = 107;
+const TEAM_Y = 118;
 const TEAM_ROW = 22;
 /** px between the slot rows and the modifications / powerups beside them. */
 const EXTRA_GAP = 6;
@@ -50,6 +53,9 @@ export class UIScene extends Phaser.Scene {
   private ultGfx!: Phaser.GameObjects.Graphics;
   private ultBadge!: UltBadge;
   private ultStatus!: Phaser.GameObjects.BitmapText;
+  private passiveIcon: Phaser.GameObjects.Image | null = null;
+  private passiveStatus!: Phaser.GameObjects.BitmapText;
+  private buffs!: Phaser.GameObjects.BitmapText;
   private deathsText: Phaser.GameObjects.BitmapText | null = null;
   private exp = { exp: 0, need: 5, level: 1 };
 
@@ -89,6 +95,13 @@ export class UIScene extends Phaser.Scene {
     this.ultBadge = this.ultBadgeFor(me, 4 + ULT_SIZE / 2, ULT_Y + ULT_SIZE / 2);
     text(this, 4 + ULT_SIZE + 5, ULT_Y + 2, `${me.ultimate.def.name.toUpperCase()} (Q)`, { color: COLOR.text });
     this.ultStatus = text(this, 4 + ULT_SIZE + 5, ULT_Y + 13, '', { color: COLOR.textDim });
+
+    // Own passive under it, then a line with the buffs and charges running (Aegis, charges, amplification).
+    const passive = me.passive.def;
+    this.passiveIcon = passive ? this.add.image(4 + ULT_SIZE / 2, PASSIVE_Y + PASSIVE_H / 2, ATLAS, passive.icon) : null;
+    if (passive) text(this, 4 + ULT_SIZE + 5, PASSIVE_Y + 1, `${passive.name.toUpperCase()} (PASSIVE)`, { color: COLOR.text });
+    this.passiveStatus = text(this, 4 + ULT_SIZE + 5, PASSIVE_Y + 11, '', { color: COLOR.textDim });
+    this.buffs = text(this, 4, BUFFS_Y, '', { color: COLOR.gold });
 
     // Co-op: teammates' ultimate, name and HP under it, and arrows at the screen edge pointing at them.
     this.team = this.add.graphics();
@@ -200,7 +213,7 @@ export class UIScene extends Phaser.Scene {
       g.fillStyle(COLOR.ink, 1);
       g.fillRect(x, y + ULT_SIZE + 1, ULT_SIZE, 3);
       g.fillStyle(COLOR.gold, 1);
-      g.fillRect(x, y + ULT_SIZE + 1, Math.ceil(ULT_SIZE * (u.activeLeft / u.def.duration)), 3);
+      g.fillRect(x, y + ULT_SIZE + 1, Math.ceil(ULT_SIZE * Math.min(1, u.activeLeft / u.activeTotal)), 3);
     }
     this.updateBadge(this.ultBadge, p);
     const status = !p.alive
@@ -211,6 +224,35 @@ export class UIScene extends Phaser.Scene {
           ? 'READY'
           : `${Math.ceil(u.cooldownLeft)}S`;
     this.ultStatus.setText(status).setTint(u.active ? COLOR.gold : u.ready && p.alive ? COLOR.good : COLOR.textDim);
+    this.drawPassive(p);
+  }
+
+  /** Passive box (green edge when ready, greyed while it recharges), its status, and the buff line under it. */
+  private drawPassive(p: Player): void {
+    const d = p.passive.def;
+    const s = p.status();
+    const g = this.ultGfx;
+    if (d) {
+      const cooling = s.passiveCd > 0;
+      g.fillStyle(COLOR.ink, 0.85);
+      g.fillRect(4, PASSIVE_Y, ULT_SIZE, PASSIVE_H);
+      g.lineStyle(1, cooling || !p.alive ? COLOR.panelEdge : COLOR.good, 1);
+      g.strokeRect(4.5, PASSIVE_Y + 0.5, ULT_SIZE - 1, PASSIVE_H - 1);
+      this.passiveIcon?.setAlpha(cooling || !p.alive ? 0.4 : 1);
+      let status: string;
+      if (d.kind === 'dodge') status = `${Math.round(d.chance * 100)}% DODGE`;
+      else if (d.kind === 'growth') status = `${s.stacks} STACKS · NEXT IN ${Math.ceil(d.every - (this.run.runTime % d.every))}S`;
+      else status = cooling ? `${Math.ceil(s.passiveCd)}S` : 'READY';
+      this.passiveStatus.setText(status).setTint(cooling ? COLOR.textDim : COLOR.good);
+    }
+    const parts: string[] = [];
+    if (s.aegis > 0) parts.push(`AEGIS ${s.aegis}`);
+    if (s.shadow > 0) parts.push(`SHADOW ${s.shadow}`);
+    if (s.brutal > 0) parts.push(`BRUTAL ${s.brutal}`);
+    if (s.siphon > 0) parts.push(`SIPHON ${s.siphon}`);
+    if (s.vicissitude > 0) parts.push(`VICISSITUDE ${s.vicissitude}`);
+    if (s.amp > 0) parts.push(`+${Math.round(s.amp * 100)}% DMG ${Math.ceil(s.ampLeft)}S`);
+    this.buffs.setText(p.alive ? parts.join(' · ') : '');
   }
 
   private drawTeam(): void {

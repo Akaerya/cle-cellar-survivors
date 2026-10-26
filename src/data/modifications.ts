@@ -12,17 +12,24 @@ import type { ModificationDef } from './types';
 export const SPLIT_ARC = 90;
 /** Chain: how far (px) a projectile looks for an enemy to bounce to. */
 export const CHAIN_RANGE = 140;
-/** Chain: speed of a projectile after it bounces, as a multiple of its weapon's speed (1 = unchanged). */
+/** Chain: speed of a projectile after it bounces, as a multiple of its weapon's speed (1 = unchanged), before Chain's own speed bonus. */
 export const CHAIN_SPEED = 1.9;
 /** Echo Strike: radius (px) of each echo before AREA, area modifications and Echo Strike's own area bonus. */
 export const ECHO_RADIUS = 20;
 /** Echo Strike: seconds between echoes when an echo goes off more than once. */
 export const ECHO_GAP = 0.2;
+/** Multistrike: seconds between an attack and its repeats (weapons with their own `repeatDelay` use that). */
+export const MULTISTRIKE_GAP = 0.15;
+/** Stun: seconds a stun lasts before the bonus for the share of max HP the hit took. */
+export const STUN_SECONDS = 0.5;
+/** Impact: radius (px) of the splash before AREA and area modifications. */
+export const IMPACT_RADIUS = 25;
+/** Ruthless: every this many attacks of a weapon, one is ruthless. */
+export const RUTHLESS_EVERY = 3;
 
 const pierce = { text: '+1 pierce, +15% damage.', add: { pierce: 1, damage: 0.15 } };
-const chain = { text: '+1 bounce.', add: { chain: 1 } };
 const moreProjectiles = { text: '+1 projectile.', add: { projectiles: 1 } };
-const moreArea = { text: '+10% area.', add: { area: 0.1 } };
+const moreArea = { text: '+20% area, +5% damage.', add: { area: 0.2, damage: 0.05 } };
 const lessArea = { text: '-10% area, +18% damage.', add: { area: -0.1, damage: 0.18 } };
 const moreDuration = { text: '+20% duration.', add: { duration: 0.2 } };
 const lessDuration = { text: '-10% duration, +20% damage.', add: { duration: -0.1, damage: 0.2 } };
@@ -40,24 +47,30 @@ export const MODIFICATIONS: ModificationDef[] = [
   {
     id: 'split',
     name: 'Splits',
-    description: 'Projectiles split into 2 when they hit an enemy. The new ones cannot split again.',
+    description: 'Projectiles split into 2 when they hit an enemy; the new ones deal 15% less damage and cannot split again.',
     icon: 'icon_mod_split',
     tags: ['projectile'],
     levels: [
-      { text: 'Splits into 2 projectiles.', set: { split: 2 } },
-      { text: 'Splits into 3 projectiles.', set: { split: 3 } },
-      { text: 'Splits into 4 projectiles.', set: { split: 4 } },
-      { text: 'Splits into 5 projectiles.', set: { split: 5 } },
-      { text: 'Projectiles can split an additional time.', set: { splitDepth: 2 } },
+      { text: 'Splits into 2. Splits deal 15% less damage.', set: { split: 2, splitLess: 0.15 } },
+      { text: 'Splits into 3. Splits deal 10% less damage.', set: { split: 3, splitLess: 0.1 } },
+      { text: 'Splits into 4. Splits deal 8% less damage.', set: { split: 4, splitLess: 0.08 } },
+      { text: 'Splits into 5. Splits deal 5% less damage.', set: { split: 5, splitLess: 0.05 } },
+      { text: 'Splits have a 20% chance to split again. 5% less damage.', set: { split: 5, splitLess: 0.05, splitAgain: 0.2 } },
     ],
   },
   {
     id: 'chain',
     name: 'Chain',
-    description: 'Once a projectile has used up its pierce, it bounces to a nearby enemy (+1 bounce).',
+    description: 'Once a projectile has used up its pierce, it bounces to a nearby enemy (+1 bounce). Each bounce deals 30% less damage.',
     icon: 'icon_mod_chain',
     tags: ['projectile'],
-    levels: [chain, chain, chain, chain, chain],
+    levels: [
+      { text: '+1 bounce. Bounces deal 30% less damage.', set: { chain: 1, chainLess: 0.3 } },
+      { text: 'Bounces fly 25% faster and deal 25% less damage.', set: { chain: 1, chainLess: 0.25, chainSpeed: 0.25 } },
+      { text: '+1 bounce. Bounces deal 20% less damage.', set: { chain: 2, chainLess: 0.2, chainSpeed: 0.25 } },
+      { text: 'Bounces fly 25% faster and deal 15% less damage.', set: { chain: 2, chainLess: 0.15, chainSpeed: 0.5 } },
+      { text: '+1 bounce. Bounces deal 10% less damage.', set: { chain: 3, chainLess: 0.1, chainSpeed: 0.5 } },
+    ],
   },
   {
     id: 'more_projectiles',
@@ -71,7 +84,7 @@ export const MODIFICATIONS: ModificationDef[] = [
   {
     id: 'more_area',
     name: 'Increased AoE',
-    description: `Area weapons cover ${Math.round(moreArea.add.area * 100)}% more area.`,
+    description: `Area weapons cover ${Math.round(moreArea.add.area * 100)}% more area and deal ${Math.round(moreArea.add.damage * 100)}% more damage.`,
     icon: 'icon_mod_more_area',
     tags: ['aoe'],
     levels: [moreArea, moreArea, moreArea, moreArea, moreArea],
@@ -127,6 +140,77 @@ export const MODIFICATIONS: ModificationDef[] = [
       { text: '33% chance to reiterate.', set: { reiterate: 0.33 } },
       { text: '50% chance to reiterate.', set: { reiterate: 0.5 } },
       { text: '75% chance to reiterate.', set: { reiterate: 0.75 } },
+    ],
+  },
+  // ---------------------------------------------------------------- melee
+  {
+    id: 'multistrike',
+    name: 'Multistrike',
+    description: 'Melee weapons attack 1 more time each time they are used, and any attack has a 10% chance to be repeated.',
+    icon: 'icon_mod_multistrike',
+    tags: ['melee'],
+    levels: [
+      { text: 'Attacks 1 more time. 10% chance to repeat.', set: { multistrike: 1, repeatChance: 0.1 } },
+      { text: '15% chance to repeat.', set: { multistrike: 1, repeatChance: 0.15 } },
+      { text: 'Attacks 1 more time. 20% chance to repeat.', set: { multistrike: 2, repeatChance: 0.2 } },
+      { text: '25% chance to repeat.', set: { multistrike: 2, repeatChance: 0.25 } },
+      { text: 'Attacks 1 more time. 33% chance to repeat.', set: { multistrike: 3, repeatChance: 0.33 } },
+    ],
+  },
+  {
+    id: 'stun',
+    name: 'Stun',
+    description: 'Melee hits have a 20% chance to stun the enemy. Stunned enemies stand still and take 10% more damage.',
+    icon: 'icon_mod_stun',
+    tags: ['melee'],
+    levels: [
+      { text: '20% chance to stun. Stunned take 10% more damage.', set: { stunChance: 0.2, stunBonus: 0.1 } },
+      { text: '+5% stun chance. Stunned take 15% more damage.', set: { stunChance: 0.25, stunBonus: 0.15 } },
+      { text: '+5% stun chance. Stunned take 20% more damage.', set: { stunChance: 0.3, stunBonus: 0.2 } },
+      { text: '+5% stun chance. Stunned take 25% more damage.', set: { stunChance: 0.35, stunBonus: 0.25 } },
+      { text: '+5% stun chance. Stunned take 30% more damage.', set: { stunChance: 0.4, stunBonus: 0.3 } },
+    ],
+  },
+  {
+    id: 'momentum',
+    name: 'Momentum',
+    description: 'Melee hits deal bonus damage equal to 3% of your current move speed (none while standing still).',
+    icon: 'icon_mod_momentum',
+    tags: ['melee'],
+    levels: [
+      { text: '3% of move speed as bonus damage.', set: { momentum: 0.03 } },
+      { text: '4% of move speed as bonus damage.', set: { momentum: 0.04 } },
+      { text: '5% of move speed as bonus damage.', set: { momentum: 0.05 } },
+      { text: '6% of move speed as bonus damage.', set: { momentum: 0.06 } },
+      { text: '8% of move speed as bonus damage.', set: { momentum: 0.08 } },
+    ],
+  },
+  {
+    id: 'impact',
+    name: 'Impact',
+    description: `Melee hits also splash around every enemy hit (${IMPACT_RADIUS} px) for 70% less damage. Melee weapons can then take AoE modifications, which change the splash.`,
+    icon: 'icon_mod_impact',
+    tags: ['melee'],
+    levels: [
+      { text: 'Splash deals 70% less than the hit.', set: { impact: 0.3 } },
+      { text: 'Splash deals 60% less than the hit.', set: { impact: 0.4 } },
+      { text: 'Splash deals 50% less than the hit.', set: { impact: 0.5 } },
+      { text: 'Splash deals 40% less than the hit.', set: { impact: 0.6 } },
+      { text: 'Splash deals 30% less than the hit.', set: { impact: 0.7 } },
+    ],
+  },
+  {
+    id: 'ruthless',
+    name: 'Ruthless',
+    description: 'Every third attack of a melee weapon deals 30% more damage.',
+    icon: 'icon_mod_ruthless',
+    tags: ['melee'],
+    levels: [
+      { text: 'Every 3rd attack: +30% damage.', set: { ruthless: 0.3 } },
+      { text: 'Every 3rd attack: +40% damage.', set: { ruthless: 0.4 } },
+      { text: 'Every 3rd attack: +50% damage.', set: { ruthless: 0.5 } },
+      { text: 'Every 3rd attack: +60% damage.', set: { ruthless: 0.6 } },
+      { text: 'Every 3rd attack: +70% damage.', set: { ruthless: 0.7 } },
     ],
   },
 ];

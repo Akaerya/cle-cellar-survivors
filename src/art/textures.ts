@@ -230,7 +230,7 @@ function buildUiTextures(scene: Phaser.Scene): void {
  * Frame timings come from the frame durations set in Aseprite. Animations loop unless `once`.
  */
 const ANIMS: { key: string; frames: string; once?: boolean }[] = [
-  ...['monkey', 'knight', 'elysia'].flatMap((c) => [
+  ...['monkey', 'knight', 'elysia', 'zorus'].flatMap((c) => [
     { key: `${c}-idle`, frames: `${c}_idle` },
     { key: `${c}-walk`, frames: `${c}_walk` },
     { key: `${c}-hurt`, frames: `${c}_hurt`, once: true },
@@ -253,6 +253,7 @@ const ANIMS: { key: string; frames: string; once?: boolean }[] = [
   { key: 'coconut-spin', frames: 'coconut' },
   { key: 'arrow-glint', frames: 'arrow' },
   { key: 'bloom-pulse', frames: 'bloom' },
+  { key: 'wave-cut', frames: 'wave' },
   ...['blue', 'green', 'red'].map((c) => ({ key: `gem-${c}`, frames: `gem_${c}` })),
 ];
 

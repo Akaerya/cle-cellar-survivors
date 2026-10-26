@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { RunSummary } from '../core/events';
 import type { Profile } from '../core/profile';
 import type { SfxName } from '../core/sfx';
+import type { PlayerStatus } from '../entities/Player';
 import type { Choice } from '../scenes/GameScene';
 
 // ------------------------------------------------------------------ JSON messages
@@ -29,8 +30,11 @@ export type HostMsg =
   | { t: 'toLobby' };
 
 export type ClientMsg =
-  /** The joiner's character (joiners move their own character; the host trusts it). */
-  | { t: 'pos'; x: number; y: number; fx: number; fy: number; m: 0 | 1 }
+  /**
+   * The joiner's character (joiners move their own character; the host trusts it): position, facing, moving, speed
+   * (Momentum), and how many teleports it has seen (positions from before the host's last one are ignored).
+   */
+  | { t: 'pos'; x: number; y: number; fx: number; fy: number; m: 0 | 1; v: number; k: number }
   | { t: 'pick'; index: number }
   /** Replace the three cards on offer (the host checks the player has rerolls left). */
   | { t: 'reroll' }
@@ -78,16 +82,18 @@ export type FxEvent =
   | ['d', number, number, number]
   /** boss wind-up warning circle: x, y, radius, seconds, colour */
   | ['c', number, number, number, number, number]
-  /** a word where a damage number would be (a rare enemy ignored a hit): x, y, word, colour */
-  | ['t', number, number, string, number];
+  /** a word where a damage number would be (a rare enemy ignored a hit, a dodge): x, y, word, colour */
+  | ['t', number, number, string, number]
+  /** a player was teleported (Flicker Strike): slot, x, y, that player's teleport count */
+  | ['m', number, number, number, number];
 
 // ------------------------------------------------------------------ binary snapshots
 
 export const STATE_CODES = ['playing', 'dying', 'victory', 'ended'] as const;
 
 export const PF = { dead: 1, gone: 2, moving: 4, god: 8 } as const;
-/** Enemy flags. `spirit`: came back once through Spirit Walker (drawn see-through). */
-export const EF = { flip: 1, flash: 2, chill: 4, spirit: 8 } as const;
+/** Enemy flags. `spirit`: came back once through Spirit Walker (drawn see-through). `stun`: stunned (Stun modification). */
+export const EF = { flip: 1, flash: 2, chill: 4, spirit: 8, stun: 16 } as const;
 
 export interface SnapPlayer {
   slot: number;
@@ -107,6 +113,8 @@ export interface SnapPlayer {
   /** Ultimate: seconds of cooldown left and seconds the effect has left. */
   ultCd: number;
   ultActive: number;
+  /** Buffs, charges and passive state, for the HUD and the shield bubble. */
+  status: PlayerStatus;
 }
 
 export interface SnapEntity {
@@ -300,7 +308,18 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
     const reviveHp = u8() / 100;
     const ultCd = u16() / 10;
     const ultActive = u16() / 10;
-    players.push({ slot, flags, x, y, fx, fy, hp, maxHp, invuln, phases, revive, reviveHp, ultCd, ultActive });
+    const status: PlayerStatus = {
+      aegis: u8(),
+      brutal: u8(),
+      siphon: u8(),
+      vicissitude: u8(),
+      shadow: u8(),
+      amp: u16() / 100,
+      ampLeft: u16() / 10,
+      passiveCd: u16() / 10,
+      stacks: u8(),
+    };
+    players.push({ slot, flags, x, y, fx, fy, hp, maxHp, invuln, phases, revive, reviveHp, ultCd, ultActive, status });
   }
 
   const entities = (): SnapEntity[] => {
@@ -387,5 +406,11 @@ export function writeHeader(
     w.u8(Math.round(p.reviveHp * 100));
     w.u16(Math.min(65535, Math.ceil(p.ultCd * 10)));
     w.u16(Math.min(65535, Math.ceil(p.ultActive * 10)));
+    const s = p.status;
+    for (const n of [s.aegis, s.brutal, s.siphon, s.vicissitude, s.shadow]) w.u8(Math.min(255, n));
+    w.u16(Math.min(65535, Math.round(s.amp * 100)));
+    w.u16(Math.min(65535, Math.ceil(s.ampLeft * 10)));
+    w.u16(Math.min(65535, Math.ceil(s.passiveCd * 10)));
+    w.u8(Math.min(255, s.stacks));
   }
 }

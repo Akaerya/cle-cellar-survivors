@@ -4,7 +4,7 @@ import { hasteFactor } from '../core/progression';
 import { ENEMY_MODIFIERS, RARE_HP_PER_MODIFIER, RARE_TIERS, enemyModifier, modifierBit } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
 import type { EnemyModifierDef, EnemyModifierId } from '../data/types';
-import type { Enemy } from '../entities/Enemy';
+import { stillAlive, type Enemy } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 
@@ -30,6 +30,9 @@ interface Bud {
   radius: number;
   damage: number;
   color: number;
+  /** The rare enemy that grew it (and its spawn id): Storm Shield reflects damage at it while it lives. */
+  source: Enemy;
+  sourceId: number;
 }
 
 /**
@@ -176,7 +179,7 @@ export class EnemyModifiers {
     if (this.game.state !== 'playing') return;
     for (const m of e.mods) {
       if (!attacker.alive) return;
-      if (m.id === 'thorns') this.game.hurtPlayer(attacker, this.outgoing(e, attacker, m.flat + m.share * dealt));
+      if (m.id === 'thorns') this.game.hurtPlayer(attacker, this.outgoing(e, attacker, m.flat + m.share * dealt), false, e);
       else if (m.id === 'crystalline') this.bud(e, m, attacker);
     }
   }
@@ -268,7 +271,7 @@ export class EnemyModifiers {
   private ambush(e: Enemy, m: Mod<'ambush'>): boolean {
     let t: Player | null = null;
     let best = Infinity;
-    for (const p of this.game.livePlayers()) {
+    for (const p of this.game.targetablePlayers()) {
       const d2 = (p.x - e.x) ** 2 + (p.y - e.y) ** 2;
       if (d2 < best) {
         best = d2;
@@ -293,7 +296,7 @@ export class EnemyModifiers {
     this.budded.add(at);
     this.game.bosses.addHazard(m.hazard, at.x, at.y, { life: m.charge });
     this.game.fx.warn(at.x, at.y, m.radius, m.charge, m.color);
-    this.buds.push({ x: at.x, y: at.y, left: m.charge, radius: m.radius, damage: m.damage * this.damageMult(e), color: m.color });
+    this.buds.push({ x: at.x, y: at.y, left: m.charge, radius: m.radius, damage: m.damage * this.damageMult(e), color: m.color, source: e, sourceId: e.netId });
   }
 
   private updateBuds(dt: number): void {
@@ -307,7 +310,9 @@ export class EnemyModifiers {
       this.game.fx.frost(b.x, b.y, b.radius, b.color);
       this.game.playSfx('shatter', b.x, b.y);
       const r2 = (b.radius + PLAYER_RADIUS) ** 2;
-      for (const p of this.game.livePlayers()) if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 <= r2) this.game.hurtPlayer(p, b.damage);
+      for (const p of this.game.livePlayers()) {
+        if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 <= r2) this.game.hurtPlayer(p, b.damage, false, stillAlive(b.source, b.sourceId));
+      }
     }
     this.buds.length = keep;
   }

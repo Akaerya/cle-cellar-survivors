@@ -1,6 +1,6 @@
 import { MAX_LEVEL } from '../constants';
 import { BASE_STATS } from '../data/player';
-import type { ItemDef, ModEffect, ModificationDef, ModKey, NumericWeaponStat, PlayerStats, StatKey, WeaponDef, WeaponStats } from '../data/types';
+import type { ItemDef, ModEffect, ModificationDef, ModKey, NumericWeaponStat, PlayerStats, StatKey, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
 
 /** EXP needed to go from `level` to `level + 1`. */
 export function expToNext(level: number): number {
@@ -63,14 +63,24 @@ export function emptyModEffect(): Required<ModEffect> {
     projectiles: 0,
     damage: 0,
     split: 0,
-    splitDepth: 0,
+    splitLess: 0,
+    splitAgain: 0,
     chain: 0,
+    chainLess: 0,
+    chainSpeed: 0,
     area: 0,
     echo: 0,
     echoArea: 0,
     echoRepeats: 0,
     duration: 0,
     reiterate: 0,
+    multistrike: 0,
+    repeatChance: 0,
+    stunChance: 0,
+    stunBonus: 0,
+    momentum: 0,
+    impact: 0,
+    ruthless: 0,
   };
 }
 
@@ -106,30 +116,64 @@ export function modsForWeapon(def: WeaponDef, mods: OwnedMod[]): Required<ModEff
     }
   }
   // Bonuses this weapon has no use for. Only projectiles that hit enemies can pierce, split or chain.
-  if (!hitsWithProjectiles(def)) out.split = out.splitDepth = out.chain = out.pierce = 0;
+  if (!hitsWithProjectiles(def)) out.split = out.splitLess = out.splitAgain = out.chain = out.chainLess = out.chainSpeed = out.pierce = 0;
   if (def.noPierce) out.pierce = 0;
   if (def.harmlessArea) out.echo = out.echoArea = out.echoRepeats = 0;
-  if (!def.effect) out.reiterate = 0;
+  if (!def.effect && !def.buff) out.reiterate = 0;
+  // Shields have no attack of their own to repeat; Flicker Strike's teleport counts as standing still.
+  if (def.targeting === 'shield') out.multistrike = out.repeatChance = 0;
+  if (def.targeting === 'flicker') out.momentum = 0;
   return out;
+}
+
+export function hasTag(def: WeaponDef, tag: WeaponTag): boolean {
+  return def.tags?.includes(tag) ?? false;
+}
+
+/**
+ * What a melee weapon's Impact splash gets from `mods`: Impact's share, and the area, damage and Echo Strike of
+ * every AoE modification (Impact lets melee weapons take those, for the splash only). All 0 without Impact.
+ */
+export function splashModsFor(def: WeaponDef, mods: OwnedMod[]): Required<ModEffect> {
+  const out = emptyModEffect();
+  if (!hasTag(def, 'melee')) return out;
+  for (const m of mods) {
+    const e = modEffectAt(m.def, m.level);
+    out.impact += e.impact;
+    if (!m.def.tags.includes('aoe')) continue;
+    out.area += e.area;
+    out.damage += e.damage;
+    out.echo += e.echo;
+    out.echoArea += e.echoArea;
+    out.echoRepeats += e.echoRepeats;
+  }
+  return out.impact > 0 ? out : emptyModEffect();
+}
+
+/** True when one of `mods` is Impact (so melee weapons can take AoE modifications). */
+export function hasImpact(mods: OwnedMod[]): boolean {
+  return mods.some((m) => modEffectAt(m.def, m.level).impact > 0);
 }
 
 /** The weapon fires projectiles that stop at enemies (so pierce, split and chain mean something). */
 export function hitsWithProjectiles(def: WeaponDef): boolean {
-  const flies = def.targeting === 'nearest' || def.targeting === 'random' || def.targeting === 'facing';
+  const flies = def.targeting === 'nearest' || def.targeting === 'random' || def.targeting === 'facing' || def.targeting === 'wave';
   return flies && def.stats.speed > 0 && def.stats.pierce !== Infinity;
 }
 
 /**
  * What a modification at its top level does for a weapon: nothing, everything it offers, only its damage bonus, or
- * everything except its damage bonus. Used to offer modifications only when they matter, and by the wiki.
+ * everything except its damage bonus. With `impact` (the player has Impact), an AoE modification that does nothing
+ * for a melee weapon itself still changes its splash: 'splash'. Used to offer modifications only when they matter,
+ * and by the wiki.
  */
-export function modReach(def: WeaponDef, mod: ModificationDef): 'none' | 'full' | 'damage only' | 'no damage' {
+export function modReach(def: WeaponDef, mod: ModificationDef, impact = false): 'none' | 'full' | 'damage only' | 'no damage' | 'splash' {
   const top = modEffectAt(mod, mod.levels.length);
   const got = modsForWeapon(def, [{ def: mod, level: mod.levels.length }]);
   const keys = Object.keys(top) as ModKey[];
   const offered = keys.filter((k) => top[k] !== 0);
   const kept = offered.filter((k) => got[k] !== 0);
-  if (kept.length === 0) return 'none';
+  if (kept.length === 0) return impact && hasTag(def, 'melee') && mod.tags.includes('aoe') ? 'splash' : 'none';
   if (kept.length === offered.length) return 'full';
   if (kept.length === 1 && kept[0] === 'damage') return 'damage only';
   if (top.damage !== 0 && got.damage === 0) return 'no damage';

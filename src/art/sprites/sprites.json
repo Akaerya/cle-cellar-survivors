@@ -191,7 +191,21 @@
    "icon_bloom": [464, 0, 100],
    "icon_helix": [480, 0, 100],
    "icon_pristinity": [496, 0, 100],
-   "icon_ult_dome": [512, 0, 100]
+   "icon_ult_dome": [512, 0, 100],
+   "icon_iaijutsu": [528, 0, 100],
+   "icon_flurry": [544, 0, 100],
+   "icon_flicker": [560, 0, 100],
+   "icon_infusion": [576, 0, 100],
+   "icon_ult_mist": [592, 0, 100],
+   "icon_mod_multistrike": [608, 0, 100],
+   "icon_mod_stun": [624, 0, 100],
+   "icon_mod_momentum": [640, 0, 100],
+   "icon_mod_impact": [656, 0, 100],
+   "icon_mod_ruthless": [672, 0, 100],
+   "icon_passive_shroud": [688, 0, 100],
+   "icon_passive_ragebait": [704, 0, 100],
+   "icon_passive_dragon": [720, 0, 100],
+   "icon_passive_defied": [736, 0, 100]
   }
  },
  "knight": {
@@ -353,6 +367,14 @@
    "voidfield": [0, 0, 100]
   }
  },
+ "wave": {
+  "w": 12,
+  "h": 16,
+  "frames": {
+   "wave_0": [0, 0, 60],
+   "wave_1": [12, 0, 60]
+  }
+ },
  "web": {
   "w": 26,
   "h": 26,
@@ -375,6 +397,22 @@
    "zombie_1": [16, 0, 170],
    "zombie_2": [32, 0, 170],
    "zombie_3": [48, 0, 170]
+  }
+ },
+ "zorus": {
+  "w": 16,
+  "h": 20,
+  "frames": {
+   "zorus_idle_0": [0, 0, 500],
+   "zorus_idle_1": [16, 0, 350],
+   "zorus_idle_2": [32, 0, 500],
+   "zorus_idle_3": [48, 0, 120],
+   "zorus_walk_0": [64, 0, 110],
+   "zorus_walk_1": [80, 0, 110],
+   "zorus_walk_2": [96, 0, 110],
+   "zorus_walk_3": [112, 0, 110],
+   "zorus_hurt_0": [128, 0, 100],
+   "zorus_hurt_1": [144, 0, 100]
   }
  }
 }

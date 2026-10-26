@@ -28,6 +28,8 @@ export const MAX_EFFECT_STACKS = 30;
 export const SLOW_LINGER_MS = 120;
 /** Tint of slowed enemies. */
 export const CHILL_TINT = 0x9fd8ff;
+/** Tint of stunned enemies (Stun modification). */
+export const STUN_TINT = 0xffe27a;
 /** However many slows pile up (webs, void fields, Astral Chains), a character keeps at least this share of its move speed. */
 export const MIN_MOVE_MULT = 0.1;
 export const MAX_WEAPONS = 4;

@@ -1,8 +1,8 @@
 import type { CharacterDef } from './types';
 
 /**
- * Playable characters (members of the Cle Cellar Discord server). Each has its own weapon kit and
- * ultimate; items, base stats and everything else are shared.
+ * Playable characters (members of the Cle Cellar Discord server). Each has its own weapon kit, ultimate and
+ * passive; items, base stats and everything else are shared.
  */
 export const CHARACTERS: CharacterDef[] = [
   {
@@ -15,6 +15,7 @@ export const CHARACTERS: CharacterDef[] = [
     startingWeapon: 'banana',
     weapons: ['banana', 'tail', 'coconut', 'howl'],
     ultimate: 'banana_storm',
+    passive: 'ragebaiter',
   },
   {
     id: 'yookers',
@@ -26,6 +27,7 @@ export const CHARACTERS: CharacterDef[] = [
     startingWeapon: 'stormblade',
     weapons: ['stormblade', 'thunder_breath', 'thunderstrike', 'storm_shield'],
     ultimate: 'storm_drake',
+    passive: 'dragonborn',
   },
   {
     id: 'elysia',
@@ -37,6 +39,19 @@ export const CHARACTERS: CharacterDef[] = [
     startingWeapon: 'hailing_arrows',
     weapons: ['hailing_arrows', 'crystalline_bloom', 'infinite_helix', 'original_pristinity'],
     ultimate: 'beginning_you_and_i',
+    passive: 'death_defied',
+  },
+  {
+    id: 'zorus',
+    name: 'zorus',
+    title: 'WEEBLORD',
+    description: "'Nothing personal, Cle.'",
+    anim: 'zorus',
+    firstFrame: 'zorus_idle_0',
+    startingWeapon: 'iaijutsu',
+    weapons: ['iaijutsu', 'blade_flurry', 'flicker_strike', 'unstable_infusion'],
+    ultimate: 'mistwalker',
+    passive: 'shroud',
   },
 ];
 

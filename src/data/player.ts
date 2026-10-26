@@ -16,6 +16,7 @@ export const BASE_STATS: PlayerStats = {
   critDamage: 2,
   areaMult: 1,
   expMult: 1,
+  lifeSteal: 0,
 };
 
 /** Level-up rerolls each player gets per run: a reroll replaces all three cards on offer. */

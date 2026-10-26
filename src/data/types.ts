@@ -16,14 +16,19 @@ export type Targeting =
   | 'bomb'
   | 'field'
   | 'passive'
-  | 'beam';
+  | 'beam'
+  | 'wave'
+  | 'spin'
+  | 'flicker'
+  | 'infusion';
 
 /**
  * Ability tags. A modification (data/modifications.ts) changes every weapon that carries one of its tags.
  * `projectile`: thrown or orbiting objects. `aoe`: hits everything in an area (the area part of the weapon).
- * `duration`: leaves a timed effect on enemies (see `WeaponDef.effect`).
+ * `duration`: leaves a timed effect on enemies (see `WeaponDef.effect`) or on its owner (see `WeaponDef.buff`).
+ * `melee`: strikes up close with a blade (or answers a hit taken, for shields).
  */
-export type WeaponTag = 'projectile' | 'aoe' | 'duration';
+export type WeaponTag = 'projectile' | 'aoe' | 'duration' | 'melee';
 
 export interface WeaponStats {
   /**
@@ -69,6 +74,12 @@ export interface WeaponStats {
   refundFloor?: number;
   /** `field`: fraction of their speed enemies inside the field lose (0.25 = 25% slower). Slows do not stack. */
   slow?: number;
+  /** `shield`: share of every hit taken (before any reduction) dealt back to the attacker. */
+  reflect?: number;
+  /** `flicker`: chance (0..1) per enemy hit to gain a Shadow Charge. `infusion`: chance per attack to gain a charge. */
+  chargeChance?: number;
+  /** `infusion`: multiplies what every charge does (1 = as in `WeaponDef.charges`, 2 = 100% increased effect). */
+  chargeEffect?: number;
 }
 
 export type NumericWeaponStat = Exclude<keyof WeaponStats, 'boomerang'>;
@@ -87,6 +98,31 @@ export interface EffectDef {
   stacks?: boolean;
   /** Enemies carrying the effect are tinted this colour. */
   tint?: number;
+}
+
+/** The kinds of charge Unstable Infusion gives (see ChargesDef). */
+export type ChargeKind = 'brutal' | 'siphon' | 'vicissitude';
+
+/** `infusion` weapons: the charges a hit can give the owner. Effects are per charge, before `chargeEffect`. */
+export interface ChargesDef {
+  /** Seconds each charge lasts. */
+  duration: number;
+  /** Most charges of one kind at once; a new one past that replaces the oldest. */
+  max: number;
+  /** Brutal: chance (0..1) per charge that a hit deals double damage (not a critical strike). */
+  brutal: number;
+  /** Siphoning: share of damage dealt recovered as health, per charge. */
+  siphon: number;
+  /** Vicissitude: share the next damage taken is reduced by; that instance uses up one charge. */
+  vicissitude: number;
+}
+
+/** `flicker` weapons: Shadow Charges, each one an extra strike that skips the cooldown. */
+export interface ShadowDef {
+  /** Seconds between checks for a Shadow Charge to spend. */
+  check: number;
+  /** Most Shadow Charges held at once. */
+  max: number;
 }
 
 /** How a weapon fires its extra projectiles one after another instead of all at once. */
@@ -162,6 +198,15 @@ export interface WeaponDef {
   fieldInterval?: number;
   /** Timed effect each hit (or field check) leaves on the enemy. Give the weapon the `duration` tag. */
   effect?: EffectDef;
+  /**
+   * An effect the weapon puts on its owner instead (Storm Shield's Aegis, Mistwalker's amplification). With the
+   * `duration` tag, Reiterate can copy it when it is applied.
+   */
+  buff?: { name: string };
+  /** `infusion`: the charges it gives. */
+  charges?: ChargesDef;
+  /** `flicker`: its Shadow Charges. */
+  shadow?: ShadowDef;
 }
 
 /**
@@ -177,10 +222,16 @@ export interface ModEffect {
   damage?: number;
   /** Projectiles split into this many on hitting an enemy (0 = no split). */
   split?: number;
-  /** How many times a projectile line can split (1 when `split` is set and this is not). */
-  splitDepth?: number;
+  /** Fraction less damage a split projectile deals than the one it split from. */
+  splitLess?: number;
+  /** Chance (0..1) that a projectile from a split can split one more time. */
+  splitAgain?: number;
   /** Bounces to a nearby enemy once a projectile's pierce runs out. */
   chain?: number;
+  /** Fraction less damage a projectile deals after each bounce than before it. */
+  chainLess?: number;
+  /** Fraction added to the speed of a projectile that bounced. */
+  chainSpeed?: number;
   /** Fraction added to area. Area bonuses add up with each other and with the AREA stat. */
   area?: number;
   /** Echo Strike: fraction of each area hit dealt again around the enemy that was hit. */
@@ -193,6 +244,20 @@ export interface ModEffect {
   duration?: number;
   /** Chance (0..1) that an effect stack copies itself when it deals damage or is applied. */
   reiterate?: number;
+  /** Multistrike: times every attack is done again right away. */
+  multistrike?: number;
+  /** Multistrike: chance (0..1) that any attack, a repeat included, is done once more. */
+  repeatChance?: number;
+  /** Stun: chance (0..1) that a hit stuns the enemy. */
+  stunChance?: number;
+  /** Stun: fraction more damage a stunned enemy takes. */
+  stunBonus?: number;
+  /** Momentum: share of the owner's current move speed added to the base damage of each hit. */
+  momentum?: number;
+  /** Impact: share of each hit dealt again as splash around the enemy that was hit (0 = no splash). */
+  impact?: number;
+  /** Ruthless: fraction added to the damage of every third attack. */
+  ruthless?: number;
 }
 
 export type ModKey = keyof ModEffect;
@@ -218,6 +283,24 @@ export interface ModificationDef {
   levels: ModLevel[];
 }
 
+/** One of the passive abilities characters have (data/passives.ts): always on, never picked. */
+export type PassiveDef = { id: string; name: string; description: string; icon: string } & (
+  /** Shroud: `chance` (0..1) to dodge a hit entirely. */
+  | { kind: 'dodge'; chance: number }
+  /**
+   * Ragebaiter: on falling, stands right back up with `hp` of max HP and `invuln` seconds of invulnerability, once
+   * every `cooldown` seconds. A banner tells a random other player to be put in the bin (`fallback` when alone).
+   */
+  | { kind: 'rebirth'; hp: number; invuln: number; cooldown: number; fallback: string }
+  /** Dragonborn: a stack every `every` seconds of the run, each giving the stat changes in `perStack`. */
+  | { kind: 'growth'; every: number; perStack: StatModifier[] }
+  /**
+   * Death Defied: damage that would leave less than `below` of max HP is not taken; instead `heal` of max HP is
+   * restored over `over` seconds. Once every `cooldown` seconds.
+   */
+  | { kind: 'reprieve'; below: number; heal: number; over: number; cooldown: number }
+);
+
 export interface PlayerStats {
   maxHp: number;
   moveSpeed: number;
@@ -238,6 +321,8 @@ export interface PlayerStats {
   critDamage: number;
   areaMult: number;
   expMult: number;
+  /** Share of the damage you deal that you recover as health. */
+  lifeSteal: number;
 }
 
 export type StatKey = keyof PlayerStats;
@@ -261,6 +346,8 @@ export interface ItemDef {
   levelText: string;
   /** Highest level (defaults to MAX_LEVEL). */
   maxLevel?: number;
+  /** Only offered new while you own a weapon with this tag. */
+  requiresTag?: WeaponTag;
 }
 
 export interface EnemyDef {
@@ -453,9 +540,11 @@ export interface CharacterDef {
   weapons: string[];
   /** Ultimate id (data/ultimates.ts), cast with Q. */
   ultimate: string;
+  /** Passive id (data/passives.ts): always on. */
+  passive?: string;
 }
 
-export type UltimateKind = 'storm' | 'pet' | 'dome';
+export type UltimateKind = 'storm' | 'pet' | 'dome' | 'mist';
 
 export interface UltimateDef {
   id: string;
@@ -476,8 +565,11 @@ export interface UltimateDef {
   spin?: number;
   /** `dome`: px radius of the dome, centred where it was cast. */
   radius?: number;
-  /** `dome`: colour of the dome and its beams. */
+  /** `dome`: colour of the dome and its beams. `mist`: colour of the mist. */
   color?: number;
+  /** `mist`: fraction added to the DAMAGE stat once the mist lifts, for `after` seconds. */
+  amp?: number;
+  after?: number;
   /**
    * The projectile the ultimate fires. Uses the WeaponDef shape so it shares the projectile pool,
    * the network sync and the damage tracking. `pet`: `stats.range` is how far the pet looks for targets.

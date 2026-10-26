@@ -11,7 +11,7 @@ const BOOMERANG_RETURN_ACCEL = 0.45; // seconds to reach full return speed
 /** Bombs whose target died explode once they are this close (px) to where it was last seen. */
 const BOMB_LOST_REACH = 4;
 
-/** What one shot needs to know. Split, split depth and chain come from modifications (0 without them). */
+/** What one shot needs to know. Split and chain come from modifications (0 without them). */
 export interface ShotStats {
   damage: number;
   speed: number;
@@ -21,14 +21,21 @@ export interface ShotStats {
   knockback: number;
   boomerang: boolean;
   split?: number;
-  splitDepth?: number;
   chain?: number;
+  /** What the weapon's base damage is multiplied by in `damage` (Momentum's bonus is scaled the same way). */
+  damageScale?: number;
 }
 
 /** Pooled straight-flying projectile (bananas, and any `nearest`/`random`/`facing` weapon with speed). */
 export class Projectile extends Phaser.Physics.Arcade.Sprite {
   weapon!: WeaponInstance;
   damage = 0;
+  /** What the weapon's base damage is multiplied by in `damage`, after split and chain reductions. */
+  damageScale = 1;
+  /** The attack of its weapon that fired it (WeaponInstance.serial): splits and bounces belong to the same attack. */
+  serial = 0;
+  /** 0 for a projectile the weapon fired, 1 for its splits, 2 for theirs. */
+  generation = 0;
   knockback = 0;
   pierceMax = 1;
   pierceLeft = 1;
@@ -42,7 +49,7 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
   returnAge = 0;
   /** Projectiles this one splits into on its next hit (Splits modification); below 2 it never splits. */
   splitCount = 0;
-  /** Splits left in this line: the first hit splits while this is above 0, and each child gets one less. */
+  /** Splits left in this line: the first hit splits while this is above 0, and each child gets one less (or keeps one, see splitAgain). */
   splitsLeft = 0;
   /** Bounces left once pierce is used up (Chain modification). */
   bouncesLeft = 0;
@@ -57,6 +64,11 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
   targetY = 0;
   /** Bomb: reached its target this frame and should explode. */
   arrived = false;
+  /**
+   * Sword waves: flies straight on and cuts every enemy it passes without using pierce, until it touches `target`.
+   * From then on it is a normal projectile (that hit uses pierce, then it splits or chains).
+   */
+  passThrough = false;
   /** Where the projectile was last frame (dome edges are found by the step from inside to outside). */
   prevX = 0;
   prevY = 0;
@@ -88,6 +100,9 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     // Unscaled circle centred on the frame; Arcade scales it with the sprite.
     body.setCircle(artR, this.width / 2 - artR, this.height / 2 - artR);
     this.damage = o.damage;
+    this.damageScale = o.damageScale ?? 1;
+    this.serial = weapon.serial;
+    this.generation = 0;
     this.knockback = o.knockback;
     this.pierceMax = this.pierceLeft = o.pierce;
     this.speed = o.speed;
@@ -99,9 +114,10 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.life = o.boomerang ? BOOMERANG_OUT + 3 : o.lifetime;
     this.age = 0;
     this.splitCount = Math.round(o.split ?? 0);
-    this.splitsLeft = this.splitCount >= 2 ? Math.max(1, Math.round(o.splitDepth ?? 1)) : 0;
+    this.splitsLeft = this.splitCount >= 2 ? 1 : 0;
     this.bouncesLeft = Math.round(o.chain ?? 0);
     this.bomb = false;
+    this.passThrough = false;
     this.target = null;
     this.arrived = false;
     this.prevX = x;
@@ -120,6 +136,18 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.targetX = target.x;
     this.targetY = target.y;
     this.arrived = false;
+  }
+
+  /** Sword wave: cut through everything until touching `target` (call right after `fire`). */
+  seek(target: Enemy): void {
+    this.passThrough = true;
+    this.target = target;
+    this.targetId = target.netId;
+  }
+
+  /** Sword wave: true when `e` is the enemy it flies at (not a recycled pool member that took its place). */
+  isTarget(e: Enemy): boolean {
+    return e === this.target && e.netId === this.targetId;
   }
 
   /** Dome edge: put back at (x, y) and fly off toward `angle`. Nothing else changes (no pierce or bounces used). */

@@ -19,20 +19,27 @@ const DOME_GROW = 0.3;
 const DOME_FADE = 0.4;
 /** Dome: beams start and end this far inside the edge (so they read as crossing the dome). */
 const BEAM_EDGE = 2;
+/** Mist: how see-through the caster is drawn, the wisps swirling around them, and how fast they turn. */
+const MIST_ALPHA = 0.35;
+const MIST_WISPS = 7;
+const MIST_RADIUS = 13;
+const MIST_SPIN = 2.2;
 
 /**
  * One player's ultimate (Q). The host (or solo game) casts it and fires its projectiles; joiners
  * get the timers from snapshots and only draw the visuals. The cooldown counts from the cast.
- * Kinds: `storm` spirals projectiles out of the caster, `pet` summons a pet that shoots, and `dome` raises a dome
- * where it was cast that fires beams across itself and bounces the caster's projectiles off its edge.
+ * Kinds: `storm` spirals projectiles out of the caster, `pet` summons a pet that shoots, `dome` raises a dome
+ * where it was cast that fires beams across itself and bounces the caster's projectiles off its edge, and `mist`
+ * turns the caster to mist (no attacks, no damage taken, not targeted), then amplifies their damage.
  */
 export class Ultimate {
   /** Fires the projectiles and keeps the damage and kill count for the party screen. */
   readonly attack: WeaponInstance;
   /** Seconds until it can be cast again. */
   cooldownLeft = 0;
-  /** Seconds the effect has left (0 when it is not running). */
+  /** Seconds the effect has left (0 when it is not running), and how long it lasted when it started. */
   activeLeft = 0;
+  activeTotal = 1;
   /** Seconds of crit refund the cooldown can still take before the next cast (see `refundFloor`). */
   refundable = 0;
   private timer = 0;
@@ -66,13 +73,23 @@ export class Ultimate {
     return this.cooldownLeft <= 0;
   }
 
+  /** Mist ultimates while they run: the caster's abilities are locked, nothing hurts them and enemies ignore them. */
+  get misted(): boolean {
+    return this.def.kind === 'mist' && this.activeLeft > 0;
+  }
+
+  /** Mist ultimates are tagged duration: duration modifications stretch the mist and the amplification after it. */
+  private get durationMult(): number {
+    return this.def.kind === 'mist' ? Math.max(0.1, 1 + this.attack.mod.duration) : 1;
+  }
+
   /** Host and solo: starts the effect if it is off cooldown. */
   cast(): boolean {
     const p = this.owner;
     if (!this.ready || !p.alive) return false;
     this.cooldownLeft = this.def.cooldown;
     this.refundable = p.weapons.refundShare() * this.def.cooldown;
-    this.activeLeft = this.def.duration;
+    this.activeLeft = this.activeTotal = this.def.duration * this.durationMult;
     this.timer = 0;
     this.started();
     if (this.def.kind === 'dome') this.game.relay(['d', p.slot, Math.round(this.domeX), Math.round(this.domeY)]);
@@ -100,7 +117,7 @@ export class Ultimate {
     if (this.cooldownLeft > 0) this.cooldownLeft = Math.max(0, this.cooldownLeft - dt);
     if (this.activeLeft > 0) {
       this.activeLeft = Math.max(0, this.activeLeft - dt);
-      if (this.activeLeft === 0) this.ended();
+      if (this.activeLeft === 0) this.ended(firing);
     }
     this.draw(dt);
     if (firing && this.active && this.owner.alive) this.fire(dt);
@@ -108,6 +125,7 @@ export class Ultimate {
 
   private fire(dt: number): void {
     const p = this.owner;
+    if (this.def.kind === 'mist') return;
     this.timer -= dt;
     while (this.timer <= 0) {
       this.timer += this.def.interval;
@@ -147,6 +165,10 @@ export class Ultimate {
     this.gfx.clear();
     if (this.def.kind === 'dome') {
       this.drawDome(show);
+      return;
+    }
+    if (this.def.kind === 'mist') {
+      this.drawMist(dt, show);
       return;
     }
     if (this.def.kind === 'storm') {
@@ -222,6 +244,26 @@ export class Ultimate {
     g.strokePath();
   }
 
+  /** Mist: the caster fades to see-through while pale wisps swirl around them (drawn on every client, never relayed). */
+  private drawMist(dt: number, show: boolean): void {
+    const p = this.owner;
+    if (!show) return;
+    this.bob += dt;
+    if (p.invuln <= 0) p.setAlpha(MIST_ALPHA + 0.1 * Math.sin(this.bob * 9));
+    const g = this.gfx;
+    const color = this.def.color ?? 0xb8b0d8;
+    const fade = Math.min(1, this.activeLeft / 0.4, (this.activeTotal - this.activeLeft) / 0.3);
+    for (let i = 0; i < MIST_WISPS; i++) {
+      const a = this.bob * MIST_SPIN * (i % 2 === 0 ? 1 : -1) + (i * Math.PI * 2) / MIST_WISPS;
+      const r = MIST_RADIUS + Math.sin(this.bob * 3 + i * 1.7) * 4;
+      const size = 3 + Math.sin(this.bob * 5 + i) * 1.5;
+      g.fillStyle(color, 0.28 * fade);
+      g.fillCircle(p.x + Math.cos(a) * r, p.y + 2 + Math.sin(a) * r * 0.6, size);
+    }
+    g.fillStyle(color, 0.12 * fade);
+    g.fillEllipse(p.x, p.y + 6, 30, 12);
+  }
+
   /** Dome facets: points on the rim and inside, each inner point joined to its nearest neighbours (visual only). */
   private buildFacets(): void {
     const pts: [number, number][] = [];
@@ -267,19 +309,37 @@ export class Ultimate {
     }
   }
 
-  private ended(): void {
+  /** The effect ran its course. `host` (the host or solo game, run playing): a mist lifting amplifies the caster's damage. */
+  private ended(host: boolean): void {
     if (this.pet?.visible) this.game.fx.sparkle(this.pet.x, this.pet.y, 0x5ab0ff);
+    if (this.def.kind !== 'mist') return;
+    const p = this.owner;
+    p.setAlpha(1);
+    if (!host || !p.alive) return;
+    const mod = this.attack.mod;
+    // Less Duration's damage bonus raises the amplification; Reiterate may copy it as it is applied.
+    const amount = (this.def.amp ?? 0) * (1 + mod.damage);
+    const seconds = (this.def.after ?? 0) * this.durationMult;
+    p.addAmp(amount, seconds);
+    if (mod.reiterate > 0 && this.game.rng.float() < mod.reiterate) p.addAmp(amount, seconds);
+    this.game.fx.ring(p.x, p.y, COLOR.gold, 50, 400);
+    this.game.fx.label(p.x, p.y - 16, `+${Math.round(amount * 100)}% DAMAGE`, COLOR.gold);
   }
 
   /** Joiners: timers from the host. */
   sync(cooldownLeft: number, activeLeft: number): void {
-    if (activeLeft > 0 && !this.active) this.started();
+    if (activeLeft > 0 && !this.active) {
+      this.started();
+      this.activeTotal = activeLeft;
+    }
     this.cooldownLeft = cooldownLeft;
     this.activeLeft = activeLeft;
+    if (activeLeft <= 0 && this.def.kind === 'mist' && this.owner.alive) this.owner.setAlpha(1);
   }
 
   /** Ends the effect early (owner fell, run over). The cooldown keeps counting. */
   stop(): void {
+    if (this.misted && this.owner.alive) this.owner.setAlpha(1);
     this.activeLeft = 0;
     for (const s of this.orbiters) s.setVisible(false);
     this.pet?.setVisible(false);

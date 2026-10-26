@@ -17,7 +17,7 @@ import {
 } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry, type PartyMember, type RunSummary, type WeaponReport } from '../core/events';
 import { displayName, loadProfile } from '../core/profile';
-import { computeStats, expToNext, itemMaxLevel, modReach, weaponLevelText } from '../core/progression';
+import { expToNext, hasImpact, hasTag, itemMaxLevel, modReach, weaponLevelText } from '../core/progression';
 import { Rng, seedFromUrl } from '../core/rng';
 import { sfx, type SfxName } from '../core/sfx';
 import {
@@ -30,6 +30,7 @@ import {
   characterDef,
   itemDef,
   modDef,
+  passiveDef,
   powerupDef,
   reviveHpPercent,
   speedScaleForMinute,
@@ -69,6 +70,7 @@ import { EnemyModifiers } from '../systems/EnemyModifiers';
 import { RareVisuals, type RareView } from '../systems/RareVisuals';
 import { Fx } from '../systems/Fx';
 import { Gems } from '../systems/Gems';
+import { Passive } from '../systems/Passive';
 import { Potions } from '../systems/Potions';
 import type { Potion } from '../entities/Potion';
 import { Spawner } from '../systems/Spawner';
@@ -204,6 +206,11 @@ export class GameScene extends Phaser.Scene {
     return this.players.filter((p) => p && p.alive);
   }
 
+  /** Living players enemies and bosses go after (not those turned to mist by Mistwalker). */
+  targetablePlayers(): Player[] {
+    return this.players.filter((p) => p && p.targetable);
+  }
+
   init(): void {
     // The scene object is reused across restarts, so every run field is reset here.
     this.players = [];
@@ -251,6 +258,7 @@ export class GameScene extends Phaser.Scene {
       p.weapons = new Weapons(this, p, this.projectiles);
       p.weapons.add(character.startingWeapon);
       p.ultimate = new Ultimate(this, p, ultimateDef(character.ultimate));
+      p.passive = new Passive(this, p, character.passive ? passiveDef(character.passive) : null);
       this.players[slot] = p;
     }
     this.player = this.players[net?.mySlot ?? 0];
@@ -397,11 +405,16 @@ export class GameScene extends Phaser.Scene {
       }
 
       const speedScale = speedScaleForMinute(this.runTime / 60);
-      this.enemies.update(dt, this.time.now, this.livePlayers(), this.state === 'dying', speedScale);
+      this.enemies.update(dt, this.time.now, this.targetablePlayers(), this.state === 'dying', speedScale);
       this.enemyMods.update(dt, playing);
       this.bosses.update(dt, this.state === 'playing');
       this.bossBars = this.bosses.bars();
       for (const p of this.players) if (p?.alive) p.weapons.update(dt, this.state === 'playing');
+      for (const p of this.players) {
+        if (!p || p.gone) continue;
+        p.updateBuffs(dt);
+        p.passive.update(dt, this.runTime);
+      }
       if (playing) this.enemies.updateEffects(dt);
       for (const p of this.players) if (p && !p.gone) p.ultimate.update(dt, p.alive && this.state === 'playing');
       Weapons.updateProjectiles(this.projectiles, dt);
@@ -507,7 +520,7 @@ export class GameScene extends Phaser.Scene {
 
   private onTouchEnemy(p: Player, e: Enemy): void {
     if (this.state !== 'playing' || this.frozen || !e.active) return;
-    this.hurtPlayer(p, this.enemyMods.outgoing(e, p, e.def.damage));
+    this.hurtPlayer(p, this.enemyMods.outgoing(e, p, e.def.damage), false, e);
   }
 
   /** Host and solo: what RareVisuals draws, from the rare enemies on the field. */
@@ -520,16 +533,47 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Host: `raw` damage to `p` (enemy touch, boss attacks), through invulnerability, shields and armor. `dot`: a tick
-   * of damage over time, which ignores invulnerability and gives none (see Player.takeHit).
+   * Host: `raw` damage to `p` from `source` (an enemy's touch, a boss attack, a rare enemy's thorns or crystal bud;
+   * null when nothing living is behind it). Nothing happens while `p` is invulnerable or mist. Then, in order: Shroud
+   * may dodge it and Aegis may block it (both grant the usual invulnerability), armor, shields, DAMAGE TAKEN and
+   * Vicissitude reduce it, and Death Defied may refuse it. Storm Shield reflects a share of `raw` at the source
+   * whether or not it got through, and at 0 HP Ragebaiter may stand `p` right back up. `dot`: a tick of damage over
+   * time, which ignores invulnerability, gives none, cannot be dodged or blocked and is not reflected.
    */
-  hurtPlayer(p: Player, raw: number, dot = false): void {
-    if (!p.alive) return;
-    const dmg = p.takeHit(raw, dot);
-    if (dmg <= 0) return;
-    this.relay(dot ? ['h', p.slot, dmg, 1] : ['h', p.slot, dmg]);
-    if (p === this.player) this.onLocalHurt(dmg);
-    if (p.hp <= 0) this.die(p);
+  hurtPlayer(p: Player, raw: number, dot = false, source: Enemy | null = null): void {
+    if (!p.canBeHit(dot)) return;
+    if (!dot && p.passive.dodge()) {
+      p.shrugOff();
+      return;
+    }
+    let dmg = 0;
+    if (!dot && p.weapons.tryBlock()) {
+      p.shrugOff();
+      p.runStats.blocks++;
+    } else {
+      dmg = p.damageFrom(raw);
+      if (p.passive.defy(dmg)) {
+        dmg = 0;
+        if (!dot) p.shrugOff();
+      } else p.takeDamage(dmg, dot);
+    }
+    if (dmg > 0) {
+      this.relay(dot ? ['h', p.slot, dmg, 1] : ['h', p.slot, dmg]);
+      if (p === this.player) this.onLocalHurt(dmg);
+    }
+    if (!dot && source?.active) p.weapons.reflect(source, raw);
+    if (p.hp > 0) return;
+    if (p.passive.rebirth()) this.onPlayerHealed(p);
+    else this.die(p);
+  }
+
+  /** Host: moves `p` to (x, y) at once (Flicker Strike). Joiners move their own character, so they are told to. */
+  teleport(p: Player, x: number, y: number): void {
+    (p.body as Phaser.Physics.Arcade.Body).reset(x, y);
+    p.netX = x;
+    p.netY = y;
+    if (p !== this.player) p.teleports++;
+    this.relay(['m', p.slot, Math.round(x), Math.round(y), p.teleports]);
   }
 
   private onLocalHurt(dmg: number): void {
@@ -659,13 +703,16 @@ export class GameScene extends Phaser.Scene {
   /**
    * Up to 3 random cards from the character's weapons, the shared items, modifications, generic powerups
    * and upgrades of owned ones, respecting slot limits. A modification is only offered new while the player
-   * owns a weapon it actually changes (sharing a tag is not enough when the weapon has no use for it).
+   * owns a weapon (or has an ultimate) it actually changes: sharing a tag is not enough when the weapon has no use
+   * for it, and with Impact, AoE modifications change melee weapons' splash. Items and powerups with `requiresTag`
+   * are only offered new while the player owns a weapon with that tag.
    * A reroll passes the cards it replaces in `avoid`: those are only offered again when the pool runs short.
    */
   rollChoices(p: Player, avoid?: Choice[]): Choice[] {
     const pool: Choice[] = [];
     const weaponSlotsFull = p.weapons.list.length >= MAX_WEAPONS;
     const itemSlotsFull = p.items.length >= MAX_ITEMS;
+    const allowed = (def: (typeof ITEMS)[number]) => !def.requiresTag || p.weapons.list.some((w) => hasTag(w.def, def.requiresTag!));
     for (const def of p.character.weapons.map(weaponDef)) {
       const owned = p.weapons.get(def.id);
       if (owned) {
@@ -693,12 +740,14 @@ export class GameScene extends Phaser.Scene {
           if (have.level < max) {
             pool.push({ kind, id: def.id, name: def.name, icon: def.icon, level: have.level + 1, maxLevel: max, isNew: false, text: def.levelText });
           }
-        } else if (!slotsFull) {
+        } else if (!slotsFull && allowed(def)) {
           pool.push({ kind, id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
         }
       }
     };
     stat('item', ITEMS, p.items, itemSlotsFull);
+    const impact = hasImpact(p.mods);
+    const attacks = [...p.weapons.list.map((w) => w.def), p.ultimate.def.attack];
     for (const def of MODIFICATIONS) {
       const max = def.levels.length;
       const have = p.mods.find((m) => m.def.id === def.id);
@@ -706,7 +755,7 @@ export class GameScene extends Phaser.Scene {
         if (have.level < max) {
           pool.push({ kind: 'mod', id: def.id, name: def.name, icon: def.icon, level: have.level + 1, maxLevel: max, isNew: false, text: def.levels[have.level].text });
         }
-      } else if (p.weapons.list.some((w) => modReach(w.def, def) !== 'none')) {
+      } else if (attacks.some((d) => modReach(d, def, impact) !== 'none')) {
         pool.push({ kind: 'mod', id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
       }
     }
@@ -742,7 +791,7 @@ export class GameScene extends Phaser.Scene {
       const owned = list.find((i) => i.def.id === c.id);
       if (owned) owned.level++;
       else list.push({ def: c.kind === 'item' ? itemDef(c.id) : powerupDef(c.id), level: 1 });
-      p.setStats(computeStats([...p.items, ...p.powerups]));
+      p.recomputeStats();
     } else if (c.kind === 'mod') {
       const owned = p.mods.find((m) => m.def.id === c.id);
       if (owned) owned.level++;
@@ -821,6 +870,8 @@ export class GameScene extends Phaser.Scene {
     p.fallOver();
     p.weapons.clearVisuals();
     p.ultimate.stop();
+    p.passive.stop();
+    p.clearBuffs();
     p.runStats.deaths++;
     this.playSfx('death', p.x, p.y);
     if (this.coop) {
@@ -880,6 +931,7 @@ export class GameScene extends Phaser.Scene {
       if (!p) continue;
       p.weapons.clearVisuals();
       p.ultimate.stop();
+      p.passive.stop();
     }
   }
 
@@ -996,10 +1048,13 @@ export class GameScene extends Phaser.Scene {
     const p = this.players[slot];
     if (!p || p.gone) return;
     if (msg.t === 'pos') {
+      // Sent before the joiner saw its last teleport (Flicker Strike): it would put the character back.
+      if ((Number(msg.k) || 0) < p.teleports) return;
       p.netX = Phaser.Math.Clamp(Number(msg.x) || 0, 0, ARENA_SIZE);
       p.netY = Phaser.Math.Clamp(Number(msg.y) || 0, 0, ARENA_SIZE);
       if (msg.fx || msg.fy) p.facing.set(msg.fx, msg.fy).normalize();
       p.moving = msg.m === 1 && p.alive;
+      p.speedNow = p.moving ? Math.max(0, Number(msg.v) || 0) : 0;
     } else if (msg.t === 'pick') {
       const offer = this.remoteOffers.get(slot);
       const c = offer?.[msg.index];
@@ -1062,6 +1117,7 @@ export class GameScene extends Phaser.Scene {
         reviveHp: p.reviveHp,
         ultCd: p.ultimate.cooldownLeft,
         ultActive: p.ultimate.activeLeft,
+        status: p.status(),
       });
     }
     const header = {
@@ -1090,7 +1146,12 @@ export class GameScene extends Phaser.Scene {
       w.u16(0);
       for (const e of this.enemies.active) {
         if (!e.active || !this.nearView(p, e.x, e.y)) continue;
-        const flags = (e.flipX ? EF.flip : 0) | (e.flashUntil > now ? EF.flash : 0) | (e.tintState === 2 ? EF.chill : 0) | (e.spirit ? EF.spirit : 0);
+        const flags =
+          (e.flipX ? EF.flip : 0) |
+          (e.flashUntil > now ? EF.flash : 0) |
+          (e.tintState === 2 ? EF.chill : 0) |
+          (e.spirit ? EF.spirit : 0) |
+          (e.tintState === 3 ? EF.stun : 0);
         writeEntity(w, e.netId, enemyKind.get(e.def) ?? 0, flags, e.x, e.y);
         n++;
       }
@@ -1199,6 +1260,8 @@ export class GameScene extends Phaser.Scene {
         fx: Math.round(p.facing.x * 100) / 100,
         fy: Math.round(p.facing.y * 100) / 100,
         m: p.moving ? 1 : 0,
+        v: Math.round(p.speedNow),
+        k: p.teleports,
       });
     }
   }
@@ -1246,6 +1309,9 @@ export class GameScene extends Phaser.Scene {
         if (sp.fx || sp.fy) p.facing.set(sp.fx, sp.fy);
         p.moving = (sp.flags & PF.moving) !== 0;
       }
+      p.synced = sp.status;
+      p.aegis = sp.status.aegis;
+      p.passive.sync(sp.status.passiveCd, sp.status.stacks);
       p.weapons.setPhases(sp.phases);
       if (this.state === 'playing') p.ultimate.sync(sp.ultCd, sp.ultActive);
       p.revive = sp.revive;
@@ -1340,6 +1406,18 @@ export class GameScene extends Phaser.Scene {
       case 't':
         this.fx.label(ev[1], ev[2], ev[3], ev[4]);
         break;
+      case 'm': {
+        // A teleport (Flicker Strike): this browser moves its own character; others glide (or jump) there.
+        const p = this.players[ev[1]];
+        if (!p) break;
+        if (p === this.player) {
+          (p.body as Phaser.Physics.Arcade.Body).reset(ev[2], ev[3]);
+          p.teleports = ev[4];
+        }
+        p.netX = ev[2];
+        p.netY = ev[3];
+        break;
+      }
     }
   }
 
@@ -1354,7 +1432,7 @@ export class GameScene extends Phaser.Scene {
         p.weapons.sync(msg.weapons);
         p.weapons.refreshMods();
         const hp = p.hp;
-        p.setStats(computeStats([...p.items, ...p.powerups]));
+        p.recomputeStats();
         p.hp = hp; // HP comes from the host
         if (p === this.player) this.emitBuild();
         break;

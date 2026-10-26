@@ -1,11 +1,23 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { DEPTH, INNER, MAX_EFFECT_STACKS, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
-import { applyLevelBonuses, hasteFactor, modsForWeapon, weaponLevelAt, type WeaponLevelStats } from '../core/progression';
-import { CHAIN_RANGE, CHAIN_SPEED, ECHO_GAP, ECHO_RADIUS, SPLIT_ARC, weaponDef } from '../data';
+import { applyLevelBonuses, hasTag, hasteFactor, modsForWeapon, splashModsFor, weaponLevelAt, type WeaponLevelStats } from '../core/progression';
+import {
+  CHAIN_RANGE,
+  CHAIN_SPEED,
+  ECHO_GAP,
+  ECHO_RADIUS,
+  IMPACT_RADIUS,
+  MULTISTRIKE_GAP,
+  RUTHLESS_EVERY,
+  SPLIT_ARC,
+  STUN_SECONDS,
+  weaponDef,
+} from '../data';
+import { PLAYER_RADIUS } from '../data/player';
 import type { ModEffect, WeaponDef, WeaponStats } from '../data/types';
 import type { Enemy } from '../entities/Enemy';
-import type { Player } from '../entities/Player';
+import { CHARGE_KINDS, type Player } from '../entities/Player';
 import { Projectile } from '../entities/Projectile';
 import type { GameScene } from '../scenes/GameScene';
 
@@ -14,7 +26,7 @@ let nextUid = 1;
 interface Slash {
   angle: number;
   reach: number;
-  /** Radians for sweeps and breaths, px (blade width) for stabs. */
+  /** Radians for sweeps and breaths, px (blade width) for stabs, px (cut length) for flicker strikes. */
   arc: number;
   t: number;
   dur: number;
@@ -44,6 +56,8 @@ export interface WeaponInstance {
   slashes: Slash[];
   /** Totals of the owner's modifications that share a tag with this weapon. */
   mod: Required<ModEffect>;
+  /** Totals of the owner's modifications for this weapon's Impact splash (all 0 without Impact, or for non-melee weapons). */
+  splashMod: Required<ModEffect>;
   /** Repeats of the last attack still to come, and seconds until the next one. */
   repeatsLeft: number;
   repeatTimer: number;
@@ -53,15 +67,33 @@ export interface WeaponInstance {
   burstLeft: number;
   burstTimer: number;
   burstGap: number;
+  /**
+   * Attacks made so far, repeats included; also the number of the current attack, which its hits and projectiles
+   * carry. Ruthless makes every RUTHLESS_EVERY-th one hit harder.
+   */
+  serial: number;
+  /** The last attack (serial) Unstable Infusion rolled for: it rolls once per attack, on its first hit. */
+  infused: number;
+  /** Flicker Strike: seconds until the next check for a Shadow Charge to spend. */
+  checkTimer: number;
 }
 
 /** Stats after the owner's multipliers (damage, cooldown, area) and modifications. */
 export interface Effective extends WeaponStats {
-  /** Projectiles: how many one splits into on hit (below 2: no split), and how many times a line can split. */
+  /** What the weapon's base damage is multiplied by in `damage` (Momentum's bonus is scaled the same way). */
+  damageScale: number;
+  /** Base damage before any bonus, and the multiplier of a Ruthless attack (used instead of `damageScale`). */
+  baseDamage: number;
+  ruthlessScale: number;
+  ruthless: number;
+  /** Projectiles: how many one splits into on hit (below 2: no split), how much less its splits deal, and their chance to split again. */
   split: number;
-  splitDepth: number;
-  /** Projectiles: bounces once pierce is used up. */
+  splitLess: number;
+  splitAgain: number;
+  /** Projectiles: bounces once pierce is used up, how much less each bounce deals, and how much faster it flies. */
   chain: number;
+  chainLess: number;
+  chainSpeed: number;
   /** Echo Strike: fraction of an area hit dealt again (0 = none), its radius in px and how many times it goes off. */
   echo: number;
   echoRadius: number;
@@ -69,10 +101,24 @@ export interface Effective extends WeaponStats {
   /** Duration effect: damage per tick and seconds a stack lasts (0 without an effect). */
   effectDamage: number;
   effectDuration: number;
-  /** Duration effect: chance a stack copies itself when applied or when it deals damage. */
+  /** Duration effect (or buff): chance it copies itself when applied or when it deals damage. */
   reiterate: number;
   /** Fields: fraction of speed enemies inside lose. */
   slow: number;
+  /** Multistrike: sure repeats of every attack, and the chance of one more after any attack. */
+  multistrike: number;
+  repeatChance: number;
+  /** Stun: chance per hit, and how much more damage stunned enemies take. */
+  stunChance: number;
+  stunBonus: number;
+  /** Momentum: share of the owner's current speed added to each hit's base damage. */
+  momentum: number;
+  /** Impact: share of a hit dealt as splash (0 = none), its radius, and Echo Strike on the splash. */
+  impact: number;
+  splashRadius: number;
+  splashEcho: number;
+  splashEchoRadius: number;
+  splashEchoRepeats: number;
 }
 
 /** A freezing field (`field` weapons): stays where it was cast, slows enemies on it and applies the weapon's effect. */
@@ -110,6 +156,8 @@ interface Echo {
   /** The enemy that was hit (it always takes the echo), and its spawn id so a recycled enemy is not mistaken for it. */
   source: Enemy;
   sourceId: number;
+  /** The attack it came from (WeaponInstance.serial). */
+  serial: number;
 }
 
 const DEG = Math.PI / 180;
@@ -118,27 +166,41 @@ const DOME_INSET = 1;
 /** Seconds of slack for field timers, so a check due at the very end of a field's time does not run. */
 const FIELD_EPSILON = 1e-6;
 /** Targeting types drawn with the slash graphics (redrawn every frame while effects play). */
-const SLASHERS = new Set(['facing', 'stab', 'breath']);
+const SLASHERS = new Set(['facing', 'stab', 'breath', 'spin', 'flicker']);
+/** Flicker Strike lands this many px past the edge of the enemy it cuts. */
+const FLICKER_GAP = 3;
+/** Impact: splash rings drawn per weapon per frame at most (the damage still lands everywhere). */
+const MAX_SPLASH_RINGS = 6;
 
 /**
  * Runs every weapon one character has equipped. Behaviour comes from the weapon's `targeting` and stats, so a new
  * weapon is a data entry: `nearest` / `random` / `facing` fire projectiles (or sweep if speed is 0),
  * `orbit` keeps objects circling the owner, `aura` damages everything in a radius on a tick,
  * `stab` thrusts a blade at the nearest enemy, `breath` sprays a cone at it, `strike` calls bolts down
- * around the owner, `shield` blocks a hit every cooldown and absorbs part of the rest, `bomb` throws a projectile that
- * explodes on reaching its target, `field` conjures freezing fields under enemies, and `passive` weapons only change
- * stats (critical strikes). `beam` is for ultimate attacks: lingering beams across a dome.
+ * around the owner, `shield` puts Aegis on its owner every cooldown (it blocks a hit), absorbs part of the rest and
+ * reflects damage, `bomb` throws a projectile that explodes on reaching its target, `field` conjures freezing fields
+ * under enemies, `wave` sends a sword wave that cuts through everything until it reaches its target, `spin` swings
+ * all around the owner, `flicker` teleports the owner onto a random enemy, and `passive` / `infusion` weapons only
+ * change how the others work (critical strikes, charges). `beam` is for ultimate attacks: lingering beams across a dome.
  * The owner's modifications (data/modifications.ts) are folded into `eff()` by weapon tag; this class also
- * runs what they add: projectile splits and chains, Echo Strike echoes and duration effects on enemies.
+ * runs what they add: projectile splits and chains, Echo Strike echoes, duration effects on enemies, and for melee
+ * weapons Multistrike repeats, Ruthless attacks, Stun, Momentum and Impact splashes.
  */
 export class Weapons {
   readonly list: WeaponInstance[] = [];
   private query: Enemy[] = [];
+  /** Separate from `query`: splashes are queued from inside loops over `query`. */
+  private splashQuery: Enemy[] = [];
   private echoes: Echo[] = [];
   /** Echo damage summed per weapon and enemy, so one frame of echoes is one hit (and one number) per enemy. */
   private echoSums = new Map<WeaponInstance, Map<Enemy, number>>();
+  /** Impact splash damage summed per weapon and enemy the same way, dealt at the end of the frame. */
+  private splashSums = new Map<WeaponInstance, Map<Enemy, number>>();
+  private splashRings = 0;
   private fields: Field[] = [];
   private beams: Beam[] = [];
+  /** A reflected hit can set off Thorns, which hurts the owner again: no reflecting from inside a reflect. */
+  private reflecting = false;
 
   /** `projectiles` is shared by every player's weapons. */
   constructor(
@@ -185,12 +247,16 @@ export class Weapons {
       phase: 0,
       slashes: [],
       mod: modsForWeapon(def, this.owner.mods),
+      splashMod: splashModsFor(def, this.owner.mods),
       repeatsLeft: 0,
       repeatTimer: 0,
       burstLeft: 0,
       burstTimer: 0,
       burstGap: 0,
       refundable: 0,
+      serial: 0,
+      infused: -1,
+      checkTimer: 0,
     };
   }
 
@@ -208,48 +274,90 @@ export class Weapons {
 
   /** The owner's modifications changed: recompute what they add to every weapon and to the ultimate's attack. */
   refreshMods(): void {
-    for (const w of this.list) w.mod = modsForWeapon(w.def, this.owner.mods);
+    const mods = this.owner.mods;
+    for (const w of this.list) {
+      w.mod = modsForWeapon(w.def, mods);
+      w.splashMod = splashModsFor(w.def, mods);
+    }
     const ult = this.owner.ultimate?.attack;
-    if (ult) ult.mod = modsForWeapon(ult.def, this.owner.mods);
+    if (ult) {
+      ult.mod = modsForWeapon(ult.def, mods);
+      ult.splashMod = splashModsFor(ult.def, mods);
+    }
   }
 
   eff(w: WeaponInstance): Effective {
-    const p = this.owner.stats;
+    const p = this.owner;
+    const st = p.stats;
     const s = w.stats;
     const { base, pct } = w.levelStats;
     const m = w.mod;
+    const sm = w.splashMod;
     // Percent bonuses add up into one sum per stat. Area: the weapon's own size levels, the AREA stat and area
     // modifications (only AoE weapons get those). Damage: the weapon's own damage levels and modification
-    // bonuses; only DAMAGE (the Damage powerup) multiplies the result.
-    const area = Math.max(0.1, p.areaMult + (pct.size ?? 0) + m.area);
-    const damageMult = (1 + (pct.damage ?? 0) + m.damage) * p.damageMult;
+    // bonuses; only DAMAGE (the Damage powerup, Mistwalker) multiplies the result.
+    const area = Math.max(0.1, st.areaMult + (pct.size ?? 0) + m.area);
+    const damageSum = 1 + (pct.damage ?? 0) + m.damage;
+    const damageScale = damageSum * p.damageMult;
+    const durationMult = Math.max(0.1, 1 + m.duration);
     const effect = w.def.effect;
+    let cooldown = Math.max(0.05, s.cooldown * st.cooldownMult * hasteFactor(st.abilityHaste));
+    // Aegis is an effect on the owner: duration modifications make it come back sooner or later.
+    if (w.def.targeting === 'shield') cooldown /= durationMult;
+    // The splash of a weapon that is not AoE itself gets the AoE modifications' damage bonus on top of the hit.
+    const splashDamage = hasTag(w.def, 'aoe') ? 1 : 1 + sm.damage;
     return {
       ...s,
-      damage: base.damage * damageMult,
-      cooldown: Math.max(0.05, s.cooldown * p.cooldownMult * hasteFactor(p.abilityHaste)),
+      damage: base.damage * damageScale,
+      damageScale,
+      baseDamage: base.damage,
+      ruthlessScale: (damageSum + m.ruthless) * p.damageMult,
+      ruthless: m.ruthless,
+      cooldown,
       size: base.size * area,
-      range: w.def.targeting === 'orbit' ? s.range * p.areaMult : s.range,
+      range: w.def.targeting === 'orbit' ? s.range * st.areaMult : s.range,
       pierce: s.pierce + m.pierce,
       projectileCount: s.projectileCount + m.projectiles,
       split: m.split,
-      splitDepth: m.splitDepth,
+      splitLess: m.splitLess,
+      splitAgain: m.splitAgain,
       chain: m.chain,
+      chainLess: m.chainLess,
+      chainSpeed: m.chainSpeed,
       echo: m.echo,
       // Echoes grow with AREA and area modifications, not with the weapon's own size levels.
-      echoRadius: ECHO_RADIUS * Math.max(0.1, p.areaMult + m.area + m.echoArea),
+      echoRadius: ECHO_RADIUS * Math.max(0.1, st.areaMult + m.area + m.echoArea),
       echoRepeats: m.echo > 0 ? Math.max(1, Math.round(m.echoRepeats)) : 0,
       // Duration modifications stretch how long the weapon's fields, beams and effects last.
-      lifetime: s.lifetime * Math.max(0.1, 1 + m.duration),
-      effectDamage: effect ? effect.damage * damageMult : 0,
-      effectDuration: effect ? effect.duration * Math.max(0.1, 1 + m.duration) : 0,
+      lifetime: s.lifetime * durationMult,
+      effectDamage: effect ? effect.damage * damageScale : 0,
+      effectDuration: effect ? effect.duration * durationMult : 0,
       reiterate: m.reiterate,
       slow: s.slow ?? 0,
+      multistrike: m.multistrike,
+      repeatChance: m.repeatChance,
+      stunChance: m.stunChance,
+      stunBonus: m.stunBonus,
+      momentum: m.momentum,
+      impact: sm.impact * splashDamage,
+      splashRadius: IMPACT_RADIUS * Math.max(0.1, st.areaMult + sm.area),
+      splashEcho: sm.echo,
+      splashEchoRadius: ECHO_RADIUS * Math.max(0.1, st.areaMult + sm.area + sm.echoArea),
+      splashEchoRepeats: sm.echo > 0 ? Math.max(1, Math.round(sm.echoRepeats)) : 0,
     };
   }
 
-  /** `firing` false only animates (joiners draw remote weapons this way; the host does the hitting). */
+  /** `e` for a Ruthless attack: the Ruthless bonus joins the damage sum. */
+  private ruthlessOf(e: Effective): Effective {
+    return { ...e, damage: e.baseDamage * e.ruthlessScale, damageScale: e.ruthlessScale };
+  }
+
+  /**
+   * `firing` false only animates (joiners draw remote weapons this way; the host does the hitting). While the owner
+   * is mist (Mistwalker) nothing attacks, but cooldowns keep counting.
+   */
   update(dt: number, firing: boolean): void {
+    const locked = this.owner.misted;
     for (const w of this.list) {
       const e = this.eff(w);
       switch (w.def.targeting) {
@@ -261,16 +369,24 @@ export class Weapons {
         case 'strike':
         case 'bomb':
         case 'field':
-          if (firing) this.tickShooter(w, e, dt);
+        case 'wave':
+        case 'spin':
+          if (firing) this.tickShooter(w, e, dt, locked);
+          break;
+        case 'flicker':
+          if (firing) {
+            this.tickShooter(w, e, dt, locked);
+            if (!locked) this.spendShadow(w, e, dt);
+          }
           break;
         case 'shield':
-          this.updateShield(w, e, dt);
+          this.updateShield(w, e, dt, firing);
           break;
         case 'orbit':
-          this.updateOrbit(w, e, dt, firing);
+          this.updateOrbit(w, e, dt, firing && !locked);
           break;
         case 'aura':
-          this.updateAura(w, e, dt, firing);
+          this.updateAura(w, e, dt, firing && !locked);
           break;
       }
       if (w.gfx && SLASHERS.has(w.def.targeting)) this.drawSlashes(w, dt);
@@ -278,6 +394,7 @@ export class Weapons {
     if (firing) {
       this.updateFields(dt);
       this.updateBeams(dt);
+      this.processSplashes();
       this.processEchoes();
     }
   }
@@ -306,7 +423,7 @@ export class Weapons {
     }
   }
 
-  private tickShooter(w: WeaponInstance, e: Effective, dt: number): void {
+  private tickShooter(w: WeaponInstance, e: Effective, dt: number, locked: boolean): void {
     const burst = w.def.burst;
     if (w.burstLeft > 0 && burst) {
       w.burstTimer -= dt;
@@ -317,7 +434,7 @@ export class Weapons {
         const nearest = this.game.enemies.nearest(p.x, p.y, e.range);
         const target = burst.target === 'random' ? (this.randomOnScreen() ?? nearest) : nearest;
         // With nothing to aim at, that projectile is skipped (the rest of the burst carries on).
-        if (target) {
+        if (target && !locked) {
           this.fireAt(w, e, target);
           this.game.playSfx('throw', p.x, p.y);
         }
@@ -328,62 +445,89 @@ export class Weapons {
       if (w.repeatTimer <= 0) {
         w.repeatsLeft--;
         w.repeatTimer += this.repeatGap(w, e);
-        this.attack(w, e);
+        if (!locked) this.perform(w, e);
       }
     }
     w.timer -= dt;
     if (w.timer > 0) return;
-    const fired = this.attack(w, e);
-    const repeats = Math.round(e.repeat ?? 0);
-    if (fired && repeats > 0) {
-      w.repeatsLeft = repeats;
-      w.repeatTimer = this.repeatGap(w, e);
-    }
-    // Hold fire with no target: stay ready and shoot the moment one appears.
+    const fired = !locked && this.perform(w, e, true);
+    // Hold fire with no target (or while locked): stay ready and attack the moment it can.
     w.timer = fired ? Math.max(w.timer + e.cooldown, e.cooldown * 0.5) : 0;
     if (fired) w.refundable = this.refundShare() * e.cooldown;
   }
 
-  /** Seconds between repeats: the weapon's delay, shortened so every repeat lands before the next attack. */
+  /**
+   * One attack of a shooter weapon. It is counted (Ruthless makes every RUTHLESS_EVERY-th one hit harder), and
+   * `first` (the attack that used the cooldown) brings the weapon's own repeats and Multistrike's sure ones. Any
+   * attack, a repeat included, may add one more with Multistrike's chance. Returns false when it held fire.
+   */
+  private perform(w: WeaponInstance, e: Effective, first = false): boolean {
+    w.serial++;
+    const ruthless = e.ruthless > 0 && w.serial % RUTHLESS_EVERY === 0;
+    if (!this.attack(w, ruthless ? this.ruthlessOf(e) : e)) {
+      w.serial--;
+      return false;
+    }
+    let more = first ? Math.round(e.repeat ?? 0) + Math.round(e.multistrike) : 0;
+    if (e.repeatChance > 0 && this.game.rng.float() < e.repeatChance) more++;
+    if (more > 0) {
+      if (w.repeatsLeft <= 0) w.repeatTimer = this.repeatGap(w, e);
+      w.repeatsLeft += more;
+    }
+    return true;
+  }
+
+  /** Seconds between repeats: the weapon's delay (or Multistrike's), shortened so the sure repeats land before the next attack. */
   private repeatGap(w: WeaponInstance, e: Effective): number {
-    const n = Math.max(1, Math.round(e.repeat ?? 0));
-    return Math.min(w.def.repeatDelay ?? 0, e.cooldown / (n + 1));
+    const n = Math.max(1, Math.round(e.repeat ?? 0) + Math.round(e.multistrike));
+    return Math.min(w.def.repeatDelay ?? MULTISTRIKE_GAP, e.cooldown / (n + 1));
   }
 
   /** One attack of a shooter weapon. Returns false when it held fire (no target). */
   private attack(w: WeaponInstance, e: Effective): boolean {
     let fired = false;
     const p = this.owner;
-    if (w.def.targeting === 'nearest') {
+    const t = w.def.targeting;
+    if (t === 'nearest') {
       const target = this.game.enemies.nearest(p.x, p.y, e.range);
       if (target) {
         if (w.def.burst) this.startBurst(w, e, target);
         else this.volley(w, e, Math.atan2(target.y - p.y, target.x - p.x));
         fired = true;
       }
-    } else if (w.def.targeting === 'random') {
+    } else if (t === 'random') {
       this.volley(w, e, this.game.rng.angle());
       fired = true;
-    } else if (w.def.targeting === 'stab' || w.def.targeting === 'breath') {
-      const reach = e.size + (w.def.targeting === 'stab' ? STAB_LEAD : 0);
+    } else if (t === 'stab' || t === 'breath') {
+      const reach = e.size + (t === 'stab' ? STAB_LEAD : 0);
       const target = this.game.enemies.nearest(p.x, p.y, reach);
       if (target) {
         const angle = Math.atan2(target.y - p.y, target.x - p.x);
-        if (w.def.targeting === 'stab') this.stab(w, e, angle);
+        if (t === 'stab') this.stab(w, e, angle);
         else this.sweep(w, e, angle);
         fired = true;
       }
-    } else if (w.def.targeting === 'strike') {
+    } else if (t === 'spin') {
+      // Swings once something is within reach (its body touching the circle).
+      if (this.game.enemies.nearest(p.x, p.y, e.size + STAB_LEAD)) {
+        this.sweep(w, e, Math.atan2(p.facing.y, p.facing.x));
+        fired = true;
+      }
+    } else if (t === 'strike') {
       this.strike(w, e);
       fired = true;
-    } else if (w.def.targeting === 'bomb') {
+    } else if (t === 'bomb') {
       const target = this.game.enemies.nearest(p.x, p.y, e.range);
       if (target) {
         this.startBurst(w, e, target);
         fired = true;
       }
-    } else if (w.def.targeting === 'field') {
+    } else if (t === 'field') {
       fired = this.castFields(w, e);
+    } else if (t === 'wave') {
+      fired = this.waves(w, e);
+    } else if (t === 'flicker') {
+      fired = this.flicker(w, e);
     } else {
       const base = Math.atan2(p.facing.y, p.facing.x);
       if (e.speed > 0) this.volley(w, e, base);
@@ -408,11 +552,13 @@ export class Weapons {
 
   /**
    * Stats a projectile of `w` is fired with. Weapons whose `size` is a blast radius (bombs, blast-on-hit) fly at the
-   * size of their art; bombs never split or chain since they touch nothing on the way.
+   * size of their art; bombs never split or chain since they touch nothing on the way. Sword waves live just long
+   * enough to travel RANGE.
    */
   private shot(w: WeaponInstance, e: Effective): Effective {
     if (w.def.targeting === 'bomb') return { ...e, size: w.def.artRadius ?? 5, split: 0, chain: 0 };
     if (w.def.blastOnHit) return { ...e, size: w.def.artRadius ?? 5 };
+    if (w.def.targeting === 'wave') return { ...e, lifetime: e.range / Math.max(1, e.speed) };
     return e;
   }
 
@@ -464,6 +610,13 @@ export class Weapons {
     return list.length > 0 ? this.game.rng.pick(list) : null;
   }
 
+  /** Living enemies within `range` px of (x, y). */
+  private inRange(x: number, y: number, range: number): Enemy[] {
+    const near: Enemy[] = [];
+    this.game.enemies.grid.query(x, y, range, near);
+    return near.filter((en) => en.active && (en.x - x) ** 2 + (en.y - y) ** 2 <= range * range);
+  }
+
   /** A bomb explodes where it is. */
   explode(pr: Projectile): void {
     const x = pr.x;
@@ -494,6 +647,69 @@ export class Weapons {
     }
   }
 
+  // ---------------------------------------------------------------- sword waves and flicker strikes (Zorus)
+
+  /** `wave`: a sword wave at the closest enemy within RANGE; extra waves go at random enemies in range. */
+  private waves(w: WeaponInstance, e: Effective): boolean {
+    const p = this.owner;
+    const first = this.game.enemies.nearest(p.x, p.y, e.range);
+    if (!first) return false;
+    const n = Math.max(1, Math.round(e.projectileCount));
+    const near = n > 1 ? this.inRange(p.x, p.y, e.range) : [];
+    const shot = this.shot(w, e);
+    for (let i = 0; i < n; i++) {
+      const t = i === 0 || near.length === 0 ? first : this.game.rng.pick(near);
+      const pr = this.projectiles.get(p.x, p.y) as Projectile | null;
+      if (!pr) break;
+      pr.fire(w, p.x, p.y - 2, Math.atan2(t.y - p.y, t.x - p.x), shot);
+      pr.seek(t);
+    }
+    this.game.playSfx('slash', p.x, p.y);
+    return true;
+  }
+
+  /**
+   * `flicker`: the owner teleports just past a random enemy on their screen and cuts it. The move is instant, so it
+   * counts as standing still (no Momentum). False when no enemy is on screen.
+   */
+  private flicker(w: WeaponInstance, e: Effective): boolean {
+    const p = this.owner;
+    const target = this.randomOnScreen();
+    if (!target) return false;
+    const dx = target.x - p.x;
+    const dy = target.y - p.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const ux = dx / d;
+    const uy = dy / d;
+    const off = target.radius + PLAYER_RADIUS + FLICKER_GAP;
+    const margin = PLAYER_RADIUS + 2;
+    const x = Phaser.Math.Clamp(target.x + ux * off, INNER.left + margin, INNER.right - margin);
+    const y = Phaser.Math.Clamp(target.y + uy * off, INNER.top + margin, INNER.bottom - margin);
+    const color = w.def.color ?? 0xb48cff;
+    this.game.fx.beam(p.x, p.y, x, y, 2, 0.18, color);
+    this.game.fx.puff(p.x, p.y, color, 6);
+    this.game.teleport(p, x, y);
+    this.directHit(w, e, target, e.damage, e.damageScale, ux, uy, e.knockback, false);
+    const angle = Math.atan2(uy, ux);
+    const dur = Math.max(0.15, e.lifetime);
+    // The cut is drawn across the enemy, `off` px behind where the owner lands.
+    w.slashes.push({ angle, reach: off, arc: e.size, t: 0, dur });
+    this.game.relay(['w', p.slot, this.list.indexOf(w), angle, off, e.size, dur]);
+    this.game.playSfx('blink', x, y);
+    return true;
+  }
+
+  /** Flicker Strike: every `shadow.check` seconds a Shadow Charge, if there is one, is spent on another strike (cooldown or not). */
+  private spendShadow(w: WeaponInstance, e: Effective, dt: number): void {
+    const def = w.def.shadow;
+    if (!def) return;
+    w.checkTimer -= dt;
+    if (w.checkTimer > 0) return;
+    w.checkTimer = def.check;
+    const p = this.owner;
+    if (p.shadow > 0 && this.perform(w, e)) p.shadow--;
+  }
+
   // ---------------------------------------------------------------- freezing fields
 
   /** `field`: one field under the closest enemy in range, the others under random enemies in range. */
@@ -502,9 +718,7 @@ export class Weapons {
     const first = this.game.enemies.nearest(p.x, p.y, e.range);
     if (!first) return false;
     const n = Math.max(1, Math.round(e.projectileCount));
-    const near: Enemy[] = [];
-    this.game.enemies.grid.query(p.x, p.y, e.range, near);
-    const inRange = near.filter((en) => en.active && (en.x - p.x) ** 2 + (en.y - p.y) ** 2 <= e.range * e.range);
+    const inRange = this.inRange(p.x, p.y, e.range);
     const fresh = inRange.filter((en) => en !== first);
     const targets = [first];
     // Different enemies while there are enough; after that, any enemy in range again.
@@ -556,6 +770,7 @@ export class Weapons {
   /** A beam of `w` from (x1, y1) to (x2, y2) that lingers for the weapon's lifetime, hitting each enemy once. */
   beam(w: WeaponInstance, x1: number, y1: number, x2: number, y2: number): void {
     const e = this.eff(w);
+    w.serial++;
     this.beams.push({ weapon: w, x1, y1, x2, y2, halfWidth: e.size, left: e.lifetime, hit: new Set() });
     this.game.fx.beam(x1, y1, x2, y2, e.size * 2, e.lifetime, w.def.color ?? 0xffb8e6);
     this.game.playSfx('laser', (x1 + x2) / 2, (y1 + y2) / 2);
@@ -646,10 +861,11 @@ export class Weapons {
     pr.ricochet(ex, ey, angle);
   }
 
-  /** Fires one projectile of `w` from anywhere (ultimates). Returns false when the pool is empty. */
+  /** Fires one projectile of `w` from anywhere (ultimates); each one is an attack of its own. False when the pool is empty. */
   shoot(w: WeaponInstance, x: number, y: number, angle: number): boolean {
     const pr = this.projectiles.get(x, y) as Projectile | null;
     if (!pr) return false;
+    w.serial++;
     pr.fire(w, x, y, angle, this.eff(w));
     return true;
   }
@@ -686,12 +902,7 @@ export class Weapons {
     const p = this.owner;
     const rng = this.game.rng;
     const n = Math.max(1, Math.round(e.projectileCount));
-    const near: Enemy[] = [];
-    this.game.enemies.grid.query(p.x, p.y, e.range, near);
-    for (let i = near.length - 1; i >= 0; i--) {
-      const en = near[i];
-      if (!en.active || (en.x - p.x) ** 2 + (en.y - p.y) ** 2 > e.range * e.range) near.splice(i, 1);
-    }
+    const near = this.inRange(p.x, p.y, e.range);
     for (let i = 0; i < n; i++) {
       let x: number;
       let y: number;
@@ -720,22 +931,32 @@ export class Weapons {
     this.game.playSfx('thunder', p.x, p.y);
   }
 
-  /** Shield bubble: bright while the block is charged, a filling ring while it recharges. */
-  private updateShield(w: WeaponInstance, e: Effective, dt: number): void {
+  // ---------------------------------------------------------------- shields (Aegis)
+
+  /**
+   * Shield bubble: bright while the owner has Aegis (an extra ring per extra stack), a filling ring while it comes
+   * back. The recharge only runs while there is no Aegis; on the host, Aegis is put on the owner once it is done.
+   */
+  private updateShield(w: WeaponInstance, e: Effective, dt: number, firing: boolean): void {
     const p = this.owner;
-    if (w.timer > 0) w.timer = Math.max(0, w.timer - dt);
+    if (p.aegis <= 0 && w.timer > 0) w.timer = Math.max(0, w.timer - dt);
+    if (firing && p.aegis <= 0 && w.timer <= 0) this.applyAegis(w, e);
     w.pulse = Math.max(0, w.pulse - dt * 2.5);
     w.phase = (w.phase + dt * 1.5) % 1;
     const g = w.gfx!;
     const color = w.def.color ?? 0x5ab0ff;
     const R = e.size;
     g.clear();
-    if (w.timer <= 0) {
+    if (p.aegis > 0) {
       const shimmer = 0.5 + 0.5 * Math.sin(w.phase * Math.PI * 2);
       g.fillStyle(color, 0.08 + 0.05 * shimmer);
       g.fillCircle(p.x, p.y, R);
       g.lineStyle(1, color, 0.55 + 0.3 * shimmer);
       g.strokeCircle(p.x, p.y, R);
+      for (let i = 1; i < Math.min(p.aegis, 4); i++) {
+        g.lineStyle(1, 0xffffff, 0.35 + 0.2 * shimmer);
+        g.strokeCircle(p.x, p.y, R + 2 * i);
+      }
     } else {
       const k = 1 - w.timer / e.cooldown;
       g.lineStyle(1, color, 0.3);
@@ -749,20 +970,53 @@ export class Weapons {
     }
   }
 
-  /** Host: a charged shield eats the hit and starts recharging. */
+  /** Host: Aegis goes on the owner. It is an applied effect, so Reiterate may add a copy. */
+  private applyAegis(w: WeaponInstance, e: Effective): void {
+    const p = this.owner;
+    p.aegis = 1;
+    if (e.reiterate > 0 && this.game.rng.float() < e.reiterate) p.aegis++;
+    w.pulse = 1;
+    this.game.fx.ring(p.x, p.y, w.def.color ?? 0x5ab0ff, e.size + 6, 250);
+  }
+
+  /** Host: an Aegis stack eats the hit. Once the last one is gone the shield starts bringing it back. */
   tryBlock(): boolean {
-    for (const w of this.list) {
-      if (w.def.targeting !== 'shield' || w.timer > 0) continue;
-      const e = this.eff(w);
+    const p = this.owner;
+    const w = this.list.find((x) => x.def.targeting === 'shield');
+    if (!w || p.aegis <= 0) return false;
+    p.aegis--;
+    const e = this.eff(w);
+    if (p.aegis <= 0) {
       w.timer = e.cooldown;
       w.refundable = this.refundShare() * e.cooldown;
-      w.pulse = 1;
-      const p = this.owner;
-      this.game.fx.ring(p.x, p.y, w.def.color ?? 0x5ab0ff, e.size + 12, 320);
-      this.game.playSfx('block', p.x, p.y);
-      return true;
     }
-    return false;
+    w.pulse = 1;
+    this.game.fx.ring(p.x, p.y, w.def.color ?? 0x5ab0ff, e.size + 12, 320);
+    this.game.playSfx('block', p.x, p.y);
+    return true;
+  }
+
+  /**
+   * Host: `source` just hit the owner for `raw` (before armor, shields or blocks). Shields with `reflect` deal that
+   * share back to it as one of their melee hits (an attack for Ruthless).
+   */
+  reflect(source: Enemy, raw: number): void {
+    if (this.reflecting) return;
+    this.reflecting = true;
+    const p = this.owner;
+    for (const w of this.list) {
+      const share = w.stats.reflect ?? 0;
+      if (share <= 0 || !source.active) continue;
+      let e = this.eff(w);
+      w.serial++;
+      if (e.ruthless > 0 && w.serial % RUTHLESS_EVERY === 0) e = this.ruthlessOf(e);
+      const dx = source.x - p.x;
+      const dy = source.y - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      this.game.fx.beam(p.x, p.y, source.x, source.y, 1, 0.15, w.def.color ?? 0x5ab0ff);
+      this.directHit(w, e, source, raw * share * e.damageScale, e.damageScale, dx / d, dy / d, e.knockback, false);
+    }
+    this.reflecting = false;
   }
 
   /** Fraction of every hit the owner's shields absorb. */
@@ -772,11 +1026,19 @@ export class Weapons {
     return Math.min(MAX_SHIELD_REDUCTION, r);
   }
 
+  // ---------------------------------------------------------------- passives (critical strikes, Unstable Infusion)
+
   /** Critical strike chance the owner's passive weapons add. */
   critChance(): number {
     let c = 0;
     for (const w of this.list) c += w.stats.crit ?? 0;
     return c;
+  }
+
+  /** The owner's Unstable Infusion (the weapon with `charges`), or null. */
+  infusion(): WeaponInstance | null {
+    for (const w of this.list) if (w.def.charges) return w;
+    return null;
   }
 
   /** Share of a cooldown crit refunds may take off: 1 minus the passive weapons' highest `refundFloor`. */
@@ -796,7 +1058,7 @@ export class Weapons {
     for (const w of this.list) s += w.stats.critCooldown ?? 0;
     if (s <= 0) return;
     for (const w of this.list) {
-      if (w.def.targeting === 'passive') continue;
+      if (w.def.targeting === 'passive' || w.def.targeting === 'infusion') continue;
       const r = Math.max(0, Math.min(s, w.refundable, w.timer));
       w.timer -= r;
       w.refundable -= r;
@@ -809,7 +1071,7 @@ export class Weapons {
     }
   }
 
-  /** Melee arc toward `base` (Tail Whip, breaths). Extra projectiles add sweeps around the owner. */
+  /** Melee arc toward `base` (Tail Whip, breaths, Blade Flurry's full circle). Extra projectiles add sweeps around the owner. */
   private sweep(w: WeaponInstance, e: Effective, base: number): void {
     const p = this.owner;
     const n = Math.max(1, Math.round(e.projectileCount));
@@ -837,7 +1099,7 @@ export class Weapons {
       this.game.playSfx('zap', p.x, p.y);
     } else {
       p.spin();
-      this.game.playSfx('whip', p.x, p.y);
+      this.game.playSfx(w.def.targeting === 'spin' ? 'slash' : 'whip', p.x, p.y);
     }
   }
 
@@ -863,13 +1125,17 @@ export class Weapons {
         this.drawBreath(g, s, k, color);
         continue;
       }
+      if (w.def.targeting === 'flicker') {
+        this.drawFlicker(g, s, k, color);
+        continue;
+      }
       const sweepK = Math.min(1, k * 1.8);
       const alpha = k < 0.55 ? 0.85 : 0.85 * (1 - (k - 0.55) / 0.45);
       const a0 = s.angle - s.arc / 2;
       const a1 = a0 + s.arc * sweepK;
       const outer = s.reach;
       const inner = s.reach * 0.5;
-      const steps = 14;
+      const steps = s.arc > Math.PI ? 28 : 14;
       const pts: Phaser.Math.Vector2[] = [];
       for (let j = 0; j <= steps; j++) {
         const a = a0 + ((a1 - a0) * j) / steps;
@@ -966,6 +1232,25 @@ export class Weapons {
     g.strokePath();
   }
 
+  /** Flicker Strike: two crossing cuts over the enemy, `reach` px behind the owner, that open up and fade. */
+  private drawFlicker(g: Phaser.GameObjects.Graphics, s: Slash, k: number, color: number): void {
+    const p = this.owner;
+    const cx = p.x - Math.cos(s.angle) * s.reach;
+    const cy = p.y - Math.sin(s.angle) * s.reach;
+    const open = Math.min(1, k * 4);
+    const alpha = k < 0.4 ? 1 : 1 - (k - 0.4) / 0.6;
+    const len = s.arc * open;
+    for (const turn of [0.8, -0.8]) {
+      const a = s.angle + turn;
+      const dx = Math.cos(a) * len;
+      const dy = Math.sin(a) * len;
+      g.lineStyle(4, color, alpha * 0.5);
+      g.lineBetween(cx - dx, cy - dy, cx + dx, cy + dy);
+      g.lineStyle(1, 0xffffff, alpha);
+      g.lineBetween(cx - dx, cy - dy, cx + dx, cy + dy);
+    }
+  }
+
   private updateOrbit(w: WeaponInstance, e: Effective, dt: number, firing: boolean): void {
     const p = this.owner;
     const n = Math.max(1, Math.round(e.projectileCount));
@@ -1001,6 +1286,7 @@ export class Weapons {
         const kx = en.x - p.x;
         const ky = en.y - p.y;
         const kd = Math.hypot(kx, ky) || 1;
+        w.serial++;
         this.areaHit(w, e, en, kx / kd, ky / kd);
       }
     }
@@ -1015,6 +1301,7 @@ export class Weapons {
         w.timer += e.cooldown;
         w.refundable = this.refundShare() * e.cooldown;
         w.pulse = 1;
+        w.serial++;
         this.game.relay(['a', p.slot, this.list.indexOf(w)]);
         this.query.length = 0;
         this.game.enemies.grid.query(p.x, p.y, R + 16, this.query);
@@ -1048,6 +1335,7 @@ export class Weapons {
   /**
    * A projectile touched an enemy. Order: split if it still can (the projectile becomes its splits), otherwise
    * use up pierce; once pierce is gone a boomerang turns around, anything else chains while it has bounces.
+   * A sword wave first cuts through everything until it touches the enemy it was aimed at.
    */
   onProjectileHit(pr: Projectile, en: Enemy): void {
     // Bombs touch nothing on the way; they explode on reaching their target (see updateProjectiles).
@@ -1057,11 +1345,13 @@ export class Weapons {
     const v = Math.hypot(body.velocity.x, body.velocity.y);
     const dx = v > 1 ? body.velocity.x / v : pr.dirX;
     const dy = v > 1 ? body.velocity.y / v : pr.dirY;
+    const w = pr.weapon;
     // Blast-on-hit projectiles deal nothing themselves: every enemy they touch sets off the weapon's blast.
-    if (pr.weapon.def.blastOnHit) this.blast(pr.weapon, en.x, en.y);
-    else {
-      const landed = this.game.enemies.hit(en, pr.damage, dx, dy, pr.knockback, pr.weapon);
-      if (landed && pr.weapon.def.effect) this.applyEffect(pr.weapon, this.eff(pr.weapon), en);
+    if (w.def.blastOnHit) this.blast(w, en.x, en.y);
+    else this.directHit(w, this.eff(w), en, pr.damage, pr.damageScale, dx, dy, pr.knockback, false, pr.serial);
+    if (pr.passThrough) {
+      if (!pr.isTarget(en)) return;
+      pr.passThrough = false;
     }
     if (pr.splitsLeft > 0) {
       this.split(pr, Math.atan2(dy, dx));
@@ -1079,23 +1369,37 @@ export class Weapons {
     else Weapons.release(pr);
   }
 
-  /** Splits: identical projectiles fan out from the hit, skipping enemies the parent already hit. */
+  /**
+   * Splits: identical projectiles fan out from the hit, skipping enemies the parent already hit, each dealing
+   * `splitLess` less than the parent. They never split again, except that the parent's first split may give each
+   * one a `splitAgain` chance to split once more.
+   */
   private split(pr: Projectile, angle: number): void {
     const w = pr.weapon;
     const e = this.shot(w, this.eff(w));
     const n = pr.splitCount;
     const step = (SPLIT_ARC * DEG) / (n - 1);
+    const keep = 1 - e.splitLess;
+    const rng = this.game.rng;
     for (let i = 0; i < n; i++) {
       const child = this.projectiles.get(pr.x, pr.y) as Projectile | null;
       if (!child) break;
       child.fire(w, pr.x, pr.y, angle + (i - (n - 1) / 2) * step, e);
+      child.damage = pr.damage * keep;
+      child.damageScale = pr.damageScale * keep;
+      child.serial = pr.serial;
+      child.generation = pr.generation + 1;
       child.splitCount = pr.splitCount;
-      child.splitsLeft = pr.splitsLeft - 1;
+      const again = pr.generation === 0 && e.splitAgain > 0 && rng.float() < e.splitAgain;
+      child.splitsLeft = pr.splitsLeft - 1 + (again ? 1 : 0);
       for (const h of pr.hit) child.hit.add(h);
     }
   }
 
-  /** Chain: bounce to the closest enemy this projectile has not hit, or a random direction when none is near. */
+  /**
+   * Chain: bounce to the closest enemy this projectile has not hit, or a random direction when none is near. It flies
+   * faster from then on and deals `chainLess` less with every bounce.
+   */
   private chain(pr: Projectile): void {
     pr.bouncesLeft--;
     let target: Enemy | null = null;
@@ -1111,31 +1415,98 @@ export class Weapons {
       }
     }
     const angle = target ? Math.atan2(target.y - pr.y, target.x - pr.x) : this.game.rng.angle();
-    pr.speed = this.eff(pr.weapon).speed * CHAIN_SPEED;
-	pr.bounce(angle, CHAIN_RANGE / Math.max(1, pr.speed) + 0.1);
+    const e = this.eff(pr.weapon);
+    const keep = 1 - e.chainLess;
+    pr.damage *= keep;
+    pr.damageScale *= keep;
+    pr.speed = e.speed * CHAIN_SPEED * (1 + e.chainSpeed);
+    pr.bounce(angle, CHAIN_RANGE / Math.max(1, pr.speed) + 0.1);
+  }
+
+  /** A hit from an area weapon (sweeps, auras, stabs, breaths, strikes, blasts, beams, orbiting objects). */
+  private areaHit(w: WeaponInstance, e: Effective, en: Enemy, dirX: number, dirY: number): void {
+    this.directHit(w, e, en, e.damage, e.damageScale, dirX, dirY, e.knockback, true);
   }
 
   /**
-   * A hit from an area weapon (sweeps, auras, stabs, breaths, strikes, orbiting objects). Applies duration effects
-   * and queues Echo Strike echoes when the weapon has them (only AoE-tagged weapons do). A hit a rare enemy ignores
-   * (blocked, shielded) does neither.
+   * One of the weapon's own hits on `en` (not a splash, echo or effect tick). Momentum first adds its share of the
+   * owner's current speed, scaled like the weapon's base damage (`scale`). When the hit lands it applies the weapon's
+   * duration effect, queues Echo Strike echoes (`area` hits of AoE weapons only), and for melee weapons may stun and
+   * splashes (Impact). A hit a rare enemy ignores (blocked, shielded) does none of that. Returns whether it landed.
    */
-  private areaHit(w: WeaponInstance, e: Effective, en: Enemy, dirX: number, dirY: number): void {
+  private directHit(
+    w: WeaponInstance,
+    e: Effective,
+    en: Enemy,
+    amount: number,
+    scale: number,
+    dirX: number,
+    dirY: number,
+    knockback: number,
+    area: boolean,
+    serial = w.serial,
+  ): boolean {
+    const p = this.owner;
+    if (e.momentum > 0) amount += e.momentum * p.speedNow * scale;
     const x = en.x;
     const y = en.y;
-    if (!this.game.enemies.hit(en, e.damage, dirX, dirY, e.knockback, w)) return;
+    const enemies = this.game.enemies;
+    if (!enemies.hit(en, amount, dirX, dirY, knockback, w)) return false;
+    const dealt = enemies.lastDealt;
     this.applyEffect(w, e, en);
-    for (let i = 0; i < e.echoRepeats; i++) {
-      this.echoes.push({
-        weapon: w,
-        x,
-        y,
-        radius: e.echoRadius,
-        amount: e.damage * e.echo,
-        at: this.game.runTime + i * ECHO_GAP,
-        source: en,
-        sourceId: en.netId,
-      });
+    if (area) this.queueEchoes(w, en, x, y, amount * e.echo, e.echoRadius, e.echoRepeats, serial);
+    if (e.stunChance > 0 && this.game.rng.float() < e.stunChance) {
+      // The stun lasts longer the larger the share of the enemy's max HP the hit took.
+      enemies.stun(en, STUN_SECONDS * (1 + dealt / Math.max(1, en.maxHp)), e.stunBonus, this.game.time.now);
+    }
+    if (e.impact > 0) this.splash(w, e, en, x, y, amount * e.impact);
+    this.afterHit(w, serial);
+    return true;
+  }
+
+  /** Echo Strike: `repeats` echoes of `amount` around (x, y), ECHO_GAP seconds apart. */
+  private queueEchoes(w: WeaponInstance, en: Enemy, x: number, y: number, amount: number, radius: number, repeats: number, serial: number): void {
+    if (amount <= 0) return;
+    for (let i = 0; i < repeats; i++) {
+      this.echoes.push({ weapon: w, x, y, radius, amount, at: this.game.runTime + i * ECHO_GAP, source: en, sourceId: en.netId, serial });
+    }
+  }
+
+  /** Impact: every other enemy within the splash radius of (x, y) takes `amount`, summed per frame (see processSplashes). */
+  private splash(w: WeaponInstance, e: Effective, hit: Enemy, x: number, y: number, amount: number): void {
+    if (amount <= 0) return;
+    let sums = this.splashSums.get(w);
+    if (!sums) {
+      sums = new Map();
+      this.splashSums.set(w, sums);
+    }
+    const q = this.splashQuery;
+    q.length = 0;
+    this.game.enemies.grid.query(x, y, e.splashRadius + 16, q);
+    for (const en of q) {
+      if (en === hit || !en.active) continue;
+      const rr = e.splashRadius + en.radius;
+      if ((en.x - x) ** 2 + (en.y - y) ** 2 > rr * rr) continue;
+      sums.set(en, (sums.get(en) ?? 0) + amount);
+    }
+    if (this.splashRings++ < MAX_SPLASH_RINGS) this.game.fx.ring(x, y, w.def.color ?? 0xffffff, e.splashRadius, 200);
+  }
+
+  /** Splash damage queued this frame lands: one hit per weapon and enemy. Splashes can echo but never splash again. */
+  private processSplashes(): void {
+    this.splashRings = 0;
+    if (this.splashSums.size === 0) return;
+    for (const [w, sums] of this.splashSums) {
+      if (sums.size === 0) continue;
+      const e = this.eff(w);
+      for (const [en, amount] of sums) {
+        const x = en.x;
+        const y = en.y;
+        if (!this.game.enemies.hit(en, amount, 0, 0, 0, w)) continue;
+        this.queueEchoes(w, en, x, y, amount * e.splashEcho, e.splashEchoRadius, e.splashEchoRepeats, w.serial);
+        this.afterHit(w, w.serial);
+      }
+      sums.clear();
     }
   }
 
@@ -1147,6 +1518,7 @@ export class Weapons {
     if (this.echoes.length === 0) return;
     const now = this.game.runTime;
     let keep = 0;
+    const serials = new Map<WeaponInstance, number>();
     for (let i = 0; i < this.echoes.length; i++) {
       const ec = this.echoes[i];
       if (ec.at > now) {
@@ -1158,6 +1530,7 @@ export class Weapons {
         sums = new Map();
         this.echoSums.set(ec.weapon, sums);
       }
+      serials.set(ec.weapon, ec.serial);
       const src = ec.source.active && ec.source.netId === ec.sourceId ? ec.source : null;
       let srcHit = false;
       this.query.length = 0;
@@ -1176,9 +1549,29 @@ export class Weapons {
     }
     this.echoes.length = keep;
     for (const [w, sums] of this.echoSums) {
-      for (const [en, amount] of sums) this.game.enemies.hit(en, amount, 0, 0, 0, w);
+      const serial = serials.get(w) ?? w.serial;
+      for (const [en, amount] of sums) if (this.game.enemies.hit(en, amount, 0, 0, 0, w)) this.afterHit(w, serial);
       sums.clear();
     }
+  }
+
+  /**
+   * Something of `w` landed on an enemy (a hit, splash or echo of attack `serial`; not an effect tick). Flicker
+   * Strike may give a Shadow Charge for every enemy reached; Unstable Infusion rolls once per attack, on its first hit.
+   */
+  private afterHit(w: WeaponInstance, serial: number): void {
+    const p = this.owner;
+    const rng = this.game.rng;
+    const shadow = w.def.shadow;
+    if (shadow && p.shadow < shadow.max) {
+      const chance = w.stats.chargeChance ?? 0;
+      if (chance > 0 && rng.float() < chance) p.shadow++;
+    }
+    const inf = this.infusion();
+    if (!inf || w.infused === serial) return;
+    w.infused = serial;
+    const charges = inf.def.charges!;
+    if (rng.float() < (inf.stats.chargeChance ?? 0)) p.gainCharge(rng.pick(CHARGE_KINDS), charges);
   }
 
   /**
@@ -1211,7 +1604,7 @@ export class Weapons {
     const w = this.list[index];
     if (!w) return;
     w.slashes.push({ angle, reach, arc, t: 0, dur });
-    if (w.def.targeting === 'facing') this.owner.spin();
+    if (w.def.targeting === 'facing' || w.def.targeting === 'spin') this.owner.spin();
   }
 
   pulse(index: number): void {
@@ -1258,6 +1651,7 @@ export class Weapons {
   /** Removes everything this player drew (player left). The list stays for the party screen. */
   destroy(): void {
     this.echoes.length = 0;
+    this.splashSums.clear();
     this.fields.length = 0;
     this.beams.length = 0;
     for (const w of this.list) {
@@ -1284,6 +1678,7 @@ export class Weapons {
       w.burstLeft = 0;
     }
     this.echoes.length = 0;
+    this.splashSums.clear();
     this.fields.length = 0;
     this.beams.length = 0;
   }

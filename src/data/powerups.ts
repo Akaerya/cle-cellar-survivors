@@ -61,5 +61,6 @@ export const POWERUPS: ItemDef[] = [
     perLevel: [{ stat: 'damageTaken', percent: -0.02 }],
     levelText: '-2% damage taken.',
     maxLevel: POWERUP_MAX_LEVEL,
+    requiresTag: 'melee',
   },
 ];

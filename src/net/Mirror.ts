@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { ARENA_SIZE, CHILL_TINT, DEPTH } from '../constants';
+import { ARENA_SIZE, CHILL_TINT, DEPTH, STUN_TINT } from '../constants';
 import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS, enemyModifier } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
 import type { ChainsDef } from '../data/types';
@@ -146,6 +146,7 @@ export class Mirror {
         o.s.setAlpha(e.extra & EF.spirit ? SPIRIT_ALPHA : 1);
         o.s.setFlipX((e.extra & EF.flip) !== 0);
         if (e.extra & EF.flash) o.s.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
+        else if (e.extra & EF.stun) o.s.setTint(STUN_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
         else if (e.extra & EF.chill) o.s.setTint(CHILL_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
         else o.s.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
       },

@@ -3,16 +3,18 @@ import { ATLAS } from '../art/textures';
 import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { loadProfile, saveProfile } from '../core/profile';
 import { sfx } from '../core/sfx';
-import { CHARACTERS, ultimateDef, weaponDef } from '../data';
+import { CHARACTERS, passiveDef, ultimateDef, weaponDef } from '../data';
 import { netSession } from '../net/Net';
 import { Button, drawPanel, onKey, text } from '../ui/widgets';
 
 /** Cards are as wide as fits (up to CARD_MAX_W) with every character side by side. */
 const CARD_MAX_W = 250;
-const CARD_H = 252;
+const CARD_H = 258;
 const GAP = 12;
 const MARGIN = 10;
-const CARD_Y = 46;
+const CARD_Y = 42;
+/** px between the starting weapon, ultimate and passive rows. */
+const ROW_GAP = 4;
 
 interface Card {
   frame: Phaser.GameObjects.Graphics;
@@ -55,27 +57,34 @@ export class CharacterSelectScene extends Phaser.Scene {
       const x = x0 + i * (CARD_W + GAP);
       const cx = x + CARD_W / 2;
       const frame = this.add.graphics();
-      this.add.image(cx, CARD_Y + 96, ATLAS, 'shadow_l').setScale(1.4);
-      const sprite = this.add.sprite(cx, CARD_Y + 58, ATLAS, c.firstFrame).setScale(4).play(`${c.anim}-idle`);
-      text(this, cx, CARD_Y + 114, c.name.toUpperCase(), { scale: 2, origin: [0.5, 0.5], color: COLOR.text });
-      text(this, cx, CARD_Y + 131, c.title, { origin: [0.5, 0.5], color: COLOR.gold });
-      text(this, cx, CARD_Y + 142, c.description.toUpperCase(), { origin: [0.5, 0], color: COLOR.textDim, maxWidth: CARD_W - 20, align: 1 });
+      this.add.image(cx, CARD_Y + 70, ATLAS, 'shadow_l').setScale(1.2);
+      const sprite = this.add.sprite(cx, CARD_Y + 40, ATLAS, c.firstFrame).setScale(3).play(`${c.anim}-idle`);
+      text(this, cx, CARD_Y + 85, c.name.toUpperCase(), { scale: 2, origin: [0.5, 0.5], color: COLOR.text });
+      text(this, cx, CARD_Y + 101, c.title, { origin: [0.5, 0.5], color: COLOR.gold });
+      const desc = text(this, cx, CARD_Y + 110, c.description.toUpperCase(), { origin: [0.5, 0], color: COLOR.textDim, maxWidth: CARD_W - 20, align: 1 });
 
-      // Descriptions may wrap to three lines; everything below starts after that.
-      const lx = x + 12;
+      // Rows flow down from the description, each as tall as its text wraps: starting weapon, ultimate, passive.
+      const lx = x + 10;
+      const tw = CARD_W - 32;
+      let y = CARD_Y + 110 + desc.height + ROW_GAP + 2;
+      const row = (icon: string, name: string, note: string) => {
+        this.add.image(lx, y + 1, ATLAS, icon).setOrigin(0);
+        const t = text(this, lx + 20, y, name.toUpperCase(), { color: COLOR.text, maxWidth: tw });
+        const n = text(this, lx + 20, y + t.height, note, { color: COLOR.textDim, maxWidth: tw });
+        y += Math.max(18, t.height + n.height) + ROW_GAP;
+      };
       const start = weaponDef(c.startingWeapon);
-      this.add.image(lx, CARD_Y + 175, ATLAS, start.icon).setOrigin(0);
-      text(this, lx + 20, CARD_Y + 175, 'STARTS WITH', { color: COLOR.textDim });
-      text(this, lx + 20, CARD_Y + 184, start.name.toUpperCase(), { color: COLOR.text });
-
+      row(start.icon, start.name, 'STARTING WEAPON');
       const ult = ultimateDef(c.ultimate);
-      this.add.image(lx, CARD_Y + 198, ATLAS, ult.icon).setOrigin(0);
-      text(this, lx + 20, CARD_Y + 196, 'ULTIMATE (Q)', { color: COLOR.textDim });
-      text(this, lx + 20, CARD_Y + 205, ult.name.toUpperCase(), { color: COLOR.text, maxWidth: CARD_W - 36 });
-      text(this, lx + 20, CARD_Y + 214, `${ult.duration}S · ${ult.cooldown}S COOLDOWN`, { color: COLOR.textDim });
+      row(ult.icon, ult.name, `ULTIMATE (Q) · ${ult.cooldown}S`);
+      if (c.passive) {
+        const pd = passiveDef(c.passive);
+        row(pd.icon, pd.name, 'PASSIVE');
+      }
 
-      text(this, lx, CARD_Y + 232, 'KIT', { color: COLOR.textDim });
-      c.weapons.forEach((id, k) => this.add.image(lx + 22 + k * 19, CARD_Y + 228, ATLAS, weaponDef(id).icon).setOrigin(0));
+      const kitY = CARD_Y + CARD_H - 22;
+      text(this, lx, kitY + 4, 'KIT', { color: COLOR.textDim });
+      c.weapons.forEach((id, k) => this.add.image(lx + 22 + k * 19, kitY, ATLAS, weaponDef(id).icon).setOrigin(0));
 
       const zone = this.add.zone(x, CARD_Y, CARD_W, CARD_H).setOrigin(0).setInteractive({ useHandCursor: true });
       zone.on('pointerover', () => this.select(i));
