@@ -10,11 +10,18 @@ import { Button, drawPanel, onKey, text } from '../ui/widgets';
 /** Cards are as wide as fits (up to CARD_MAX_W) with every character side by side. */
 const CARD_MAX_W = 250;
 const CARD_H = 258;
-const GAP = 12;
-const MARGIN = 10;
+const GAP = 8;
+const MARGIN = 6;
 const CARD_Y = 42;
 /** px between the starting weapon, ultimate and passive rows. */
-const ROW_GAP = 4;
+const ROW_GAP = 3;
+/** The character is drawn this many times its size, its middle this many px below the top of the card. */
+const SPRITE_SCALE = 2;
+const SPRITE_Y = 34;
+/** px below the top of the card of the name, the title and the description. */
+const NAME_Y = 64;
+const TITLE_Y = 79;
+const DESC_Y = 88;
 
 interface Card {
   frame: Phaser.GameObjects.Graphics;
@@ -57,16 +64,16 @@ export class CharacterSelectScene extends Phaser.Scene {
       const x = x0 + i * (CARD_W + GAP);
       const cx = x + CARD_W / 2;
       const frame = this.add.graphics();
-      this.add.image(cx, CARD_Y + 70, ATLAS, 'shadow_l').setScale(1.2);
-      const sprite = this.add.sprite(cx, CARD_Y + 40, ATLAS, c.firstFrame).setScale(3).play(`${c.anim}-idle`);
-      text(this, cx, CARD_Y + 85, c.name.toUpperCase(), { scale: 2, origin: [0.5, 0.5], color: COLOR.text });
-      text(this, cx, CARD_Y + 101, c.title, { origin: [0.5, 0.5], color: COLOR.gold });
-      const desc = text(this, cx, CARD_Y + 110, c.description.toUpperCase(), { origin: [0.5, 0], color: COLOR.textDim, maxWidth: CARD_W - 20, align: 1 });
+      this.add.image(cx, CARD_Y + SPRITE_Y + 10 * SPRITE_SCALE - 2, ATLAS, 'shadow_l');
+      const sprite = this.add.sprite(cx, CARD_Y + SPRITE_Y, ATLAS, c.firstFrame).setScale(SPRITE_SCALE).play(`${c.anim}-idle`);
+      text(this, cx, CARD_Y + NAME_Y, c.name.toUpperCase(), { scale: 2, origin: [0.5, 0.5], color: COLOR.text });
+      text(this, cx, CARD_Y + TITLE_Y, c.title, { origin: [0.5, 0.5], color: COLOR.gold });
+      const desc = text(this, cx, CARD_Y + DESC_Y, c.description.toUpperCase(), { origin: [0.5, 0], color: COLOR.textDim, maxWidth: CARD_W - 16, align: 1 });
 
       // Rows flow down from the description, each as tall as its text wraps: starting weapon, ultimate, passive.
-      const lx = x + 10;
-      const tw = CARD_W - 32;
-      let y = CARD_Y + 110 + desc.height + ROW_GAP + 2;
+      const lx = x + 8;
+      const tw = CARD_W - 28;
+      let y = CARD_Y + DESC_Y + desc.height + ROW_GAP + 2;
       const row = (icon: string, name: string, note: string) => {
         this.add.image(lx, y + 1, ATLAS, icon).setOrigin(0);
         const t = text(this, lx + 20, y, name.toUpperCase(), { color: COLOR.text, maxWidth: tw });

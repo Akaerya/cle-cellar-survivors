@@ -242,6 +242,9 @@ export class UIScene extends Phaser.Scene {
       let status: string;
       if (d.kind === 'dodge') status = `${Math.round(d.chance * 100)}% DODGE`;
       else if (d.kind === 'growth') status = `${s.stacks} STACKS · NEXT IN ${Math.ceil(d.every - (this.run.runTime % d.every))}S`;
+      else if (d.kind === 'pets') {
+        status = s.stacks >= d.max ? `${s.stacks} BUNNIES · FULL` : `${s.stacks} BUNNIES · NEXT IN ${Math.ceil(d.every - (this.run.runTime % d.every))}S`;
+      }
       else status = cooling ? `${Math.ceil(s.passiveCd)}S` : 'READY';
       this.passiveStatus.setText(status).setTint(cooling ? COLOR.textDim : COLOR.good);
     }

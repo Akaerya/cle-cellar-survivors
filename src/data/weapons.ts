@@ -1,9 +1,68 @@
-import type { WeaponDef, WeaponLevel } from './types';
+import type { WeaponDef, WeaponLevel, WeaponStats } from './types';
 
 /** Speed (px/s) of Elysia's crystal arrows. Crystalline Bloom's crystal flies 30% slower. */
 const ARROW_SPEED = 420;
 
 const fourTimes = (lv: WeaponLevel): WeaponLevel[] => [lv, lv, lv, lv];
+
+/** Stats every weapon has; for the ones that use few of them (pet buffs, gear). */
+const NO_STATS: WeaponStats = {
+  cooldown: 0,
+  damage: 0,
+  projectileCount: 1,
+  speed: 0,
+  pierce: Infinity,
+  lifetime: 0,
+  size: 0,
+  knockback: 0,
+  spread: 0,
+  range: 0,
+  arc: 0,
+  boomerang: false,
+};
+
+/** Bunny Armory's gear: what a bunny attacks with while it carries it. Each level of the armory is +25% damage. */
+const PET_GEAR_LEVELS = fourTimes({ text: '+25% damage.', pct: { damage: 0.25 } });
+const PET_GEAR: WeaponDef[] = [
+  {
+    id: 'pet_sword',
+    name: 'Bunny Sword',
+    description: 'A bunny with a sword stabs the closest enemy within reach.',
+    icon: 'icon_pet_sword',
+    targeting: 'stab',
+    color: 0xd8e6ff,
+    petAnim: 'bunny-sword',
+    stats: { ...NO_STATS, cooldown: 0.7, damage: 11, size: 16, arc: 6, lifetime: 0.12, knockback: 6 },
+    levels: PET_GEAR_LEVELS,
+  },
+  {
+    id: 'pet_bow',
+    name: 'Bunny Bow',
+    description: 'A bunny with a bow shoots an arrow at the closest enemy.',
+    icon: 'icon_pet_bow',
+    targeting: 'nearest',
+    projectileAnim: 'arrow-glint',
+    artRadius: 3,
+    orient: true,
+    color: 0xe8d29a,
+    petAnim: 'bunny-bow',
+    stats: { ...NO_STATS, cooldown: 1, damage: 8, speed: 340, pierce: 1, lifetime: 0.8, size: 2.5, knockback: 4, range: 220 },
+    levels: PET_GEAR_LEVELS,
+  },
+  {
+    id: 'pet_book',
+    name: 'Bunny Spellbook',
+    description: 'A bunny with a spellbook casts a slow orb of magic that goes through enemies.',
+    icon: 'icon_pet_book',
+    targeting: 'nearest',
+    projectileAnim: 'spell-pulse',
+    artRadius: 4,
+    color: 0x8fc8ff,
+    petAnim: 'bunny-book',
+    stats: { ...NO_STATS, cooldown: 1.6, damage: 13, speed: 140, pierce: 3, lifetime: 1.6, size: 3.5, knockback: 5, range: 200 },
+    levels: PET_GEAR_LEVELS,
+  },
+];
 
 export const WEAPONS: WeaponDef[] = [
   // ---------------------------------------------------------------- rsncle, the banana monkey
@@ -482,5 +541,81 @@ export const WEAPONS: WeaponDef[] = [
       ...[0.15, 0.2, 0.25].map((c) => ({ text: `${Math.round(c * 100)}% chance to gain a charge.`, set: { chargeChance: c } })),
       { text: 'Charges have 100% increased effect.', set: { chargeEffect: 2 } },
     ],
+  },
+  // ---------------------------------------------------------------- rabbit, the bunny conjurer
+  {
+    id: 'arcane_bolt',
+    name: 'Arcane Bolt',
+    description: 'Casts a slow orb of magic at the nearest enemy. It goes through the first enemy it hits.',
+    icon: 'icon_arcane',
+    targeting: 'nearest',
+    tags: ['projectile'],
+    projectileAnim: 'spell-pulse',
+    artRadius: 4,
+    color: 0x8fc8ff,
+    stats: {
+      cooldown: 1.5,
+      damage: 14,
+      projectileCount: 1,
+      speed: 150,
+      pierce: 2,
+      lifetime: 2.6,
+      size: 5,
+      knockback: 6,
+      spread: 14,
+      range: 340,
+      arc: 0,
+      boomerang: false,
+    },
+    levels: fourTimes({ text: 'Casts 20% more often. +8% damage.', faster: 0.2, pct: { damage: 0.08 } }),
+  },
+  {
+    id: 'carrot_sword',
+    name: 'Carrot Sword',
+    description: 'A carrot sword floats around you. It dashes through the nearest enemy, cutting everything on its way, then flies back.',
+    icon: 'icon_carrot',
+    targeting: 'seeker',
+    tags: ['melee'],
+    projectileAnim: 'carrot-glint',
+    artRadius: 6,
+    color: 0xff9a3c,
+    hover: 18,
+    stats: {
+      cooldown: 1.1,
+      damage: 16,
+      projectileCount: 1,
+      speed: 300,
+      pierce: Infinity,
+      lifetime: 0,
+      size: 7,
+      knockback: 10,
+      spread: 0,
+      range: 190,
+      arc: 0,
+      boomerang: false,
+    },
+    levels: fourTimes({ text: '+15% damage. Flies 15% faster.', pct: { damage: 0.15, speed: 0.15 } }),
+  },
+  {
+    id: 'carrot_rations',
+    name: 'Carrot Rations',
+    description: 'Your bunnies eat well: they deal 25% more damage, attack 15% faster and run 15% faster.',
+    icon: 'icon_rations',
+    targeting: 'petbuff',
+    color: 0xff9a3c,
+    stats: { ...NO_STATS, petDamage: 0.25, petHaste: 0.15, petSpeed: 0.15 },
+    levels: fourTimes({ text: 'Bunnies: +15% damage, attack 10% faster, run 10% faster.', add: { petDamage: 0.15, petHaste: 0.1, petSpeed: 0.1 } }),
+  },
+  {
+    id: 'bunny_armory',
+    name: 'Bunny Armory',
+    description: 'Arms every bunny with a sword, a bow or a spellbook, picked at random. Every 8 seconds each one swaps to another.',
+    icon: 'icon_armory',
+    targeting: 'armory',
+    color: 0xd8e6ff,
+    gear: PET_GEAR,
+    // COOLDOWN is the seconds between swaps; the armory's level is the level of every piece of gear.
+    stats: { ...NO_STATS, cooldown: 8 },
+    levels: fourTimes({ text: '+25% damage for every bunny weapon.' }),
   },
 ];

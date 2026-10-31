@@ -55,6 +55,28 @@
    "brute_3": [84, 0, 160]
   }
  },
+ "bunny": {
+  "w": 18,
+  "h": 14,
+  "frames": {
+   "bunny_0": [0, 0, 320],
+   "bunny_1": [18, 0, 160],
+   "bunny_sword_0": [36, 0, 320],
+   "bunny_sword_1": [54, 0, 160],
+   "bunny_bow_0": [72, 0, 320],
+   "bunny_bow_1": [90, 0, 160],
+   "bunny_book_0": [108, 0, 320],
+   "bunny_book_1": [126, 0, 160]
+  }
+ },
+ "carrot": {
+  "w": 15,
+  "h": 7,
+  "frames": {
+   "carrot_0": [0, 0, 500],
+   "carrot_1": [15, 0, 90]
+  }
+ },
  "caustic": {
   "w": 31,
   "h": 31,
@@ -205,7 +227,16 @@
    "icon_passive_shroud": [688, 0, 100],
    "icon_passive_ragebait": [704, 0, 100],
    "icon_passive_dragon": [720, 0, 100],
-   "icon_passive_defied": [736, 0, 100]
+   "icon_passive_defied": [736, 0, 100],
+   "icon_arcane": [752, 0, 100],
+   "icon_carrot": [768, 0, 100],
+   "icon_rations": [784, 0, 100],
+   "icon_armory": [800, 0, 100],
+   "icon_ult_giant": [816, 0, 100],
+   "icon_passive_warren": [832, 0, 100],
+   "icon_pet_sword": [848, 0, 100],
+   "icon_pet_bow": [864, 0, 100],
+   "icon_pet_book": [880, 0, 100]
   }
  },
  "knight": {
@@ -296,6 +327,22 @@
    "px1": [0, 0, 100]
   }
  },
+ "rabbit": {
+  "w": 16,
+  "h": 20,
+  "frames": {
+   "rabbit_idle_0": [0, 0, 500],
+   "rabbit_idle_1": [16, 0, 350],
+   "rabbit_idle_2": [32, 0, 500],
+   "rabbit_idle_3": [48, 0, 120],
+   "rabbit_walk_0": [64, 0, 110],
+   "rabbit_walk_1": [80, 0, 110],
+   "rabbit_walk_2": [96, 0, 110],
+   "rabbit_walk_3": [112, 0, 110],
+   "rabbit_hurt_0": [128, 0, 100],
+   "rabbit_hurt_1": [144, 0, 100]
+  }
+ },
  "shadow_l": {
   "w": 24,
   "h": 7,
@@ -315,6 +362,14 @@
   "h": 12,
   "frames": {
    "shadow_xl": [0, 0, 100]
+  }
+ },
+ "spell": {
+  "w": 9,
+  "h": 9,
+  "frames": {
+   "spell_0": [0, 0, 110],
+   "spell_1": [9, 0, 110]
   }
  },
  "spider": {

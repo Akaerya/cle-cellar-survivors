@@ -181,7 +181,7 @@ export class GameOverScene extends Phaser.Scene {
     for (const w of m.weapons) {
       add(this.add.image(LEFT, y, ATLAS, w.icon).setOrigin(0));
       add(text(this, LEFT + 20, y + 4, w.name.toUpperCase(), { color: w.ultimate ? COLOR.gold : COLOR.text }));
-      const lv = w.ultimate ? 'ULT' : `LV ${w.level}`;
+      const lv = w.ultimate ? 'ULT' : w.passive ? 'PASSIVE' : `LV ${w.level}`;
       add(text(this, cols.lv, y + 4, lv, { color: w.ultimate || w.level >= MAX_LEVEL ? COLOR.gold : COLOR.text }));
       add(text(this, cols.damage, y + 4, short(w.damage), { color: COLOR.gold }));
       add(text(this, cols.dps, y + 4, short(w.dps), { color: COLOR.text }));

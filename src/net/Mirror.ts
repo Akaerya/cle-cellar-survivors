@@ -1,18 +1,22 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, CHILL_TINT, DEPTH, STUN_TINT } from '../constants';
-import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS, enemyModifier } from '../data';
+import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS, SUMMON_ANIMS, ULTIMATES, WEAPONS, enemyModifier } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
 import type { ChainsDef } from '../data/types';
 import { SHADOW_W, randomStartFrame } from '../entities/Enemy';
 import type { RareView } from '../systems/RareVisuals';
-import { EF, type SnapEntity, type SnapRare } from './protocol';
+import { EF, SF, SUMMON_ANGLE_SHIFT, SUMMON_ANGLE_STEPS, type SnapEntity, type SnapRare } from './protocol';
 
 export const SNAPSHOT_HZ = 20;
 const STEP = 1 / SNAPSHOT_HZ;
 const GEM_COLORS = ['blue', 'green', 'red'] as const;
 /** How see-through an enemy Spirit Walker brought back is drawn. */
 const SPIRIT_ALPHA = enemyModifier('spirit_walker').alpha;
+/** How much larger a giant pet is drawn (the Giant Bunny ultimate). */
+const GIANT_SCALE = ULTIMATES.find((u) => u.kind === 'giant')?.scale ?? 1;
+/** Summon kinds that fly over the units (seeker blades); the others are pets, y-sorted among the units. */
+const FLYING = new Set(WEAPONS.flatMap((w) => (w.targeting === 'seeker' && w.projectileAnim ? [SUMMON_ANIMS.indexOf(w.projectileAnim)] : [])));
 
 interface Shown {
   s: Phaser.GameObjects.Sprite;
@@ -127,6 +131,8 @@ export class Mirror {
   readonly projectiles: Layer;
   readonly potions: Layer;
   readonly hazards: Layer;
+  /** Pets and seeker blades. */
+  readonly summons: Layer;
   /** Rare enemies from the last snapshot that are on screen, for RareVisuals. */
   rareViews: RareView[] = [];
 
@@ -221,6 +227,25 @@ export class Mirror {
         if (spin) o.s.rotation += spin * dt;
       },
     );
+    this.summons = new Layer(
+      scene,
+      (o, e, fresh) => {
+        const anim = SUMMON_ANIMS[e.kind];
+        if (!anim) return;
+        if (fresh || o.kind !== e.kind) {
+          o.kind = e.kind;
+          o.s.clearTint().setAlpha(1);
+          o.s.play(anim, true);
+        }
+        const turn = e.extra >> SUMMON_ANGLE_SHIFT;
+        o.s.setRotation((turn / SUMMON_ANGLE_STEPS) * Math.PI * 2);
+        o.s.setFlipX((e.extra & SF.flip) !== 0);
+        o.s.setScale(e.extra & SF.giant ? GIANT_SCALE : 1);
+      },
+      (o) => {
+        o.s.setDepth(FLYING.has(o.kind) ? DEPTH.projectiles : DEPTH.units + o.s.y / ARENA_SIZE);
+      },
+    );
   }
 
   /** Move speed multiplier for this joiner's own character at (x, y): webs from the last snapshot slow it. */
@@ -263,5 +288,6 @@ export class Mirror {
     this.enemies.update(dt);
     this.gems.update(dt);
     this.projectiles.update(dt);
+    this.summons.update(dt);
   }
 }

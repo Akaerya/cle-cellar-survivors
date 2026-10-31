@@ -7,6 +7,7 @@ import { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from '../data/player';
 import type { ChainsDef, ChargeKind, ChargesDef, CharacterDef, PlayerStats } from '../data/types';
 import { text } from '../ui/widgets';
 import type { Passive } from '../systems/Passive';
+import type { Pets } from '../systems/Pets';
 import type { Ultimate } from '../systems/Ultimate';
 import type { Weapons } from '../systems/Weapons';
 
@@ -59,6 +60,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   weapons!: Weapons;
   ultimate!: Ultimate;
   passive!: Passive;
+  /** Pets (Warren passive, Giant Bunny ultimate); empty for characters without them. */
+  pets!: Pets;
   /** Aegis stacks (Storm Shield): each blocks one hit completely. */
   aegis = 0;
   /** Unstable Infusion charges: seconds left on each, oldest first, by kind. */

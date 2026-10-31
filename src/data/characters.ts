@@ -53,6 +53,18 @@ export const CHARACTERS: CharacterDef[] = [
     ultimate: 'mistwalker',
     passive: 'shroud',
   },
+  {
+    id: 'rabbit',
+    name: 'rabbit',
+    title: 'THE BUNNY CONJURER',
+    description: 'Never fights alone: a warren of hardhat bunnies does the heavy lifting.',
+    anim: 'rabbit',
+    firstFrame: 'rabbit_idle_0',
+    startingWeapon: 'arcane_bolt',
+    weapons: ['arcane_bolt', 'carrot_sword', 'carrot_rations', 'bunny_armory'],
+    ultimate: 'giant_bunny',
+    passive: 'warren',
+  },
 ];
 
 export const DEFAULT_CHARACTER = CHARACTERS[0].id;

@@ -94,6 +94,17 @@ export const STATE_CODES = ['playing', 'dying', 'victory', 'ended'] as const;
 export const PF = { dead: 1, gone: 2, moving: 4, god: 8 } as const;
 /** Enemy flags. `spirit`: came back once through Spirit Walker (drawn see-through). `stun`: stunned (Stun modification). */
 export const EF = { flip: 1, flash: 2, chill: 4, spirit: 8, stun: 16 } as const;
+/** Summon flags (low bits of `extra`); the bits above SUMMON_ANGLE_SHIFT are the art's turn in 64ths of a circle. */
+export const SF = { flip: 1, giant: 2 } as const;
+export const SUMMON_ANGLE_SHIFT = 2;
+export const SUMMON_ANGLE_STEPS = 64;
+
+/** `extra` of a summon record: SF flags and the turn of its art. */
+export function summonExtra(v: { flip: boolean; giant: boolean; angle: number }): number {
+  const t = (((v.angle / (Math.PI * 2)) % 1) + 1) % 1;
+  const turn = Math.round(t * SUMMON_ANGLE_STEPS) % SUMMON_ANGLE_STEPS;
+  return (v.flip ? SF.flip : 0) | (v.giant ? SF.giant : 0) | (turn << SUMMON_ANGLE_SHIFT);
+}
 
 export interface SnapPlayer {
   slot: number;
@@ -119,9 +130,15 @@ export interface SnapPlayer {
 
 export interface SnapEntity {
   id: number;
-  /** Enemy: index into ALL_ENEMIES. Gem: 0 blue, 1 green, 2 red. Projectile: index into ATTACK_DEFS. Hazard: index into HAZARDS. */
+  /**
+   * Enemy: index into ALL_ENEMIES. Gem: 0 blue, 1 green, 2 red. Projectile: index into ATTACK_DEFS. Hazard: index into
+   * HAZARDS. Summon: index into SUMMON_ANIMS.
+   */
   kind: number;
-  /** Enemy: EF flags. Projectile: scale x 32. Gem: unused. Potion: 1 while blinking. Hazard: alpha x 255. */
+  /**
+   * Enemy: EF flags. Projectile: scale x 32. Gem: unused. Potion: 1 while blinking. Hazard: alpha x 255. Summon: SF
+   * flags and the turn of its art (see SUMMON_ANGLE_SHIFT).
+   */
   extra: number;
   x: number;
   y: number;
@@ -142,6 +159,8 @@ export interface Snapshot {
   projectiles: SnapEntity[];
   potions: SnapEntity[];
   hazards: SnapEntity[];
+  /** Pets and seeker blades (Pets, Weapons.summonViews). */
+  summons: SnapEntity[];
   /** Every living boss (not culled): HP bars are shown wherever it is. */
   bosses: SnapBoss[];
   /** Rare enemies among `enemies`: what RareVisuals draws on them. */
@@ -340,6 +359,7 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
   const projectiles = entities();
   const potions = entities();
   const hazards = entities();
+  const summons = entities();
   const bosses: SnapBoss[] = [];
   const nb = u8();
   for (let i = 0; i < nb; i++) {
@@ -360,7 +380,7 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
 
   const len = u32();
   const events = len > 0 ? (JSON.parse(decoder.decode(new Uint8Array(buf, o, len))) as FxEvent[]) : [];
-  return { runTime, state, frozen, kills, level, exp, need, teamDeaths, players, enemies, gems, projectiles, potions, hazards, bosses, rares, events };
+  return { runTime, state, frozen, kills, level, exp, need, teamDeaths, players, enemies, gems, projectiles, potions, hazards, summons, bosses, rares, events };
 }
 
 /** Writes one entity record; must match `entities()` in decodeSnapshot. */

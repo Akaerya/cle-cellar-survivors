@@ -27,6 +27,7 @@ import {
   MODIFICATIONS,
   POWERUPS,
   REVIVE,
+  SUMMON_ANIMS,
   characterDef,
   itemDef,
   modDef,
@@ -50,6 +51,7 @@ import {
   Writer,
   decodeSnapshot,
   writeEntity,
+  summonExtra,
   writeEvents,
   writeBosses,
   writeHeader,
@@ -71,11 +73,12 @@ import { RareVisuals, type RareView } from '../systems/RareVisuals';
 import { Fx } from '../systems/Fx';
 import { Gems } from '../systems/Gems';
 import { Passive } from '../systems/Passive';
+import { Pets } from '../systems/Pets';
 import { Potions } from '../systems/Potions';
 import type { Potion } from '../entities/Potion';
 import { Spawner } from '../systems/Spawner';
 import { Ultimate } from '../systems/Ultimate';
-import { Weapons, type WeaponInstance } from '../systems/Weapons';
+import { Weapons, type SummonView, type WeaponInstance } from '../systems/Weapons';
 import { onKey } from '../ui/widgets';
 
 export type RunState = 'playing' | 'dying' | 'victory' | 'ended';
@@ -259,6 +262,7 @@ export class GameScene extends Phaser.Scene {
       p.weapons.add(character.startingWeapon);
       p.ultimate = new Ultimate(this, p, ultimateDef(character.ultimate));
       p.passive = new Passive(this, p, character.passive ? passiveDef(character.passive) : null);
+      p.pets = new Pets(this, p);
       this.players[slot] = p;
     }
     this.player = this.players[net?.mySlot ?? 0];
@@ -417,6 +421,7 @@ export class GameScene extends Phaser.Scene {
       }
       if (playing) this.enemies.updateEffects(dt);
       for (const p of this.players) if (p && !p.gone) p.ultimate.update(dt, p.alive && this.state === 'playing');
+      for (const p of this.players) if (p && !p.gone) p.pets.update(dt, playing);
       Weapons.updateProjectiles(this.projectiles, dt);
       this.gems.update(dt);
       this.potions.update(dt);
@@ -815,7 +820,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   buildWeapons(p: Player = this.player): BuildEntry[] {
-    return p.weapons.list.map((w) => ({ id: w.def.id, name: w.def.name, icon: w.def.icon, level: w.level, max: MAX_LEVEL, damage: Math.round(w.damage) }));
+    return p.weapons.list.map((w) => ({ id: w.def.id, name: w.def.name, icon: w.def.icon, level: w.level, max: MAX_LEVEL, damage: this.weaponReport(p, w).damage }));
   }
 
   buildItems(p: Player = this.player): BuildEntry[] {
@@ -872,6 +877,7 @@ export class GameScene extends Phaser.Scene {
     p.weapons.clearVisuals();
     p.ultimate.stop();
     p.passive.stop();
+    p.pets.clear();
     p.clearBuffs();
     p.runStats.deaths++;
     this.playSfx('death', p.x, p.y);
@@ -933,6 +939,7 @@ export class GameScene extends Phaser.Scene {
       p.weapons.clearVisuals();
       p.ultimate.stop();
       p.passive.stop();
+      p.pets.clear();
     }
   }
 
@@ -978,17 +985,20 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(2200, () => this.endRun(true));
   }
 
-  /** One weapon (or the ultimate) for the party screen. */
-  private weaponReport(w: WeaponInstance, ultimate = false): WeaponReport {
+  /** One weapon (or the ultimate, or a passive's pets) for the party screen. Bunny Armory counts its pets' gear. */
+  private weaponReport(p: Player, w: WeaponInstance, kind: 'weapon' | 'ultimate' | 'passive' = 'weapon'): WeaponReport {
+    const gear = w.def.gear ? p.pets.gearInstances() : [];
+    const damage = gear.reduce((sum, g) => sum + g.damage, w.damage);
     return {
       id: w.def.id,
       name: w.def.name,
       icon: w.def.icon,
-      level: ultimate ? 0 : w.level,
-      damage: Math.round(w.damage),
-      kills: w.kills,
-      dps: w.damage / Math.max(1, this.runTime - w.acquiredAt),
-      ultimate: ultimate || undefined,
+      level: kind === 'weapon' ? w.level : 0,
+      damage: Math.round(damage),
+      kills: gear.reduce((sum, g) => sum + g.kills, w.kills),
+      dps: damage / Math.max(1, this.runTime - w.acquiredAt),
+      ultimate: kind === 'ultimate' || undefined,
+      passive: kind === 'passive' || undefined,
     };
   }
 
@@ -1003,7 +1013,11 @@ export class GameScene extends Phaser.Scene {
         left: p.gone,
         stats: { ...p.runStats, damage: Math.round(p.runStats.damage), taken: Math.round(p.runStats.taken), healed: Math.round(p.runStats.healed), exp: Math.round(p.runStats.exp) },
         dps: p.runStats.damage / Math.max(1, this.runTime),
-        weapons: [...p.weapons.list.map((w) => this.weaponReport(w)), this.weaponReport(p.ultimate.attack, true)],
+        weapons: [
+          ...p.weapons.list.map((w) => this.weaponReport(p, w)),
+          this.weaponReport(p, p.ultimate.attack, 'ultimate'),
+          ...(p.pets.headbutt ? [this.weaponReport(p, p.pets.headbutt, 'passive')] : []),
+        ],
         items: this.buildItems(p),
         mods: this.buildMods(p),
         powerups: this.buildPowerups(p),
@@ -1077,6 +1091,7 @@ export class GameScene extends Phaser.Scene {
     p.leave();
     p.weapons.destroy();
     p.ultimate.destroy();
+    p.pets.clear();
     p.pendingLevelUps = 0;
     this.remoteOffers.delete(slot);
     if (this.state === 'ended') return;
@@ -1135,6 +1150,12 @@ export class GameScene extends Phaser.Scene {
     const enemyKind = new Map(ALL_ENEMIES.map((d, i) => [d, i]));
     const bosses = this.bossBars.map((b) => ({ id: b.id, kind: enemyKind.get(b.def) ?? 0, frac: b.frac }));
     const weaponKind = new Map(ATTACK_DEFS.map((d, i) => [d, i]));
+    const summons: SummonView[] = [];
+    for (const p of this.players) {
+      if (!p || !p.alive) continue;
+      p.pets.summonViews(summons);
+      p.weapons.summonViews(summons);
+    }
 
     for (const slot of net.remoteSlots) {
       const p = this.players[slot];
@@ -1194,6 +1215,16 @@ export class GameScene extends Phaser.Scene {
       for (const h of this.bosses.hazards) {
         if (!this.nearView(p, h.x, h.y)) continue;
         writeEntity(w, h.netId, h.kind, Math.round(Bosses.alpha(h) * 255), h.x, h.y);
+        n++;
+      }
+      w.patchU16(at, n);
+
+      at = w.o;
+      n = 0;
+      w.u16(0);
+      for (const sv of summons) {
+        if (!this.nearView(p, sv.x, sv.y)) continue;
+        writeEntity(w, sv.id, Math.max(0, SUMMON_ANIMS.indexOf(sv.anim)), summonExtra(sv), sv.x, sv.y);
         n++;
       }
       w.patchU16(at, n);
@@ -1337,6 +1368,7 @@ export class GameScene extends Phaser.Scene {
     m.projectiles.apply(s.projectiles);
     m.potions.apply(s.potions);
     m.hazards.apply(s.hazards);
+    m.summons.apply(s.summons);
     m.applyRares(s.rares);
     this.bossBars = s.bosses.map((b) => ({ id: b.id, def: ALL_ENEMIES[b.kind], frac: b.frac })).filter((b) => b.def);
     this.teamDeaths = s.teamDeaths;

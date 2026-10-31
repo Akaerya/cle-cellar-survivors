@@ -9,11 +9,13 @@ import type { GameScene } from '../scenes/GameScene';
 const DODGE_COLOR = 0xc8b8ff;
 const DEFY_COLOR = 0xffb8e6;
 const GROWTH_COLOR = 0x5ab0ff;
+const PETS_COLOR = 0x8fc8ff;
 
 /**
  * One character's passive (data/passives.ts). The host (or solo game) runs it: Shroud dodges hits, Ragebaiter stands
- * the character back up, Dragonborn adds a stack of stats every minute and Death Defied turns a hit that would leave
- * the character low into healing. Joiners get the cooldown and stacks from snapshots, for the HUD.
+ * the character back up, Dragonborn adds a stack of stats every minute, Death Defied turns a hit that would leave
+ * the character low into healing and Warren counts the character's bunnies (its stacks; systems/Pets.ts runs them).
+ * Joiners get the cooldown and stacks from snapshots, for the HUD.
  */
 export class Passive {
   /** Seconds until it can trigger again (Ragebaiter, Death Defied). */
@@ -49,6 +51,14 @@ export class Passive {
       if (p.alive) p.heal(this.mendRate * t);
     }
     const d = this.def;
+    if (d?.kind === 'pets') {
+      // Warren: the bunnies the owner has by now (systems/Pets.ts brings the pack in line).
+      const n = Math.min(d.max, d.start + Math.floor(runTime / d.every));
+      if (n !== this.stacks) {
+        if (this.stacks > 0 && p.alive) this.game.fx.label(p.x, p.y - 16, `${d.name} ${n}`, PETS_COLOR);
+        this.stacks = n;
+      }
+    }
     if (d?.kind === 'growth') {
       const n = Math.floor(runTime / d.every);
       if (n !== this.stacks) {

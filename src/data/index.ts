@@ -44,11 +44,29 @@ export { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from './player';
 export { CHARACTERS, DEFAULT_CHARACTER } from './characters';
 export { ULTIMATES } from './ultimates';
 
+/** What pets attack with: the passives' own attacks, then every weapon's gear (Bunny Armory). */
+export const PET_ATTACKS: WeaponDef[] = [
+  ...PASSIVES.flatMap((p) => (p.kind === 'pets' ? [p.attack] : [])),
+  ...WEAPONS.flatMap((w) => w.gear ?? []),
+];
+
 /**
- * Everything that can fire a projectile: weapons, then ultimate attacks. A projectile's index in this
+ * Art of everything drawn in the snapshot's summon layer: pets (bare, then with each piece of gear), then seeker
+ * blades. A summon's index in this list is how snapshots tell joiners which animation to play.
+ */
+export const SUMMON_ANIMS: string[] = [
+  ...new Set([
+    ...PASSIVES.flatMap((p) => (p.kind === 'pets' ? [p.anim] : [])),
+    ...WEAPONS.flatMap((w) => (w.gear ?? []).flatMap((g) => (g.petAnim ? [g.petAnim] : []))),
+    ...WEAPONS.flatMap((w) => (w.targeting === 'seeker' && w.projectileAnim ? [w.projectileAnim] : [])),
+  ]),
+];
+
+/**
+ * Everything that can fire a projectile: weapons, ultimate attacks, then pet attacks. A projectile's index in this
  * list is how snapshots tell joiners which art to draw.
  */
-export const ATTACK_DEFS: WeaponDef[] = [...WEAPONS, ...ULTIMATES.map((u) => u.attack)];
+export const ATTACK_DEFS: WeaponDef[] = [...WEAPONS, ...ULTIMATES.map((u) => u.attack), ...PET_ATTACKS];
 
 const byId = <T extends { id: string }>(list: T[]) => new Map(list.map((e) => [e.id, e]));
 

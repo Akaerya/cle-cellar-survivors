@@ -19,6 +19,7 @@ import type { ModEffect, WeaponDef, WeaponStats } from '../data/types';
 import type { Enemy } from '../entities/Enemy';
 import { CHARGE_KINDS, type Player } from '../entities/Player';
 import { Projectile } from '../entities/Projectile';
+import { nextNetId } from '../net/ids';
 import type { GameScene } from '../scenes/GameScene';
 
 let nextUid = 1;
@@ -79,6 +80,47 @@ export interface WeaponInstance {
   /** Flicker Strike: strikes waiting their turn (highest priority first), and seconds until the current one is done. */
   strikeQueue: StrikeSource[];
   strikeBusy: number;
+  /** `seeker`: the blade's flight (null until it is first drawn, and after the owner fell). */
+  seek: Seek | null;
+}
+
+/** A `seeker` blade (Carrot Sword): floats by its owner, dashes through an enemy, flies back. */
+interface Seek {
+  /** Identifies it to network clients (drawn in the snapshot's summon layer). */
+  netId: number;
+  x: number;
+  y: number;
+  /** Radians the art is turned (it is drawn pointing right). */
+  angle: number;
+  mode: 'wait' | 'out' | 'back';
+  target: Enemy | null;
+  targetId: number;
+  /** Enemies cut on this dash (there and back): each once. */
+  readonly hit: Set<Enemy>;
+  /** Seconds since the dash started. */
+  t: number;
+  /** Stats of this dash (a Ruthless dash keeps its bonus there and back). */
+  e: Effective | null;
+}
+
+/** Bonuses the owner's `petbuff` weapons give their pets. */
+export interface PetBonus {
+  damage: number;
+  haste: number;
+  speed: number;
+}
+
+/** One summon to draw on joiners' screens (pets and seeker blades), see GameScene.sendSnapshots. */
+export interface SummonView {
+  id: number;
+  /** Atlas animation. */
+  anim: string;
+  x: number;
+  y: number;
+  /** Radians the art is turned. */
+  angle: number;
+  flip: boolean;
+  giant: boolean;
 }
 
 /** What set off a Flicker Strike, in order of priority: the cooldown, a Multistrike repeat, a Shadow Charge. */
@@ -180,6 +222,14 @@ const SLASHERS = new Set(['facing', 'stab', 'breath', 'spin', 'flicker']);
 const FLICKER_GAP = 3;
 /** Impact: splash rings drawn per weapon per frame at most (the damage still lands everywhere). */
 const MAX_SPLASH_RINGS = 6;
+/**
+ * Seeker blades: radians per second they circle their owner while waiting, how fast they ease to that spot, and how
+ * close (px) to it counts as back. A dash gives up after this many times its longest flight there and back.
+ */
+const SEEK_CIRCLE = 1.6;
+const SEEK_EASE = 10;
+const SEEK_HOME = 6;
+const SEEK_GIVE_UP = 2.5;
 
 /**
  * Runs every weapon one character has equipped. Behaviour comes from the weapon's `targeting` and stats, so a new
@@ -189,8 +239,10 @@ const MAX_SPLASH_RINGS = 6;
  * around the owner, `shield` puts Aegis on its owner every cooldown (it blocks a hit), absorbs part of the rest and
  * reflects damage, `bomb` throws a projectile that explodes on reaching its target, `field` conjures freezing fields
  * under enemies, `wave` sends a sword wave that cuts through everything until it reaches its target, `spin` swings
- * all around the owner, `flicker` teleports the owner onto a random enemy, and `passive` / `infusion` weapons only
- * change how the others work (critical strikes, charges). `beam` is for ultimate attacks: lingering beams across a dome.
+ * all around the owner, `flicker` teleports the owner onto a random enemy, `seeker` floats a blade by the owner that
+ * dashes through the nearest enemy within `range` and flies back, and `passive` / `infusion` weapons only change how
+ * the others work (critical strikes, charges). `petbuff` and `armory` weapons do nothing here: the owner's pets
+ * (systems/Pets.ts) read them. `beam` is for ultimate attacks: lingering beams across a dome.
  * The owner's modifications (data/modifications.ts) are folded into `eff()` by weapon tag; this class also
  * runs what they add: projectile splits and chains, Echo Strike echoes, duration effects on enemies, and for melee
  * weapons Multistrike repeats, Ruthless attacks, Stun, Momentum and Impact splashes.
@@ -268,6 +320,7 @@ export class Weapons {
       checkTimer: 0,
       strikeQueue: [],
       strikeBusy: 0,
+      seek: null,
     };
   }
 
@@ -277,7 +330,8 @@ export class Weapons {
     this.setLevel(w, w.level + 1);
   }
 
-  private setLevel(w: WeaponInstance, level: number): void {
+  /** Sets the level of `w` (equipped or not: pets keep their gear at the armory's level). */
+  setLevel(w: WeaponInstance, level: number): void {
     w.level = level;
     w.levelStats = weaponLevelAt(w.def, level);
     w.stats = applyLevelBonuses(w.levelStats);
@@ -395,6 +449,10 @@ export class Weapons {
           break;
         case 'aura':
           this.updateAura(w, e, dt, firing && !locked);
+          break;
+        case 'seeker':
+          // Joiners draw the blade from the snapshot's summon layer.
+          if (firing) this.updateSeeker(w, e, dt, locked);
           break;
       }
       if (w.gfx && SLASHERS.has(w.def.targeting)) this.drawSlashes(w, dt);
@@ -925,13 +983,172 @@ export class Weapons {
     pr.ricochet(ex, ey, angle);
   }
 
-  /** Fires one projectile of `w` from anywhere (ultimates); each one is an attack of its own. False when the pool is empty. */
-  shoot(w: WeaponInstance, x: number, y: number, angle: number): boolean {
+  /**
+   * Fires one projectile of `w` from anywhere (ultimates, pets); each one is an attack of its own. `boost` multiplies
+   * its damage (pet bonuses). False when the pool is empty.
+   */
+  shoot(w: WeaponInstance, x: number, y: number, angle: number, boost = 1): boolean {
     const pr = this.projectiles.get(x, y) as Projectile | null;
     if (!pr) return false;
     w.serial++;
-    pr.fire(w, x, y, angle, this.eff(w));
+    const e = this.eff(w);
+    pr.fire(w, x, y, angle, boost === 1 ? e : { ...e, damage: e.damage * boost, damageScale: e.damageScale * boost });
     return true;
+  }
+
+  /**
+   * A pet's hit with `w` on `en` (headbutts, stomps, gear swords): `boost` multiplies the damage (pet bonuses) and
+   * (dirX, dirY) is the knockback direction. Call `startAttack` first for each attack (a stomp hitting many is one).
+   * Returns whether it landed.
+   */
+  petHit(w: WeaponInstance, en: Enemy, boost: number, dirX: number, dirY: number): boolean {
+    const e = this.eff(w);
+    return this.directHit(w, e, en, e.damage * boost, e.damageScale * boost, dirX, dirY, e.knockback, true);
+  }
+
+  /** Counts a new attack of `w` (its hits carry it), for weapons fired from outside this class. */
+  startAttack(w: WeaponInstance): void {
+    w.serial++;
+  }
+
+  /** What the owner's `petbuff` weapons add to their pets, summed. */
+  petBonus(): PetBonus {
+    const b = { damage: 0, haste: 0, speed: 0 };
+    for (const w of this.list) {
+      if (w.def.targeting !== 'petbuff') continue;
+      b.damage += w.stats.petDamage ?? 0;
+      b.haste += w.stats.petHaste ?? 0;
+      b.speed += w.stats.petSpeed ?? 0;
+    }
+    return b;
+  }
+
+  /** The owner's `armory` weapon (pet gear), or null. */
+  armory(): WeaponInstance | null {
+    for (const w of this.list) if (w.def.gear?.length) return w;
+    return null;
+  }
+
+  // ---------------------------------------------------------------- seeker blades (Carrot Sword)
+
+  /**
+   * `seeker`: the blade circles its owner `hover` px away. Once its cooldown is up it dashes at the closest enemy
+   * within RANGE of the owner, cutting every enemy it touches on the way there and back (each once per dash); the
+   * cooldown counts from the start of the dash. Multistrike repeats are more dashes right after it is back. While the
+   * owner is mist it waits.
+   */
+  private updateSeeker(w: WeaponInstance, e: Effective, dt: number, locked: boolean): void {
+    const p = this.owner;
+    const hover = w.def.hover ?? 0;
+    if (!w.seek) {
+      w.seek = { netId: nextNetId(), x: p.x, y: p.y - hover, angle: -Math.PI / 2, mode: 'wait', target: null, targetId: 0, hit: new Set(), t: 0, e: null };
+    }
+    const k = w.seek;
+    let sprite = w.orbiters[0];
+    if (!sprite) {
+      sprite = this.game.add.sprite(k.x, k.y, ATLAS, 'px').setDepth(DEPTH.projectiles);
+      if (w.def.projectileAnim) sprite.play(w.def.projectileAnim);
+      w.orbiters.push(sprite);
+    }
+    w.orbitAngle = (w.orbitAngle + SEEK_CIRCLE * dt) % (Math.PI * 2);
+    const hx = p.x + Math.cos(w.orbitAngle) * hover;
+    const hy = p.y - 4 + Math.sin(w.orbitAngle) * hover * 0.6;
+    w.timer = Math.max(0, w.timer - dt);
+    if (k.mode === 'wait') {
+      const ease = 1 - Math.exp(-dt * SEEK_EASE);
+      k.x += (hx - k.x) * ease;
+      k.y += (hy - k.y) * ease;
+      // Blade up, swaying a little.
+      k.angle = -Math.PI / 2 + Math.sin(w.orbitAngle * 2) * 0.25;
+      if (!locked && (w.timer <= 0 || w.repeatsLeft > 0)) {
+        const first = w.timer <= 0;
+        if (this.dash(w, e, first)) {
+          if (first) {
+            w.timer = e.cooldown;
+            w.refundable = this.refundShare() * e.cooldown;
+          } else w.repeatsLeft--;
+        }
+      }
+    } else {
+      const de = k.e ?? e;
+      const speed = Math.max(1, de.speed);
+      k.t += dt;
+      let tx = hx;
+      let ty = hy;
+      if (k.mode === 'out') {
+        const t = k.target;
+        if (!t || !t.active || t.netId !== k.targetId) k.mode = 'back';
+        else {
+          tx = t.x;
+          ty = t.y;
+        }
+      }
+      const dx = tx - k.x;
+      const dy = ty - k.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const step = Math.min(d, speed * dt);
+      k.x += (dx / d) * step;
+      k.y += (dy / d) * step;
+      if (d > 0.5) k.angle = Math.atan2(dy, dx);
+      this.seekerCuts(w, de, dx / d, dy / d);
+      const reached = d - step <= (k.mode === 'out' ? (k.target?.radius ?? 0) * 0.5 : SEEK_HOME);
+      const lost = k.t > ((e.range * 2) / speed) * SEEK_GIVE_UP + 0.5;
+      if (k.mode === 'out' && (reached || lost)) k.mode = 'back';
+      else if (k.mode === 'back' && (reached || lost)) {
+        k.mode = 'wait';
+        k.e = null;
+      }
+    }
+    sprite
+      .setVisible(true)
+      .setPosition(Math.round(k.x), Math.round(k.y))
+      .setRotation(k.angle)
+      .setScale(e.size / (w.def.artRadius ?? 5));
+  }
+
+  /** Starts a dash at the closest enemy within range of the owner. `first`: the cooldown's dash (brings Multistrike's sure repeats). */
+  private dash(w: WeaponInstance, e: Effective, first: boolean): boolean {
+    const p = this.owner;
+    const k = w.seek!;
+    const target = this.game.enemies.nearest(p.x, p.y, e.range);
+    if (!target) return false;
+    w.serial++;
+    const ruthless = e.ruthless > 0 && w.serial % RUTHLESS_EVERY === 0;
+    k.e = ruthless ? this.ruthlessOf(e) : e;
+    k.mode = 'out';
+    k.target = target;
+    k.targetId = target.netId;
+    k.hit.clear();
+    k.t = 0;
+    let more = first ? Math.round(e.multistrike) : 0;
+    if (e.repeatChance > 0 && this.game.rng.float() < e.repeatChance) more++;
+    w.repeatsLeft += more;
+    this.game.playSfx('slash', k.x, k.y);
+    return true;
+  }
+
+  /** The dashing blade cuts every enemy it touches that it has not cut on this dash. */
+  private seekerCuts(w: WeaponInstance, e: Effective, dirX: number, dirY: number): void {
+    const k = w.seek!;
+    this.query.length = 0;
+    this.game.enemies.grid.query(k.x, k.y, e.size + 16, this.query);
+    for (const en of this.query) {
+      if (!en.active || k.hit.has(en)) continue;
+      const rr = e.size + en.radius;
+      if ((en.x - k.x) ** 2 + (en.y - k.y) ** 2 > rr * rr) continue;
+      k.hit.add(en);
+      this.directHit(w, e, en, e.damage, e.damageScale, dirX, dirY, e.knockback, true);
+    }
+  }
+
+  /** Host: the seeker blades to draw on joiners' screens. */
+  summonViews(out: SummonView[]): void {
+    for (const w of this.list) {
+      const k = w.seek;
+      const anim = w.def.projectileAnim;
+      if (!k || !anim || !w.orbiters[0]?.visible) continue;
+      out.push({ id: k.netId, anim, x: k.x, y: k.y, angle: k.angle, flip: false, giant: false });
+    }
   }
 
   /** Straight thrust: hits everything along a blade `size` px long and `arc` px wide. */
@@ -1746,6 +1963,8 @@ export class Weapons {
       w.burstLeft = 0;
       w.strikeQueue.length = 0;
       w.strikeBusy = 0;
+      // A blade comes back out next to its owner.
+      w.seek = null;
     }
     this.echoes.length = 0;
     this.splashSums.clear();

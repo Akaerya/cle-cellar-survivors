@@ -72,6 +72,8 @@ export interface WeaponReport extends BuildEntry {
   /** Damage per second since the weapon was picked up. */
   dps: number;
   ultimate?: boolean;
+  /** A passive's own attack (Warren's bunnies). */
+  passive?: boolean;
 }
 
 export interface PartyMember {

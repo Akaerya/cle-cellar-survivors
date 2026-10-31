@@ -20,7 +20,10 @@ export type Targeting =
   | 'wave'
   | 'spin'
   | 'flicker'
-  | 'infusion';
+  | 'infusion'
+  | 'seeker'
+  | 'petbuff'
+  | 'armory';
 
 /**
  * Ability tags. A modification (data/modifications.ts) changes every weapon that carries one of its tags.
@@ -80,6 +83,12 @@ export interface WeaponStats {
   chargeChance?: number;
   /** `infusion`: multiplies what every charge does (1 = as in `WeaponDef.charges`, 2 = 100% increased effect). */
   chargeEffect?: number;
+  /** `petbuff`: fraction added to the damage of the owner's pets (0.25 = +25%). */
+  petDamage?: number;
+  /** `petbuff`: pets attack this much more often (0.2 = 20% faster; the cooldown is divided by 1 + it). */
+  petHaste?: number;
+  /** `petbuff`: fraction added to the move speed of the owner's pets. */
+  petSpeed?: number;
 }
 
 export type NumericWeaponStat = Exclude<keyof WeaponStats, 'boomerang'>;
@@ -214,6 +223,16 @@ export interface WeaponDef {
    * Charges) wait their turn in that order of priority and go one after another.
    */
   strikeTime?: number;
+  /**
+   * `armory`: the weapons the owner's pets can carry, one each, picked at random and swapped every `stats.cooldown`
+   * seconds. Each is the attack the pet makes instead of its own: `stab` cuts the closest enemy within its reach,
+   * `nearest` fires a projectile at it. Their damage grows with the armory's level (`levels` of each gear weapon).
+   */
+  gear?: WeaponDef[];
+  /** Atlas animation of a pet carrying this gear (`gear` weapons). */
+  petAnim?: string;
+  /** `seeker`: px from the owner the blade floats at while it waits for its next dash. */
+  hover?: number;
 }
 
 /**
@@ -307,6 +326,13 @@ export type PassiveDef = { id: string; name: string; description: string; icon: 
    * restored over `over` seconds. Once every `cooldown` seconds.
    */
   | { kind: 'reprieve'; below: number; heal: number; over: number; cooldown: number }
+  /**
+   * Warren: `start` pets from the start of the run and another every `every` seconds, at most `max`. Pets run at
+   * `speed` px/s, go after enemies within `aggro` px of their owner and come back once further than `leash` px from
+   * them. `attack` is what a pet does to an enemy it reaches: a headbutt that hits it once it is within
+   * `attack.stats.size` px. `anim`: the pet's atlas animation (it carries no gear).
+   */
+  | { kind: 'pets'; start: number; every: number; max: number; speed: number; aggro: number; leash: number; anim: string; attack: WeaponDef }
 );
 
 export interface PlayerStats {
@@ -552,7 +578,7 @@ export interface CharacterDef {
   passive?: string;
 }
 
-export type UltimateKind = 'storm' | 'pet' | 'dome' | 'mist';
+export type UltimateKind = 'storm' | 'pet' | 'dome' | 'mist' | 'giant';
 
 export interface UltimateDef {
   id: string;
@@ -578,6 +604,14 @@ export interface UltimateDef {
   /** `mist`: fraction added to the DAMAGE stat once the mist lifts, for `after` seconds. */
   amp?: number;
   after?: number;
+  /**
+   * `giant`: a giant version of the caster's pets joins them while it lasts (see `PassiveDef` 'pets'), drawn `scale`
+   * times as large. It gets every pet bonus, deals `power` times their damage and moves `speedMult` times as fast;
+   * `attack` is its own attack, hitting everything within `attack.stats.size` px of the enemy it reaches.
+   */
+  scale?: number;
+  power?: number;
+  speedMult?: number;
   /**
    * The projectile the ultimate fires. Uses the WeaponDef shape so it shares the projectile pool,
    * the network sync and the damage tracking. `pet`: `stats.range` is how far the pet looks for targets.

@@ -29,8 +29,9 @@ const MIST_SPIN = 2.2;
  * One player's ultimate (Q). The host (or solo game) casts it and fires its projectiles; joiners
  * get the timers from snapshots and only draw the visuals. The cooldown counts from the cast.
  * Kinds: `storm` spirals projectiles out of the caster, `pet` summons a pet that shoots, `dome` raises a dome
- * where it was cast that fires beams across itself and bounces the caster's projectiles off its edge, and `mist`
- * turns the caster to mist (no attacks, no damage taken, not targeted), then amplifies their damage.
+ * where it was cast that fires beams across itself and bounces the caster's projectiles off its edge, `mist`
+ * turns the caster to mist (no attacks, no damage taken, not targeted), then amplifies their damage, and `giant` adds
+ * a giant pet to the caster's pets while it runs (systems/Pets.ts runs and draws it).
  */
 export class Ultimate {
   /** Fires the projectiles and keeps the damage and kill count for the party screen. */
@@ -125,7 +126,8 @@ export class Ultimate {
 
   private fire(dt: number): void {
     const p = this.owner;
-    if (this.def.kind === 'mist') return;
+    // Mist attacks nothing; the Giant Bunny is one of the caster's pets (systems/Pets.ts).
+    if (this.def.kind === 'mist' || this.def.kind === 'giant') return;
     this.timer -= dt;
     while (this.timer <= 0) {
       this.timer += this.def.interval;
@@ -171,6 +173,7 @@ export class Ultimate {
       this.drawMist(dt, show);
       return;
     }
+    if (this.def.kind === 'giant') return;
     if (this.def.kind === 'storm') {
       while (this.orbiters.length < STORM_ORBITERS) {
         this.orbiters.push(this.game.add.sprite(p.x, p.y, ATLAS, 'banana_0').play('banana-spin').setDepth(DEPTH.projectiles).setVisible(false));

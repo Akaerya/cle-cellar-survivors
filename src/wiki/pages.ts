@@ -204,6 +204,12 @@ const TARGETING_NOTES: Record<Targeting, string> = {
     'Every COOLDOWN, teleports you just past a random enemy on your screen and cuts it (holds while there is none). The jump is instant, so Momentum adds nothing. Every enemy its hits reach (Impact splashes and echoes included) has SHADOW chance to give you a Shadow Charge, and every enemy they kill another chance, and each charge is soon spent on another Flicker Strike (see below).',
   infusion:
     'Does nothing on its own. The first hit of each of your attacks (any weapon) has CHANCE to give you a random charge for a few seconds: Brutal, Siphoning or Vicissitude. EFFECT multiplies what every charge does.',
+  seeker:
+    'A blade floats around you. Every COOLDOWN (counted from the start of a dash) it dashes at SPEED to the closest enemy within RANGE of you, then flies back; on the way there and back it cuts every enemy it touches, each once per dash. SIZE is how close an enemy must be to the blade (scaled by AREA). Holds while nothing is in range. Multistrike repeats are more dashes right after it is back; Ruthless counts dashes.',
+  petbuff:
+    'Does nothing on its own: it makes your pets stronger (see CHARACTERS, Warren and Giant Bunny). PET DAMAGE is added to their damage, PET HASTE makes them attack that much faster (their cooldowns are divided by 1 + it) and PET SPEED is added to their move speed.',
+  armory:
+    'Does nothing on its own: each of your pets carries one piece of GEAR (below), picked at random, and attacks with it instead of its headbutt. Every SWAP seconds (shortened by COOLDOWN and ABILITY HASTE) each pet swaps to another piece. Every level of the armory is a level of every piece of gear. Swords stab the enemy the pet reaches; bows and spellbooks shoot from a distance (the pet stops short of its target).',
 };
 
 /** Table columns per targeting type: which stats mean something for that behaviour. */
@@ -239,6 +245,10 @@ const C = {
   shadow: { label: 'SHADOW', w: 56, get: (s) => pct(s.chargeChance ?? 0, 1) },
   chance: { label: 'CHANCE', w: 56, get: (s) => pct(s.chargeChance ?? 0) },
   effect: { label: 'EFFECT', w: 56, get: (s) => pct(s.chargeEffect ?? 1) },
+  petDamage: { label: 'PET DAMAGE', w: 80, get: (s) => `+${pct(s.petDamage ?? 0)}` },
+  petHaste: { label: 'PET HASTE', w: 74, get: (s) => `+${pct(s.petHaste ?? 0)}` },
+  petSpeed: { label: 'PET SPEED', w: 74, get: (s) => `+${pct(s.petSpeed ?? 0)}` },
+  swap: { label: 'SWAP', w: 46, get: (s) => secs(s.cooldown) },
 } satisfies Record<string, Col>;
 const COLUMNS: Record<Targeting, Col[]> = {
   nearest: [C.damage, C.cooldown, C.count, C.pierce, C.area, C.speed, C.range, C.knockback, C.ret],
@@ -258,6 +268,9 @@ const COLUMNS: Record<Targeting, Col[]> = {
   spin: [C.damage, C.cooldown, C.radius, C.knockback],
   flicker: [C.damage, C.cooldown, C.shadow, C.knockback],
   infusion: [C.chance, C.effect],
+  seeker: [C.damage, C.cooldown, C.size, C.speed, C.range, C.knockback],
+  petbuff: [C.petDamage, C.petHaste, C.petSpeed],
+  armory: [C.swap],
 };
 
 // ------------------------------------------------------------------ pages
@@ -347,7 +360,22 @@ function weaponsPage(filter: string): Block[] {
       }
       out.push({ t: 'table', cols: [{ label: '', w: 40 }, ...cols.map(({ label, w }) => ({ label, w }))], rows });
       def.levels.forEach((l, i) => out.push({ t: 'p', text: `LV ${i + 2}: ${l.text}` }));
+      if (def.gear) out.push(...gearBlocks(def));
     }
+  }
+  return out;
+}
+
+/** An armory's gear: what each piece does and its stats at every level of the armory (before pet bonuses). */
+function gearBlocks(def: WeaponDef): Block[] {
+  const out: Block[] = [{ t: 'h', text: 'GEAR' }];
+  for (const g of def.gear ?? []) {
+    out.push({ t: 'entry', icon: g.icon, title: g.name, sub: g.description });
+    const ranged = g.targeting === 'nearest';
+    const cols = ranged ? [C.damage, C.cooldown, C.pierce, C.speed, C.range, C.knockback] : [C.damage, C.cooldown, C.reach, C.knockback];
+    const rows: Cell[][] = [];
+    for (let lv = 1; lv <= MAX_LEVEL; lv++) rows.push([`LV ${lv}`, ...cols.map((col) => col.get(weaponStatsAt(g, lv)))]);
+    out.push({ t: 'table', cols: [{ label: '', w: 40 }, ...cols.map(({ label, w }) => ({ label, w }))], rows });
   }
   return out;
 }
@@ -374,6 +402,10 @@ function passiveText(d: PassiveDef): string {
       return `Every ${d.every}S of the run (fallen or not) you gain a stack for the rest of the run. Each stack: ${d.perStack.map((m) => bonusText(m, 1)).join(', ')}. Stacks add up with items and powerups like any other bonus (see ITEMS).`;
     case 'reprieve':
       return `When damage (damage over time included) would leave you below ${pct(d.below)} of your max HP, it is not taken: you heal ${pct(d.heal)} of your max HP over ${secs(d.over)} instead. Once every ${d.cooldown}S.`;
+    case 'pets': {
+      const a = d.attack.stats;
+      return `You start with ${d.start} pets and gain another every ${d.every}S of the run, up to ${d.max}. Pets cannot be hurt and do not block enemies. They wait around you, run at ${d.speed} px/s after enemies within ${d.aggro} px of you (spreading out over several), give up on one that gets further than ${d.leash} px from you, and come running back when you get away. A pet that reaches its enemy headbutts it for ${num(a.damage)} damage every ${secs(a.cooldown)} (${num(a.knockback)} knockback), unless it carries gear (Bunny Armory). Pet damage scales with your DAMAGE and can be a critical strike; modifications do not change pets. Falling sends your pets away until you are back up.`;
+    }
   }
 }
 
@@ -415,6 +447,8 @@ function charactersPage(filter: string): Block[] {
         ? `Every ${secs(ult.interval)} for ${ult.duration}S, ${ult.count} projectiles fly out from you in a spiral that turns ${ult.spin} degrees per second.`
         : ult.kind === 'pet'
           ? `For ${ult.duration}S a pet follows you and every ${secs(ult.interval)} fires at the closest enemy within ${a.range} px of it.`
+          : ult.kind === 'giant'
+            ? `For ${ult.duration}S a giant pet, ${ult.scale ?? 1} times as large, joins your pets. It gets every bonus your pets get (Carrot Rations, its own piece of gear from Bunny Armory), deals ${ult.power ?? 1} times their damage and runs ${pct((ult.speedMult ?? 1) - 1)} faster. Besides what a pet does, every ${secs(a.cooldown)} it stomps the enemy it reaches: everything within ${num(a.size)} px of that enemy (scaled by AREA) takes ${num(a.damage)} damage (before the ${ult.power ?? 1} times) and ${num(a.knockback)} knockback.`
           : ult.kind === 'mist'
             ? `For ${ult.duration}S you turn to mist: no weapon of yours attacks (cooldowns keep counting), nothing can hurt you, and enemies and bosses ignore you (playing alone, the horde stands still). When it lifts, ${pct(ult.amp ?? 0)} is added to your DAMAGE for ${ult.after ?? 0}S. It is tagged ${tagList(ult.attack.tags)}: duration modifications stretch both the mist and the bonus, Less Duration's damage bonus raises the bonus, and Reiterate may add a second bonus as it starts.`
             : `For ${ult.duration}S a dome of ${ult.radius} px radius stands where you cast it. Every ${secs(ult.interval)} a beam crosses it in a random straight line, lingering for ${secs(a.lifetime)} and hitting every enemy that touches it once (${num(a.size * 2)} px wide). While your projectiles are inside, the edge works like an enemy they can split on, but they use up no pierce or bounces and deal no damage there; they ricochet toward the closest enemy inside the dome they have not hit (straight back when there is none). The beams are tagged ${tagList(ult.attack.tags)}: area modifications widen them, duration modifications make them linger, and Echo Strike, Reduced AoE and Less Duration work on them. Reiterate does not, since the beams leave no stacks. The dome itself keeps its size and length.`;
@@ -429,6 +463,23 @@ function charactersPage(filter: string): Block[] {
           { label: 'FOR', w: 50 },
         ],
         rows: [[`${ult.duration}S`, `${ult.cooldown}S`, `+${pct(ult.amp ?? 0)}`, `${ult.after ?? 0}S`]],
+      });
+      continue;
+    }
+    if (ult.kind === 'giant') {
+      out.push({
+        t: 'table',
+        cols: [
+          { label: 'DURATION', w: 70 },
+          { label: 'COOLDOWN', w: 70 },
+          { label: 'SIZE', w: 40 },
+          { label: 'POWER', w: 50 },
+          { label: 'STOMP', w: 50 },
+          { label: 'EVERY', w: 50 },
+          { label: 'RADIUS', w: 54 },
+          { label: 'KNOCKBACK', w: 80 },
+        ],
+        rows: [[`${ult.duration}S`, `${ult.cooldown}S`, `X${ult.scale ?? 1}`, `X${ult.power ?? 1}`, num(a.damage), secs(a.cooldown), num(a.size), num(a.knockback)]],
       });
       continue;
     }
@@ -1009,7 +1060,7 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'PARTY SCREEN' },
     {
       t: 'p',
-      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal and passives, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate: level, damage, DPS since it was picked up, kills and share of their damage.',
+      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal and passives, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate (and a passive\'s pets: Warren\'s headbutts; Bunny Armory counts the damage of its gear): level, damage, DPS since it was picked up, kills and share of their damage.',
     },
     { t: 'h', text: 'CONTROLS' },
     { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click; R rerolls.' },
