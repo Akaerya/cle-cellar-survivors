@@ -50,10 +50,10 @@ export const PASSIVES: PassiveDef[] = [
   {
     id: 'warren',
     name: 'Warren',
-    description: 'You start with 2 hardhat bunnies and another joins you every 60 seconds (up to 12). They chase enemies near you and headbutt them.',
+    description: 'You start with 3 hardhat bunnies and another joins you every 60 seconds (up to 12). They chase enemies near you and headbutt them.',
     icon: 'icon_passive_warren',
     kind: 'pets',
-    start: 2,
+    start: 3,
     every: 60,
     max: 12,
     speed: 120,
