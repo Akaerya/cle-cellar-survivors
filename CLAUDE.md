@@ -1,6 +1,6 @@
 # Cle Cellar Survivors
 
-Survivor-like browser game where you play as members of the Cle Cellar Discord server: Phaser 4, TypeScript, Vite, Arcade Physics. No backend. Sprites and tiles are Aseprite files in `src/art/sprites` exported to PNG; fonts and sounds are generated at boot. Solo, or online co-op for up to 4 players over WebRTC (PeerJS). Deployed to GitHub Pages by `.github/workflows/deploy.yml` on every push to `main`.
+Survivor-like browser game where you play as members of the Cle Cellar Discord server: Phaser 4, TypeScript, Vite, Arcade Physics. No backend. Sprites and tiles are Aseprite files in `src/art/sprites` exported to PNG; fonts and sounds are generated at boot. Solo, or online co-op for up to 8 players over WebRTC (PeerJS). Deployed to GitHub Pages by `.github/workflows/deploy.yml` on every push to `main`.
 
 See `README.md` for the player-facing overview, URL options and how to add content.
 
