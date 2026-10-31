@@ -1,6 +1,6 @@
 # Cle Cellar Survivors
 
-A survivor-like for desktop browsers where you play as members of the Cle Cellar Discord server. Pick a character, run around a walled graveyard while your weapons fire on their own, and survive the waves of bats, zombies, ghouls and brutes until 15:00, when dawn breaks. Play solo or with up to 3 friends online.
+A survivor-like for desktop browsers where you play as members of the Cle Cellar Discord server. Pick a character, run around a walled graveyard while your weapons fire on their own, and survive the waves of bats, zombies, ghouls and brutes until 15:00, when dawn breaks. Play solo or with up to 7 friends online.
 
 ## Characters
 
@@ -13,7 +13,7 @@ A survivor-like for desktop browsers where you play as members of the Cle Cellar
 | **rabbit**, the bunny conjurer | Arcane Bolt (start; projectile: a slow magic orb, cast faster and a little harder with levels), Carrot Sword (melee: a carrot sword floats around you, dashes through the nearest enemy and flies back), Carrot Rations (your bunnies deal more damage, attack faster and run faster), Bunny Armory (every bunny carries a sword, bow or spellbook and swaps it every 8 s; levels add damage to all three) | **Giant Bunny**: a giant hardhat bunny joins your bunnies for 20 s; it gets every bunny bonus, deals 3x their damage and stomps around the enemy it reaches; 150 s cooldown | **Warren**: start with 2 hardhat bunnies and gain another every minute (up to 12); they chase enemies near you and headbutt them |
 | **Licras**, humanity's nemesis (a goldfish on human legs) | Midnight Tumult (start; projectile: a submachine gun burst at the nearest enemy; the first bullet to hit sets off 50% of the Shock its target still has to take), Caressing Moonlight (melee, AoE: a katana swing all around you that sets off 75% of each enemy's Shock), Gentle But Cruel (projectile: any hit you land may fire a follow-up shot at that enemy, extra shots one after another; its first hit sets off 40% of the enemy's Shock), Vulnerability (duration, AoE: a web that slows by 60% and puts Shock on enemies four times a second; enemies dying on it hand their stacks on; one more web per level) | **Twilight Trill**: flashes the screen and sets off 200% of the Shock every enemy still has to take; 55 s cooldown | **Plunder**: every hit you land puts a stack of Shock on the enemy (3 damage every 0.5 s for 5 s; stacks pile up) |
 
-Each character has its own four weapons (level-up cards only offer your character's), ultimate and passive; items, modifications, powerups and base stats are shared.
+Each character has its own four weapons (level-up cards only offer your character's), ultimate and passive; items, modifications, powerups and base stats are shared. The character select screen shows a portrait per character: click one (or LEFT / RIGHT) to see its description, starting weapon, ultimate, passive and kit, and click it again (or ENTER) to pick it.
 
 Level-up cards can also offer:
 
@@ -41,7 +41,7 @@ Any enemy the spawner brings in (waves and bat swarms, not bosses or minions) ca
 
 The 16 modifiers (`data/enemyModifiers.ts`, run by `systems/EnemyModifiers.ts`) leave void fields that slow and chain you, keep nearby monsters from dropping below 1 HP, enrage as they lose HP, resist damage, leave caustic ground on death, grow crystal buds under whoever hits them, empower nearby monsters, hit harder the more HP you are missing, have extra HP, ignore debuffs, reflect damage, teleport to you, gather souls from nearby deaths, bring nearby monsters back from death once, block half of all hits, or halve hits from outside a bubble that breaks for 5 s after 10 of them (damage over time still gets through). Thorns never takes you below 10% of your max HP.
 
-After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing (life steal and passives included), Aegis blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate, Warren's headbutts and Plunder's Shock; Bunny Armory counts its gear) with its level, damage, DPS, kills and share of their damage.
+After every run the **party screen** lists each player's damage, DPS, kills, damage taken, healing (life steal and passives included), Aegis blocks, deaths, revives and ultimates cast, and for the selected player every weapon (and the ultimate, Warren's headbutts and Plunder's Shock; Bunny Armory counts its gear) with its level, damage, DPS, kills and share of their damage. With more than 4 players the party screen switches to a compact layout (one-line headline, weapons in two columns, no per-weapon DPS) so every row fits.
 
 Phaser 4.2.1, TypeScript, Vite, Arcade Physics. No backend. Sprites and tiles are Aseprite files in `src/art/sprites` (exported to PNG); fonts and sounds are generated at boot.
 
@@ -74,9 +74,9 @@ URL options:
 | `?play` | Skip the title screen (plays the last character you picked). |
 | `?canvas` | Force Phaser's canvas renderer (deprecated in v4; only for machines without WebGL). |
 
-## Co-op (up to 4 players)
+## Co-op (up to 8 players)
 
-Title screen > **HOST CO-OP** gives a 5-character invite code and a **COPY LINK** button (`?join=CODE`). Friends press **JOIN CO-OP** and type or paste the code, or just open the link. In the lobby everyone picks a character (**CHARACTER**) and can set a display name (**NAME**, up to 10 characters; without one you are P1 to P4). Names show over each character, in the teammate list and on the party screen. Name and character are remembered in `localStorage`. The host presses **START** when everyone is in.
+Title screen > **HOST CO-OP** gives a 5-character invite code and a **COPY LINK** button (`?join=CODE`). Friends press **JOIN CO-OP** and type or paste the code, or just open the link. In the lobby everyone picks a character (**CHARACTER**) and can set a display name (**NAME**, up to 10 characters; without one you are P1 to P8). Names show over each character, in the teammate list and on the party screen. Name and character are remembered in `localStorage`. The host presses **START** when everyone is in.
 
 - **Networking**: peer to peer over WebRTC with [PeerJS](https://peerjs.com). PeerJS's free public broker only introduces the browsers (the invite code is the host's peer id); game traffic goes directly between them. No server of our own is needed, so it still deploys to GitHub Pages.
 - **Host-authoritative**: the host's browser simulates enemies, weapons, damage and gems and sends each joiner a binary snapshot 20 times a second (only what is near their screen), plus effects and sounds. Joiners move their own character locally and report its position and speed (for Momentum), so movement has no input lag; when Flicker Strike teleports a joiner the host tells it to move and ignores positions sent before that. Pressing Q asks the host to cast; ultimate timers, buffs, charges and passive cooldowns come back in the snapshots.
