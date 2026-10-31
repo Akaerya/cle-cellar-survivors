@@ -75,6 +75,8 @@ export interface WeaponInstance {
   serial: number;
   /** The last attack (serial) Unstable Infusion rolled for: it rolls once per attack, on its first hit. */
   infused: number;
+  /** `detonate.once`: the last attack (serial) that already set stacks off (or tried to, on its first hit). */
+  detonated: number;
   /** Flicker Strike: seconds until the next check for a Shadow Charge to spend. */
   checkTimer: number;
   /** Flicker Strike: strikes waiting their turn (highest priority first), and seconds until the current one is done. */
@@ -191,6 +193,13 @@ interface Followup {
   targetId: number;
 }
 
+/** The rest of a follow-up's shots, fired one after another at its enemy (they belong to its attack, `serial`). */
+interface FollowupVolley extends Followup {
+  left: number;
+  timer: number;
+  serial: number;
+}
+
 /** A lingering beam (dome ultimate): hits every enemy that touches it once. */
 interface Beam {
   weapon: WeaponInstance;
@@ -273,6 +282,7 @@ export class Weapons {
   private fields: Field[] = [];
   private beams: Beam[] = [];
   private followups: Followup[] = [];
+  private volleys: FollowupVolley[] = [];
   /** `detonate`: each stack weapon's stats, worked out once per call. */
   private detonateCache = new Map<WeaponInstance, Effective>();
   /** A reflected hit can set off Thorns, which hurts the owner again: no reflecting from inside a reflect. */
@@ -334,6 +344,7 @@ export class Weapons {
       refundable: 0,
       serial: 0,
       infused: -1,
+      detonated: -1,
       checkTimer: 0,
       strikeQueue: [],
       strikeBusy: 0,
@@ -479,7 +490,7 @@ export class Weapons {
       this.updateBeams(dt);
       this.processSplashes();
       this.processEchoes();
-      this.processFollowups(locked);
+      this.processFollowups(dt, locked);
     }
   }
 
@@ -1764,8 +1775,13 @@ export class Weapons {
     if (!enemies.hit(en, amount, dirX, dirY, knockback, w)) return false;
     const dealt = enemies.lastDealt;
     const killed = enemies.lastKilled;
-    // The weapon's own damage bonuses scale what it sets off; DAMAGE is already in the stacks.
-    if (w.def.detonate) this.detonate(w, en, w.def.detonate.share * (scale / Math.max(1e-6, p.damageMult)));
+    // The weapon's own damage bonuses scale what it sets off; DAMAGE is already in the stacks. A `once` weapon only
+    // checks on the first hit of each attack.
+    const det = w.def.detonate;
+    if (det && !(det.once && w.detonated === serial)) {
+      w.detonated = serial;
+      this.detonate(w, en, det.share * (scale / Math.max(1e-6, p.damageMult)));
+    }
     this.applyEffect(w, e, en);
     this.onLanded(w, en);
     if (area) this.queueEchoes(w, en, x, y, amount * e.echo, e.echoRadius, e.echoRepeats, serial);
@@ -1913,19 +1929,44 @@ export class Weapons {
 
   /**
    * Follow-up shots queued by this frame's hits go off: each is an attack of its own, fired from the owner at the enemy
-   * that was hit (dropped when it died meanwhile, or the owner is mist).
+   * that was hit (dropped when it died meanwhile, or the owner is mist). With more than one projectile the rest follow
+   * one by one, `followupGap` apart, at the same enemy, until it dies.
    */
-  private processFollowups(locked: boolean): void {
+  private processFollowups(dt: number, locked: boolean): void {
+    let keep = 0;
+    for (const v of this.volleys) {
+      v.timer -= dt;
+      while (v.left > 0 && v.timer <= 0) {
+        v.left--;
+        v.timer += v.weapon.def.followupGap ?? 0;
+        const t = stillAlive(v.target, v.targetId);
+        if (!t) v.left = 0;
+        else if (!locked) this.followupShot(v.weapon, t, v.serial);
+      }
+      if (v.left > 0) this.volleys[keep++] = v;
+    }
+    this.volleys.length = keep;
     if (this.followups.length === 0) return;
-    const p = this.owner;
     for (const f of this.followups) {
       const t = stillAlive(f.target, f.targetId);
       if (!t || locked) continue;
       const w = f.weapon;
       w.serial++;
-      this.volley(w, this.eff(w), Math.atan2(t.y - p.y, t.x - p.x));
+      this.followupShot(w, t, w.serial);
+      const n = Math.max(1, Math.round(this.eff(w).projectileCount));
+      if (n > 1) this.volleys.push({ ...f, left: n - 1, timer: w.def.followupGap ?? 0, serial: w.serial });
     }
     this.followups.length = 0;
+  }
+
+  /** One follow-up shot of `w` from the owner at `t`, part of attack `serial`. */
+  private followupShot(w: WeaponInstance, t: Enemy, serial: number): void {
+    const p = this.owner;
+    const pr = this.projectiles.get(p.x, p.y) as Projectile | null;
+    if (!pr) return;
+    pr.fire(w, p.x, p.y - 2, Math.atan2(t.y - p.y, t.x - p.x), this.shot(w, this.eff(w)));
+    pr.serial = serial;
+    this.game.playSfx('throw', p.x, p.y);
   }
 
   /**
@@ -2037,6 +2078,7 @@ export class Weapons {
     this.fields.length = 0;
     this.beams.length = 0;
     this.followups.length = 0;
+    this.volleys.length = 0;
     for (const w of this.list) {
       for (const s of w.orbiters) s.destroy();
       w.orbiters.length = 0;
@@ -2069,5 +2111,6 @@ export class Weapons {
     this.fields.length = 0;
     this.beams.length = 0;
     this.followups.length = 0;
+    this.volleys.length = 0;
   }
 }

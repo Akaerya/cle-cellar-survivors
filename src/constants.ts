@@ -50,11 +50,11 @@ export const STAB_LEAD = 12;
 /** Shields never absorb more than this fraction of a hit, however many levels are stacked. */
 export const MAX_SHIELD_REDUCTION = 0.9;
 
-/** Co-op: players per run, and how each player is told apart (P1..P8). */
-export const MAX_PLAYERS = 8;
-export const PLAYER_COLORS = [0xf7d84a, 0x6ec6ff, 0xff7a8a, 0x7be38a, 0xffa64a, 0xc58aff, 0x5ee0d0, 0xff8ad8] as const;
+/** Co-op: players per run, and how each player is told apart (P1..P4). */
+export const MAX_PLAYERS = 4;
+export const PLAYER_COLORS = [0xf7d84a, 0x6ec6ff, 0xff7a8a, 0x7be38a] as const;
 /** Multiplied into the character sprite; P1 keeps the original colours. */
-export const PLAYER_TINTS = [0xffffff, 0xbfe2ff, 0xffc4c9, 0xc8f5c9, 0xffdcb8, 0xe3ccff, 0xc4f5ef, 0xffcdef] as const;
+export const PLAYER_TINTS = [0xffffff, 0xbfe2ff, 0xffc4c9, 0xc8f5c9] as const;
 
 /** Enemies further than this many screens away (per axis) are moved back near the edge. */
 export const DESPAWN_SCREENS = 1.5;

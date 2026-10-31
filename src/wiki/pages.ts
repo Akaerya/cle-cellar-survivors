@@ -225,7 +225,7 @@ const TARGETING_NOTES: Record<Targeting, string> = {
     'Does nothing on its own: it makes your pets stronger (see CHARACTERS, Warren and Giant Bunny). PET DAMAGE is added to their damage, PET HASTE makes them attack that much faster (their cooldowns are divided by 1 + it) and PET SPEED is added to their move speed.',
   armory:
     'Does nothing on its own: each of your pets carries one piece of GEAR (below), picked at random, and attacks with it instead of its headbutt. Every SWAP seconds (shortened by COOLDOWN and ABILITY HASTE) each pet swaps to another piece. Every level of the armory is a level of every piece of gear. Swords stab the enemy the pet reaches; bows and spellbooks shoot from a distance (the pet stops short of its target).',
-  followup: `Has no cooldown. Every hit you land with anything else (hits, Impact splashes and echoes; not damage over time) has CHANCE to fire it from you at the enemy that was hit, right after that frame; several hits in one frame can each fire one (at most ${MAX_FOLLOWUPS} a frame). Its own hits never fire it again. Each shot is an attack of its own and a projectile: COUNT shots fan out by the spread angle, and projectile modifications change them.`,
+  followup: `Has no cooldown. Every hit you land with anything else (hits, Impact splashes and echoes; not damage over time) has CHANCE to fire it from you at the enemy that was hit, right after that frame; several hits in one frame can each fire one (at most ${MAX_FOLLOWUPS} a frame). Its own hits never fire it again. Each follow-up is an attack of its own and a projectile: with more than one (COUNT, Additional Projectiles) they go one after another at the same enemy (dropped if it dies first), and projectile modifications change them.`,
 };
 
 /** Table columns per targeting type: which stats mean something for that behaviour. */
@@ -412,9 +412,13 @@ function effectText(def: WeaponDef): string {
 function detonateText(def: WeaponDef): string {
   const d = def.detonate!;
   const thrown = hitsWithProjectiles(def);
-  const which = thrown ? 'Every hit of it (its splits and bounces too)' : 'Every hit of it';
+  const which = d.once
+    ? 'Only the first hit of each use (its first projectile to land, whichever enemy that is)'
+    : thrown
+      ? 'Every hit of it (its splits and bounces too)'
+      : 'Every hit of it';
   const own = thrown ? 'levels, modifications, the less damage of splits and bounces' : 'levels, modifications, Ruthless';
-  return `${which} sets off the enemy's ${d.effect.toUpperCase()} stacks: the enemy takes ${pct(d.share)} of the damage all of them would still deal in the time they have left, at once. That is damage over time: no Plunder stack, no thorns, and it gets through a bubble (see RARE). The stacks stay. Its own damage bonuses (${own}) scale it; your DAMAGE does not again, since the stacks already have it.`;
+  return `${which} sets off the enemy's ${d.effect.toUpperCase()} stacks: the enemy takes ${pct(d.share)} of the damage all of them would still deal in the time they have left, at once. That is damage over time: no Plunder stack, no thorns, and it gets through a bubble (see RARE). The stacks stay. Every hit still puts a Plunder stack on. Its own damage bonuses (${own}) scale it; your DAMAGE does not again, since the stacks already have it.`;
 }
 
 /** How a weapon fires its extra projectiles one after another (BurstDef). */
@@ -452,7 +456,7 @@ function charactersPage(filter: string): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby: click a portrait (or LEFT / RIGHT) to see that character's abilities and kit, and click it again (or ENTER) to pick it. Each character has its own weapon kit, ultimate and passive. Items, modifications, powerups and base stats are shared (see ITEMS, MODS and POWERUPS), and several players may pick the same character.`,
+      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby. Each character has its own weapon kit, ultimate and passive. Items, modifications, powerups and base stats are shared (see ITEMS, MODS and POWERUPS), and several players may pick the same character.`,
     },
     {
       t: 'p',
@@ -722,7 +726,7 @@ function modsPage(filter: string): Block[] {
     { t: 'h', text: 'DAMAGE OVER TIME' },
     {
       t: 'p',
-      text: `Damage over time is the ticking of stacks (Rime Trauma, Shock) and what sets them off at once (Midnight Tumult, Caressing Moonlight, Twilight Trill). It is not a hit: it applies no stacks and no follow-up shots, Thorns and Crystalline do not answer it, and a bubble (see RARE) does not stop it; hexproof enemies take no stacks at all. The ticks of one weapon's stacks on one enemy in one frame land as one number. Every stack keeps the bonuses of the weapon that put it on, so Shock from Vulnerability gets Vulnerability's AOE and DURATION bonuses and Shock from Plunder gets Plunder's. DOT modifications change every damage-over-time weapon: DEADLY AILMENTS makes their hits (if they hit at all) deal less and their damage over time more; SADISM makes stacks tick sooner (they last as long, so they tick more often) and harder; VIRULENT CHAIN makes stacks move on when their enemy dies, to the closest enemy however far away (the two closest at level 5, each getting a copy), keeping the time they have left; a blob of ink flies to each, at the cost of less damage over time. DOT damage bonuses add up with the weapon's other damage bonuses; LESS DAMAGE multiplies.`,
+      text: `Damage over time is the ticking of stacks (Rime Trauma, Shock) and what sets them off at once (Midnight Tumult, Caressing Moonlight, Gentle But Cruel, Twilight Trill). It is not a hit: it applies no stacks and no follow-up shots, Thorns and Crystalline do not answer it, and a bubble (see RARE) does not stop it; hexproof enemies take no stacks at all. The ticks of one weapon's stacks on one enemy in one frame land as one number. Every stack keeps the bonuses of the weapon that put it on, so Shock from Vulnerability gets Vulnerability's AOE and DURATION bonuses and Shock from Plunder gets Plunder's. DOT modifications change every damage-over-time weapon: DEADLY AILMENTS makes their hits (if they hit at all) deal less and their damage over time more; SADISM makes stacks tick sooner (they last as long, so they tick more often) and harder; VIRULENT CHAIN makes stacks move on when their enemy dies, to the closest enemy however far away (the two closest at level 5, each getting a copy), keeping the time they have left; a blob of ink flies to each, at the cost of less damage over time. DOT damage bonuses add up with the weapon's other damage bonuses; LESS DAMAGE multiplies.`,
     },
     { t: 'h', text: 'MELEE' },
     {
@@ -1045,7 +1049,7 @@ function coopPage(): Block[] {
     { t: 'h', text: 'LOBBY' },
     {
       t: 'p',
-      text: `Everyone picks a character with CHARACTER and can set a display name (up to ${NAME_MAX} letters, digits or . - _ ! ? ') with NAME; without one you are shown as P1 to P${MAX_PLAYERS}. Names are shown over each character, in the teammate list and on the party screen. Both are remembered for next time.`,
+      text: `Everyone picks a character with CHARACTER and can set a display name (up to ${NAME_MAX} letters, digits or . - _ ! ? ') with NAME; without one you are shown as P1 to P4. Names are shown over each character, in the teammate list and on the party screen. Both are remembered for next time.`,
     },
     { t: 'h', text: 'SHARED EXP' },
     {
@@ -1127,7 +1131,7 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'PARTY SCREEN' },
     {
       t: 'p',
-      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal and passives, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate (and a passive\'s pets: Warren\'s headbutts; Bunny Armory counts the damage of its gear): level, damage, DPS since it was picked up, kills and share of their damage. With more than 4 players the screen is compact: the weapons are in two columns, without DPS.',
+      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal and passives, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate (and a passive\'s pets: Warren\'s headbutts; Bunny Armory counts the damage of its gear): level, damage, DPS since it was picked up, kills and share of their damage.',
     },
     { t: 'h', text: 'CONTROLS' },
     { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click; R rerolls.' },

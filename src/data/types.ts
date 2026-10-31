@@ -133,6 +133,8 @@ export interface EffectDef {
 export interface DetonateDef {
   effect: string;
   share: number;
+  /** Only the first hit of each attack (one use of the weapon, all its projectiles) sets stacks off. */
+  once?: boolean;
 }
 
 /** The kinds of charge Unstable Infusion gives (see ChargesDef). */
@@ -259,6 +261,8 @@ export interface WeaponDef {
   petAnim?: string;
   /** `seeker`: px from the owner the blade floats at while it waits for its next dash. */
   hover?: number;
+  /** `followup`: seconds between the shots of one follow-up; they go one after another at the enemy that was hit. */
+  followupGap?: number;
   /** Every hit sets off the enemy's stacks of an effect (see DetonateDef). */
   detonate?: DetonateDef;
   /** `field`: how the field looks: a freezing swirl (default) or a spider web. */

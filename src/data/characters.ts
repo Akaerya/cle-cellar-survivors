@@ -7,7 +7,7 @@ import type { CharacterDef } from './types';
 export const CHARACTERS: CharacterDef[] = [
   {
     id: 'rsncle',
-    name: 'cle',
+    name: 'rsncle',
     title: 'THE BANANA MONKEY',
     description: 'Throws bananas, lashes its tail and howls at the night.',
     anim: 'monkey',

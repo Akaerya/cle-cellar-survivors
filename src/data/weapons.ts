@@ -71,7 +71,7 @@ const PET_GEAR: WeaponDef[] = [
 ];
 
 export const WEAPONS: WeaponDef[] = [
-  // ---------------------------------------------------------------- cle, the banana monkey
+  // ---------------------------------------------------------------- rsncle, the banana monkey
   // Level 1 is the base stats; `levels` are the changes for levels 2 to 5. Percent changes add up (`pct`, `faster`).
   {
     id: 'banana',
@@ -628,7 +628,7 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'midnight_tumult',
     name: 'Midnight Tumult',
-    description: 'Fires a submachine gun at the nearest enemy, 2 bullets one after another. A bullet that hits an enemy carrying Shock deals 50% of the damage its Shock stacks have left, at once.',
+    description: 'Fires a submachine gun at the nearest enemy, 2 bullets one after another. The first bullet to hit sets off 50% of the damage the enemy\'s Shock stacks have left, at once.',
     icon: 'icon_tumult',
     targeting: 'nearest',
     tags: ['projectile'],
@@ -638,7 +638,7 @@ export const WEAPONS: WeaponDef[] = [
     color: 0xffe08a,
     // Bullets (levels, Additional Projectiles) follow one another at the closest enemy over a tenth of the cooldown.
     burst: { window: 0.1, spacing: 'end', target: 'nearest' },
-    detonate: { effect: 'shock', share: 0.5 },
+    detonate: { effect: 'shock', share: 0.5, once: true },
     stats: {
       cooldown: 2.5,
       damage: 2,
@@ -683,13 +683,16 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'gentle_but_cruel',
     name: 'Gentle But Cruel',
-    description: 'Every hit you land has a 20% chance to fire a follow-up shot at that enemy right away. No cooldown.',
+    description: 'Every hit you land has a 20% chance to fire a follow-up shot at that enemy right away. Its first hit sets off 40% of the damage the enemy\'s Shock stacks have left. No cooldown.',
     icon: 'icon_gentle',
     targeting: 'followup',
     tags: ['projectile'],
     projectileAnim: 'moonshard-spin',
     artRadius: 3,
     color: 0xc8b8ff,
+    // Extra shots (Additional Projectiles) follow the first one by one at the same enemy.
+    followupGap: 0.08,
+    detonate: { effect: 'shock', share: 0.4, once: true },
     stats: {
       cooldown: 0,
       damage: 3,
