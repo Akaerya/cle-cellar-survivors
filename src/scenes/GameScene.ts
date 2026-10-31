@@ -182,13 +182,12 @@ export class GameScene extends Phaser.Scene {
   private posTimer = 0;
   private startCount = 1;
 
-  /** Key codes that move the character, per direction. */
-  private keys!: { up: number[]; down: number[]; left: number[]; right: number[] };
-  /**
-   * Key codes held down right now, from the browser's own key events. Phaser lets go of every key when this scene
-   * pauses (solo level-ups, the menu), so a movement key held through a level-up would read as up afterwards.
-   */
-  private readonly heldKeys = new Set<number>();
+  private keys!: {
+    up: Phaser.Input.Keyboard.Key[];
+    down: Phaser.Input.Keyboard.Key[];
+    left: Phaser.Input.Keyboard.Key[];
+    right: Phaser.Input.Keyboard.Key[];
+  };
   private hpBar!: Phaser.GameObjects.Graphics;
   private lastSecond = -1;
   private camTarget: Player | null = null;
@@ -307,21 +306,12 @@ export class GameScene extends Phaser.Scene {
 
     const kb = this.input.keyboard!;
     const K = Phaser.Input.Keyboard.KeyCodes;
-    this.keys = { up: [K.W, K.UP], down: [K.S, K.DOWN], left: [K.A, K.LEFT], right: [K.D, K.RIGHT] };
-    // Captured so arrow keys do not scroll the page.
-    for (const code of Object.values(this.keys).flat()) kb.addKey(code);
-    this.heldKeys.clear();
-    const press = (e: KeyboardEvent) => this.heldKeys.add(e.keyCode);
-    const release = (e: KeyboardEvent) => this.heldKeys.delete(e.keyCode);
-    const letGo = () => this.heldKeys.clear();
-    window.addEventListener('keydown', press);
-    window.addEventListener('keyup', release);
-    window.addEventListener('blur', letGo);
-    this.events.once('shutdown', () => {
-      window.removeEventListener('keydown', press);
-      window.removeEventListener('keyup', release);
-      window.removeEventListener('blur', letGo);
-    });
+    this.keys = {
+      up: [kb.addKey(K.W), kb.addKey(K.UP)],
+      down: [kb.addKey(K.S), kb.addKey(K.DOWN)],
+      left: [kb.addKey(K.A), kb.addKey(K.LEFT)],
+      right: [kb.addKey(K.D), kb.addKey(K.RIGHT)],
+    };
     kb.addKey(K.F3); // captured so the browser's find bar does not open
     onKey(this, 'keydown-ESC', () => this.openPause());
     onKey(this, 'keydown-P', () => this.openPause());
@@ -387,7 +377,7 @@ export class GameScene extends Phaser.Scene {
 
     // Input. In co-op the pause menu does not stop the run, so it just lets go of the controls.
     const k = this.keys;
-    const down = (list: number[]) => list.some((code) => this.heldKeys.has(code));
+    const down = (list: Phaser.Input.Keyboard.Key[]) => list.some((key) => key.isDown);
     const held = !this.frozen && !this.menuOpen;
     const ix = held ? (down(k.right) ? 1 : 0) - (down(k.left) ? 1 : 0) : 0;
     const iy = held ? (down(k.down) ? 1 : 0) - (down(k.up) ? 1 : 0) : 0;
@@ -1272,6 +1262,7 @@ export class GameScene extends Phaser.Scene {
           case 'x':
           case 'k':
           case 'z':
+          case 'i':
           case 'c':
           case 't':
             return this.nearView(p, ev[1], ev[2]);
@@ -1453,6 +1444,9 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'z':
         this.fx.beam(ev[1], ev[2], ev[3], ev[4], ev[5], ev[6], ev[7]);
+        break;
+      case 'i':
+        this.fx.inkBlob(ev[1], ev[2], ev[3], ev[4]);
         break;
       case 'd':
         this.players[ev[1]]?.ultimate.setDome(ev[2], ev[3]);

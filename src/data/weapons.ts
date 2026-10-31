@@ -1,4 +1,4 @@
-import type { ChargesDef, EffectDef, WeaponDef, WeaponLevel, WeaponStats } from './types';
+import type { EffectDef, WeaponDef, WeaponLevel, WeaponStats } from './types';
 
 /** Speed (px/s) of Elysia's crystal arrows. Crystalline Bloom's crystal flies 30% slower. */
 const ARROW_SPEED = 420;
@@ -10,9 +10,6 @@ const fourTimes = (lv: WeaponLevel): WeaponLevel[] => [lv, lv, lv, lv];
  * The cap only stops Reiterate from copying stacks without end.
  */
 export const SHOCK: EffectDef = { id: 'shock', name: 'Shock', damage: 3, interval: 0.5, duration: 5, stacks: true, tint: 0xd2a8ff, maxStacks: 150 };
-
-/** Brutal, Siphoning and Vicissitude charges (Unstable Infusion, Vulnerability). */
-const CHARGES: ChargesDef = { duration: 3, max: 6, brutal: 0.015, siphon: 0.04, vicissitude: 0.25 };
 
 /** Stats every weapon has; for the ones that use few of them (pet buffs, gear, passives). */
 export const NO_STATS: WeaponStats = {
@@ -74,7 +71,7 @@ const PET_GEAR: WeaponDef[] = [
 ];
 
 export const WEAPONS: WeaponDef[] = [
-  // ---------------------------------------------------------------- cle, the banana monkey
+  // ---------------------------------------------------------------- rsncle, the banana monkey
   // Level 1 is the base stats; `levels` are the changes for levels 2 to 5. Percent changes add up (`pct`, `faster`).
   {
     id: 'banana',
@@ -529,7 +526,7 @@ export const WEAPONS: WeaponDef[] = [
     icon: 'icon_infusion',
     targeting: 'infusion',
     color: 0xff6a8a,
-    charges: CHARGES,
+    charges: { duration: 3, max: 6, brutal: 0.015, siphon: 0.04, vicissitude: 0.25 },
     stats: {
       cooldown: 0,
       damage: 0,
@@ -713,7 +710,7 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'vulnerability',
     name: 'Vulnerability',
-    description: 'Spins a web under the nearest enemy. It slows enemies on it by 60% and puts Shock on them four times a second. Enemies that die on it hand their stacks to the closest enemy on your screen. Your attacks have a 10% chance to give you a random charge.',
+    description: 'Spins a web under the nearest enemy. It slows enemies on it by 60% and puts Shock on them four times a second. Enemies that die on it hand their stacks to the closest enemy on your screen.',
     icon: 'icon_vulnerability',
     targeting: 'field',
     tags: ['duration', 'aoe'],
@@ -724,7 +721,6 @@ export const WEAPONS: WeaponDef[] = [
     color: 0xc8b8ff,
     fieldInterval: 0.25,
     effect: SHOCK,
-    charges: CHARGES,
     stats: {
       cooldown: 2.5,
       damage: 0,
@@ -739,12 +735,7 @@ export const WEAPONS: WeaponDef[] = [
       arc: 0,
       boomerang: false,
       slow: 0.6,
-      chargeChance: 0.1,
-      chargeEffect: 1,
     },
-    levels: [
-      ...[0.15, 0.2, 0.25].map((c) => ({ text: `${Math.round(c * 100)}% chance to gain a charge.`, set: { chargeChance: c } })),
-      { text: 'Charges have 100% increased effect.', set: { chargeEffect: 2 } },
-    ],
+    levels: [2, 3, 4, 5].map((n) => ({ text: `${n} webs. +10% area.`, add: { projectileCount: 1 }, pct: { size: 0.1 } })),
   },
 ];

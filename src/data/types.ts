@@ -240,7 +240,7 @@ export interface WeaponDef {
    * `duration` tag, Reiterate can copy it when it is applied.
    */
   buff?: { name: string };
-  /** The charges the owner's attacks can give while the weapon is owned (Unstable Infusion, Vulnerability). */
+  /** `infusion`: the charges the owner's attacks can give while the weapon is owned. */
   charges?: ChargesDef;
   /** `flicker`: its Shadow Charges. */
   shadow?: ShadowDef;

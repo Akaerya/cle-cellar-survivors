@@ -20,6 +20,15 @@ const CRIT_SCALE = 2;
 /** Freezing fields and beams that can show at once (the oldest is reused). */
 const MAX_VORTICES = 40;
 const MAX_BEAMS = 24;
+/** Virulent Chain's ink blobs: how many fly at once (the oldest is reused), px/s, the shortest and longest flight in
+ * seconds, how high (px) the arc rises per px flown, and the ink's colours. */
+const MAX_BLOBS = 32;
+const BLOB_SPEED = 320;
+const BLOB_MIN = 0.12;
+const BLOB_MAX = 0.6;
+const BLOB_ARC = 0.12;
+const INK = 0x120c18;
+const INK_SHINE = 0x4a3a5e;
 /** Seconds a field takes to swirl open and to fade at the end. */
 const VORTEX_FADE = 0.25;
 
@@ -47,6 +56,16 @@ interface Vortex {
 const WEB_SPOKES = 8;
 const WEB_RINGS = 3;
 
+/** An ink blob flying in an arc from (x1, y1) to (x2, y2) over `dur` seconds (Virulent Chain). */
+interface Blob {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  age: number;
+  dur: number;
+}
+
 /** A lingering beam, bright when it fires and fading over `dur` seconds. */
 interface BeamFx {
   x1: number;
@@ -72,6 +91,8 @@ export class Fx {
   private vortexGfx: Phaser.GameObjects.Graphics;
   private beams: BeamFx[] = [];
   private beamCursor = 0;
+  private blobs: Blob[] = [];
+  private blobCursor = 0;
   private beamGfx: Phaser.GameObjects.Graphics;
   private time = 0;
   activeNumbers = 0;
@@ -94,6 +115,7 @@ export class Fx {
     for (let i = 0; i < MAX_VORTICES; i++) this.vortices.push({ x: 0, y: 0, r: 0, color: 0, age: 0, dur: 0, spin: 1, web: false });
     this.beamGfx = scene.add.graphics().setDepth(DEPTH.slash);
     for (let i = 0; i < MAX_BEAMS; i++) this.beams.push({ x1: 0, y1: 0, x2: 0, y2: 0, width: 0, color: 0, age: 0, dur: 0 });
+    for (let i = 0; i < MAX_BLOBS; i++) this.blobs.push({ x1: 0, y1: 0, x2: 0, y2: 0, age: 0, dur: 0 });
   }
 
   /** A field at (x, y) of `radius` px that lasts `dur` seconds: a swirling freezing vortex, or a spider web. */
@@ -127,6 +149,19 @@ export class Fx {
     b.color = color;
     b.age = 0;
     b.dur = dur;
+  }
+
+  /** A small blob of ink lobbed from (x1, y1) to (x2, y2) (Virulent Chain moving stacks on). */
+  inkBlob(x1: number, y1: number, x2: number, y2: number): void {
+    this.relay?.(['i', Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2)]);
+    const b = this.blobs[this.blobCursor];
+    this.blobCursor = (this.blobCursor + 1) % MAX_BLOBS;
+    b.x1 = x1;
+    b.y1 = y1;
+    b.x2 = x2;
+    b.y2 = y2;
+    b.age = 0;
+    b.dur = Phaser.Math.Clamp(Math.hypot(x2 - x1, y2 - y1) / BLOB_SPEED, BLOB_MIN, BLOB_MAX);
   }
 
   /** A pulsing warning circle of `radius` px for `dur` seconds (a boss winding up an attack there). */
@@ -257,6 +292,7 @@ export class Fx {
     this.time += dt;
     this.drawVortices(dt);
     this.drawBeams(dt);
+    this.drawBlobs(dt);
     const g = this.echoGfx;
     g.clear();
     for (const ring of this.echoes) {
@@ -345,6 +381,33 @@ export class Fx {
         }
       }
       g.strokePath();
+    }
+  }
+
+  /** Ink blobs: a dark drop with a dull shine and two droplets trailing it, arcing up and landing in a tiny splat. */
+  private drawBlobs(dt: number): void {
+    const g = this.beamGfx;
+    for (const b of this.blobs) {
+      if (b.age >= b.dur) continue;
+      b.age += dt;
+      const k = Math.min(1, b.age / b.dur);
+      const lift = Math.hypot(b.x2 - b.x1, b.y2 - b.y1) * BLOB_ARC;
+      const at = (t: number) => [b.x1 + (b.x2 - b.x1) * t, b.y1 + (b.y2 - b.y1) * t - Math.sin(t * Math.PI) * lift];
+      if (k >= 1) {
+        g.fillStyle(INK, 0.6);
+        g.fillEllipse(b.x2, b.y2 + 2, 7, 3);
+        continue;
+      }
+      for (const [lag, r] of [[0.16, 1], [0.08, 1.5]] as const) {
+        const [tx, ty] = at(Math.max(0, k - lag));
+        g.fillStyle(INK, 0.7);
+        g.fillCircle(tx, ty, r);
+      }
+      const [x, y] = at(k);
+      g.fillStyle(INK, 0.95);
+      g.fillCircle(x, y, 2.5);
+      g.fillStyle(INK_SHINE, 0.9);
+      g.fillRect(Math.round(x - 1), Math.round(y - 2), 1, 1);
     }
   }
 

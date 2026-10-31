@@ -26,8 +26,6 @@ export const STUN_SECONDS = 0.5;
 export const IMPACT_RADIUS = 25;
 /** Ruthless: every this many attacks of a weapon, one is ruthless. */
 export const RUTHLESS_EVERY = 3;
-/** Virulent Chain: how far (px) the stacks of an enemy that died look for enemies to move to. */
-export const VIRULENT_RANGE = 120;
 
 const pierce = { text: '+1 pierce, +15% damage.', add: { pierce: 1, damage: 0.15 } };
 const moreArea = { text: '+20% area, +5% damage.', add: { area: 0.2, damage: 0.05 } };
@@ -246,7 +244,7 @@ export const MODIFICATIONS: ModificationDef[] = [
   {
     id: 'virulent_chain',
     name: 'Virulent Chain',
-    description: `When an enemy dies, each of its damage-over-time stacks moves to the closest enemy within ${VIRULENT_RANGE} px with the time it has left. Damage over time deals 20% less.`,
+    description: `When an enemy dies, each of its damage-over-time stacks moves to the closest enemy, however far, with the time it has left. Damage over time deals 20% less.`,
     icon: 'icon_mod_virulent',
     tags: ['dot'],
     levels: [

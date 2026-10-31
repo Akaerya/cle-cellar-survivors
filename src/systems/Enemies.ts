@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, CHILL_TINT, DEPTH, MAX_EFFECT_STACKS, MAX_ENEMIES, SLOW_LINGER_MS, STUN_TINT } from '../constants';
 import { SpatialGrid } from '../core/spatialGrid';
-import { VIRULENT_RANGE } from '../data';
 import type { EnemyDef } from '../data/types';
 import { Enemy, SHADOW_W, TICK_EPSILON, type EffectStack } from '../entities/Enemy';
 import type { Player } from '../entities/Player';
@@ -197,8 +196,8 @@ export class Enemies {
   /**
    * Host: `e` just died carrying duration effect stacks. On a field that hands stacks on (Vulnerability), all of them
    * go to the closest enemy on that field owner's screen. Otherwise each stack whose weapon has Virulent Chain moves to
-   * the closest enemies within VIRULENT_RANGE (that many of them). Stacks keep the time they have left; an enemy that
-   * already carries a weapon's full count of stacks takes no more of them.
+   * that many closest enemies, however far, and a blob of ink flies to each of them. Stacks keep the time they have
+   * left; an enemy that already carries a weapon's full count of stacks takes no more of them.
    */
   private passOnEffects(e: Enemy): void {
     let to: Enemy[] = [];
@@ -210,19 +209,22 @@ export class Enemies {
         break;
       }
     }
+    const inked = new Set<Enemy>();
     for (const st of e.effects) {
       if (st.left <= 0) continue;
       let targets = to;
       if (targets.length === 0) {
         const n = Math.round(st.weapon.owner.weapons.eff(st.weapon).virulent);
         if (n <= 0) continue;
-        targets = this.closest(e, VIRULENT_RANGE, n);
+        targets = this.closest(e, Infinity, n);
+        for (const t of targets) inked.add(t);
       }
       for (const t of targets) {
         if (!this.game.enemyMods.debuffable(t) || this.stacksOf(t, st.weapon) >= maxStacks(st.weapon)) continue;
         t.effects.push({ weapon: st.weapon, left: st.left, next: st.next, copy: st.copy });
       }
     }
+    for (const t of inked) this.game.fx.inkBlob(e.x, e.y, t.x, t.y);
   }
 
   /** Up to `n` living enemies other than `e` within `range` px of it that pass `ok`, closest first. */

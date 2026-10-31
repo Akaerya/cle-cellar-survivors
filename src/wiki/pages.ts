@@ -81,7 +81,6 @@ import {
   MULTISTRIKE_GAP,
   RUTHLESS_EVERY,
   STUN_SECONDS,
-  VIRULENT_RANGE,
 } from '../data';
 import {
   HP_SCALE_PER_EXTRA_PLAYER,
@@ -296,12 +295,10 @@ const COLUMNS: Record<Targeting, Col[]> = {
 
 /**
  * Columns for one weapon: its targeting type's (blast-on-hit projectiles show their blast RADIUS, like bombs, with
- * no pierce), the charge CHANCE and EFFECT of weapons that give charges besides attacking, plus REPEATS when any
- * level repeats the attack.
+ * no pierce), plus REPEATS when any level repeats the attack.
  */
 function weaponColumns(def: WeaponDef): Col[] {
   const cols = def.blastOnHit ? [...COLUMNS.bomb] : [...COLUMNS[def.targeting]];
-  if (def.charges && def.targeting !== 'infusion') cols.push(C.chance, C.effect);
   for (let lv = 1; lv <= MAX_LEVEL; lv++) {
     if ((weaponStatsAt(def, lv).repeat ?? 0) > 0) {
       cols.push(C.repeats);
@@ -356,10 +353,9 @@ function weaponsPage(filter: string): Block[] {
       }
       if (def.charges) {
         const ch = def.charges;
-        const how = def.targeting === 'infusion' ? '' : 'The first hit of each of your attacks (any weapon) has CHANCE to give you a random charge. ';
         out.push({
           t: 'p',
-          text: `${how}CHARGES last ${secs(ch.duration)} each, up to ${ch.max} of each kind (a new one past that replaces the oldest). BRUTAL: ${pct(ch.brutal, 1)} chance per charge that a hit deals double damage (not a critical strike). SIPHONING: ${pct(ch.siphon)} of damage dealt healed per charge (life steal). VICISSITUDE: the next damage you take is ${pct(ch.vicissitude)} lower, using up one charge. All before EFFECT.`,
+          text: `CHARGES last ${secs(ch.duration)} each, up to ${ch.max} of each kind (a new one past that replaces the oldest). BRUTAL: ${pct(ch.brutal, 1)} chance per charge that a hit deals double damage (not a critical strike). SIPHONING: ${pct(ch.siphon)} of damage dealt healed per charge (life steal). VICISSITUDE: the next damage you take is ${pct(ch.vicissitude)} lower, using up one charge. All before EFFECT.`,
           color: COLOR.textDim,
         });
       }
@@ -460,7 +456,7 @@ function charactersPage(filter: string): Block[] {
     },
     {
       t: 'p',
-      text: 'PASSIVES are always on. The box under your ultimate shows yours: green edge when it is ready, greyed out with the seconds left while it recharges. Under it, a gold line lists what is running on you: Aegis, Shadow Charges, charges (Unstable Infusion, Vulnerability) and Mistwalker\'s damage.',
+      text: 'PASSIVES are always on. The box under your ultimate shows yours: green edge when it is ready, greyed out with the seconds left while it recharges. Under it, a gold line lists what is running on you: Aegis, Shadow Charges, Unstable Infusion charges and Mistwalker\'s damage.',
       color: COLOR.textDim,
     },
     { t: 'h', text: 'ULTIMATES (Q)' },
@@ -726,7 +722,7 @@ function modsPage(filter: string): Block[] {
     { t: 'h', text: 'DAMAGE OVER TIME' },
     {
       t: 'p',
-      text: `Damage over time is the ticking of stacks (Rime Trauma, Shock) and what sets them off at once (Midnight Tumult, Caressing Moonlight, Twilight Trill). It is not a hit: it applies no stacks and no follow-up shots, Thorns and Crystalline do not answer it, and a bubble (see RARE) does not stop it; hexproof enemies take no stacks at all. The ticks of one weapon's stacks on one enemy in one frame land as one number. Every stack keeps the bonuses of the weapon that put it on, so Shock from Vulnerability gets Vulnerability's AOE and DURATION bonuses and Shock from Plunder gets Plunder's. DOT modifications change every damage-over-time weapon: DEADLY AILMENTS makes their hits (if they hit at all) deal less and their damage over time more; SADISM makes stacks tick sooner (they last as long, so they tick more often) and harder; VIRULENT CHAIN makes stacks move on when their enemy dies, to the closest enemy within ${VIRULENT_RANGE} px (two at level 5, each getting a copy), keeping the time they have left, at the cost of less damage over time. DOT damage bonuses add up with the weapon's other damage bonuses; LESS DAMAGE multiplies.`,
+      text: `Damage over time is the ticking of stacks (Rime Trauma, Shock) and what sets them off at once (Midnight Tumult, Caressing Moonlight, Twilight Trill). It is not a hit: it applies no stacks and no follow-up shots, Thorns and Crystalline do not answer it, and a bubble (see RARE) does not stop it; hexproof enemies take no stacks at all. The ticks of one weapon's stacks on one enemy in one frame land as one number. Every stack keeps the bonuses of the weapon that put it on, so Shock from Vulnerability gets Vulnerability's AOE and DURATION bonuses and Shock from Plunder gets Plunder's. DOT modifications change every damage-over-time weapon: DEADLY AILMENTS makes their hits (if they hit at all) deal less and their damage over time more; SADISM makes stacks tick sooner (they last as long, so they tick more often) and harder; VIRULENT CHAIN makes stacks move on when their enemy dies, to the closest enemy however far away (the two closest at level 5, each getting a copy), keeping the time they have left; a blob of ink flies to each, at the cost of less damage over time. DOT damage bonuses add up with the weapon's other damage bonuses; LESS DAMAGE multiplies.`,
     },
     { t: 'h', text: 'MELEE' },
     {

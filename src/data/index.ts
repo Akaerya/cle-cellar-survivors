@@ -35,7 +35,6 @@ export {
   STUN_SECONDS,
   IMPACT_RADIUS,
   RUTHLESS_EVERY,
-  VIRULENT_RANGE,
 } from './modifications';
 export { PASSIVES } from './passives';
 export { POWERUPS, POWERUP_MAX_LEVEL } from './powerups';

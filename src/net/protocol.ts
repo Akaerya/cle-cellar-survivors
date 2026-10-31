@@ -74,6 +74,8 @@ export type FxEvent =
   | ['x', number, number, number, number]
   /** cold crystal burst: x, y, radius, colour */
   | ['k', number, number, number, number]
+  /** Virulent Chain ink blob: from x, y to x2, y2 */
+  | ['i', number, number, number, number]
   /** field: x, y, radius, seconds, colour, 1 for a spider web (else a swirling freezing vortex) */
   | ['v', number, number, number, number, number, 1?]
   /** lingering beam: x1, y1, x2, y2, width, seconds, colour */
