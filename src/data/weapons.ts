@@ -65,7 +65,7 @@ const PET_GEAR: WeaponDef[] = [
 ];
 
 export const WEAPONS: WeaponDef[] = [
-  // ---------------------------------------------------------------- rsncle, the banana monkey
+  // ---------------------------------------------------------------- cle, the banana monkey
   // Level 1 is the base stats; `levels` are the changes for levels 2 to 5. Percent changes add up (`pct`, `faster`).
   {
     id: 'banana',
