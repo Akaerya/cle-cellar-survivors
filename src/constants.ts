@@ -24,6 +24,8 @@ export const MAX_GEMS = 300;
 export const MAX_PROJECTILES = 600;
 /** Duration effects: most stacks one enemy can carry from one weapon (Reiterate copies stop here). */
 export const MAX_EFFECT_STACKS = 30;
+/** `followup` weapons: most shots one player's hits can queue in one frame (the rest of that frame's chances are lost). */
+export const MAX_FOLLOWUPS = 24;
 /** A slow lasts this many ms after the enemy was last on the slowing field (fields refresh it every frame). */
 export const SLOW_LINGER_MS = 120;
 /** Tint of slowed enemies. */

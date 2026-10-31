@@ -35,10 +35,11 @@ export {
   STUN_SECONDS,
   IMPACT_RADIUS,
   RUTHLESS_EVERY,
+  VIRULENT_RANGE,
 } from './modifications';
 export { PASSIVES } from './passives';
 export { POWERUPS, POWERUP_MAX_LEVEL } from './powerups';
-export { WEAPONS } from './weapons';
+export { WEAPONS, SHOCK } from './weapons';
 export { WAVES, WAVE_EVENTS, waveForMinute, hpScaleForMinute, hpScaleForPlayers, speedScaleForMinute, spawnScaleFor } from './waves';
 export { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from './player';
 export { CHARACTERS, DEFAULT_CHARACTER } from './characters';

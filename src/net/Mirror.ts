@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { ARENA_SIZE, CHILL_TINT, DEPTH, STUN_TINT } from '../constants';
-import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS, SUMMON_ANIMS, ULTIMATES, WEAPONS, enemyModifier } from '../data';
+import { ALL_ENEMIES, ATTACK_DEFS, HAZARDS, SHOCK, SUMMON_ANIMS, ULTIMATES, WEAPONS, enemyModifier } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
 import type { ChainsDef } from '../data/types';
 import { SHADOW_W, randomStartFrame } from '../entities/Enemy';
@@ -154,6 +154,7 @@ export class Mirror {
         if (e.extra & EF.flash) o.s.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
         else if (e.extra & EF.stun) o.s.setTint(STUN_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
         else if (e.extra & EF.chill) o.s.setTint(CHILL_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
+        else if (e.extra & EF.shock) o.s.setTint(SHOCK.tint ?? CHILL_TINT).setTintMode(Phaser.TintModes.MULTIPLY);
         else o.s.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
       },
       (o) => {
@@ -278,7 +279,7 @@ export class Mirror {
     for (const r of list) {
       const sprite = this.enemies.get(r.id);
       const def = ALL_ENEMIES[this.enemies.kindOf(r.id) ?? -1];
-      if (sprite && def) this.rareViews.push({ sprite, radius: def.radius, mask: r.mask, enrage: r.enrage, souls: r.souls });
+      if (sprite && def) this.rareViews.push({ sprite, radius: def.radius, mask: r.mask, enrage: r.enrage, souls: r.souls, shieldDown: r.shieldDown });
     }
   }
 

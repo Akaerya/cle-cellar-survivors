@@ -1,12 +1,21 @@
-import type { WeaponDef, WeaponLevel, WeaponStats } from './types';
+import type { ChargesDef, EffectDef, WeaponDef, WeaponLevel, WeaponStats } from './types';
 
 /** Speed (px/s) of Elysia's crystal arrows. Crystalline Bloom's crystal flies 30% slower. */
 const ARROW_SPEED = 420;
 
 const fourTimes = (lv: WeaponLevel): WeaponLevel[] => [lv, lv, lv, lv];
 
-/** Stats every weapon has; for the ones that use few of them (pet buffs, gear). */
-const NO_STATS: WeaponStats = {
+/**
+ * Shock, Licras's ailment: put on by Plunder (every hit) and Vulnerability's webs. Every stack keeps its own time.
+ * The cap only stops Reiterate from copying stacks without end.
+ */
+export const SHOCK: EffectDef = { id: 'shock', name: 'Shock', damage: 3, interval: 0.5, duration: 5, stacks: true, tint: 0xd2a8ff, maxStacks: 150 };
+
+/** Brutal, Siphoning and Vicissitude charges (Unstable Infusion, Vulnerability). */
+const CHARGES: ChargesDef = { duration: 3, max: 6, brutal: 0.015, siphon: 0.04, vicissitude: 0.25 };
+
+/** Stats every weapon has; for the ones that use few of them (pet buffs, gear, passives). */
+export const NO_STATS: WeaponStats = {
   cooldown: 0,
   damage: 0,
   projectileCount: 1,
@@ -378,15 +387,15 @@ export const WEAPONS: WeaponDef[] = [
   {
     id: 'infinite_helix',
     name: 'Infinite Helix',
-    description: 'Conjures a swirling freezing field under the nearest enemy. It slows enemies on it and inflicts Rime Trauma every second.',
+    description: 'Conjures a swirling freezing field under the nearest enemy. It slows enemies on it and inflicts Rime Trauma four times a second.',
     icon: 'icon_helix',
     targeting: 'field',
-    tags: ['duration', 'aoe'],
-    // The field deals nothing itself; Rime Trauma deals the damage, and only duration modifications strengthen it.
+    tags: ['duration', 'aoe', 'dot'],
+    // The field deals nothing itself; Rime Trauma deals the damage, and only duration (and DoT) modifications strengthen it.
     damageTags: ['duration'],
     harmlessArea: true,
     color: 0x9fe4ff,
-    fieldInterval: 1,
+    fieldInterval: 0.25,
     effect: { name: 'Rime Trauma', damage: 6, interval: 1, duration: 2, stacks: true, tint: 0x9fd8ff },
     stats: {
       cooldown: 2.5,
@@ -520,7 +529,7 @@ export const WEAPONS: WeaponDef[] = [
     icon: 'icon_infusion',
     targeting: 'infusion',
     color: 0xff6a8a,
-    charges: { duration: 3, max: 6, brutal: 0.015, siphon: 0.04, vicissitude: 0.25 },
+    charges: CHARGES,
     stats: {
       cooldown: 0,
       damage: 0,
@@ -617,5 +626,125 @@ export const WEAPONS: WeaponDef[] = [
     // COOLDOWN is the seconds between swaps; the armory's level is the level of every piece of gear.
     stats: { ...NO_STATS, cooldown: 8 },
     levels: fourTimes({ text: '+25% damage for every bunny weapon.' }),
+  },
+  // ---------------------------------------------------------------- Licras, humanity's nemesis
+  {
+    id: 'midnight_tumult',
+    name: 'Midnight Tumult',
+    description: 'Fires a submachine gun at the nearest enemy, 2 bullets one after another. A bullet that hits an enemy carrying Shock deals 50% of the damage its Shock stacks have left, at once.',
+    icon: 'icon_tumult',
+    targeting: 'nearest',
+    tags: ['projectile'],
+    projectileAnim: 'bullet-tracer',
+    artRadius: 2,
+    orient: true,
+    color: 0xffe08a,
+    // Bullets (levels, Additional Projectiles) follow one another at the closest enemy over a tenth of the cooldown.
+    burst: { window: 0.1, spacing: 'end', target: 'nearest' },
+    detonate: { effect: 'shock', share: 0.5 },
+    stats: {
+      cooldown: 2.5,
+      damage: 2,
+      projectileCount: 2,
+      speed: 520,
+      pierce: 1,
+      lifetime: 0.8,
+      size: 2,
+      knockback: 2,
+      spread: 0,
+      range: 320,
+      arc: 0,
+      boomerang: false,
+    },
+    levels: fourTimes({ text: 'Cooldown 5% shorter.', pct: { cooldown: -0.05 } }),
+  },
+  {
+    id: 'caressing_moonlight',
+    name: 'Caressing Moonlight',
+    description: 'Swings a katana all around you. Every enemy it cuts also takes 75% of the damage its Shock stacks have left, at once.',
+    icon: 'icon_moonlight',
+    targeting: 'spin',
+    tags: ['melee', 'aoe'],
+    color: 0xd8d0ff,
+    detonate: { effect: 'shock', share: 0.75 },
+    stats: {
+      cooldown: 2,
+      damage: 2,
+      projectileCount: 1,
+      speed: 0,
+      pierce: Infinity,
+      lifetime: 0.22,
+      size: 40,
+      knockback: 6,
+      spread: 0,
+      range: 0,
+      arc: 360,
+      boomerang: false,
+    },
+    levels: fourTimes({ text: '+10% radius.', pct: { size: 0.1 } }),
+  },
+  {
+    id: 'gentle_but_cruel',
+    name: 'Gentle But Cruel',
+    description: 'Every hit you land has a 20% chance to fire a follow-up shot at that enemy right away. No cooldown.',
+    icon: 'icon_gentle',
+    targeting: 'followup',
+    tags: ['projectile'],
+    projectileAnim: 'moonshard-spin',
+    artRadius: 3,
+    color: 0xc8b8ff,
+    stats: {
+      cooldown: 0,
+      damage: 3,
+      projectileCount: 1,
+      speed: 380,
+      pierce: 1,
+      lifetime: 0.9,
+      size: 3,
+      knockback: 3,
+      spread: 14,
+      range: 0,
+      arc: 0,
+      boomerang: false,
+      procChance: 0.2,
+    },
+    levels: [0.3, 0.35, 0.4, 0.45].map((c) => ({ text: `${Math.round(c * 100)}% chance to follow up.`, set: { procChance: c } })),
+  },
+  {
+    id: 'vulnerability',
+    name: 'Vulnerability',
+    description: 'Spins a web under the nearest enemy. It slows enemies on it by 60% and puts Shock on them four times a second. Enemies that die on it hand their stacks to the closest enemy on your screen. Your attacks have a 10% chance to give you a random charge.',
+    icon: 'icon_vulnerability',
+    targeting: 'field',
+    tags: ['duration', 'aoe'],
+    // The web deals nothing itself: its Shock stacks do, with the web's own AoE and duration bonuses.
+    harmlessArea: true,
+    fieldStyle: 'web',
+    transferOnDeath: true,
+    color: 0xc8b8ff,
+    fieldInterval: 0.25,
+    effect: SHOCK,
+    charges: CHARGES,
+    stats: {
+      cooldown: 2.5,
+      damage: 0,
+      projectileCount: 1,
+      speed: 0,
+      pierce: Infinity,
+      lifetime: 6,
+      size: 34,
+      knockback: 0,
+      spread: 0,
+      range: 260,
+      arc: 0,
+      boomerang: false,
+      slow: 0.6,
+      chargeChance: 0.1,
+      chargeEffect: 1,
+    },
+    levels: [
+      ...[0.15, 0.2, 0.25].map((c) => ({ text: `${Math.round(c * 100)}% chance to gain a charge.`, set: { chargeChance: c } })),
+      { text: 'Charges have 100% increased effect.', set: { chargeEffect: 2 } },
+    ],
   },
 ];

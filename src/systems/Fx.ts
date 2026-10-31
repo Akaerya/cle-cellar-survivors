@@ -31,7 +31,7 @@ interface EchoRing {
   life: number;
 }
 
-/** A freezing field drawn as a swirling vortex for `dur` seconds. */
+/** A field drawn for `dur` seconds: a swirling freezing vortex, or a spider web. */
 interface Vortex {
   x: number;
   y: number;
@@ -40,7 +40,12 @@ interface Vortex {
   age: number;
   dur: number;
   spin: number;
+  web: boolean;
 }
+
+/** Web fields: spokes, and rings of thread between them. */
+const WEB_SPOKES = 8;
+const WEB_RINGS = 3;
 
 /** A lingering beam, bright when it fires and fading over `dur` seconds. */
 interface BeamFx {
@@ -86,14 +91,16 @@ export class Fx {
     for (let i = 0; i < MAX_ECHOES; i++) this.echoes.push({ x: 0, y: 0, r: 0, color: 0, life: 0 });
     // Fields lie on the ground under the units; beams cross over them.
     this.vortexGfx = scene.add.graphics().setDepth(DEPTH.aura);
-    for (let i = 0; i < MAX_VORTICES; i++) this.vortices.push({ x: 0, y: 0, r: 0, color: 0, age: 0, dur: 0, spin: 1 });
+    for (let i = 0; i < MAX_VORTICES; i++) this.vortices.push({ x: 0, y: 0, r: 0, color: 0, age: 0, dur: 0, spin: 1, web: false });
     this.beamGfx = scene.add.graphics().setDepth(DEPTH.slash);
     for (let i = 0; i < MAX_BEAMS; i++) this.beams.push({ x1: 0, y1: 0, x2: 0, y2: 0, width: 0, color: 0, age: 0, dur: 0 });
   }
 
-  /** A freezing field at (x, y): a swirling vortex of `radius` px that lasts `dur` seconds. */
-  vortex(x: number, y: number, radius: number, dur: number, color: number): void {
-    this.relay?.(['v', Math.round(x), Math.round(y), Math.round(radius), Math.round(dur * 100) / 100, color]);
+  /** A field at (x, y) of `radius` px that lasts `dur` seconds: a swirling freezing vortex, or a spider web. */
+  vortex(x: number, y: number, radius: number, dur: number, color: number, style: 'swirl' | 'web' = 'swirl'): void {
+    const web = style === 'web';
+    const [rx, ry, rr, rd] = [Math.round(x), Math.round(y), Math.round(radius), Math.round(dur * 100) / 100];
+    this.relay?.(web ? ['v', rx, ry, rr, rd, color, 1] : ['v', rx, ry, rr, rd, color]);
     const v = this.vortices[this.vortexCursor];
     this.vortexCursor = (this.vortexCursor + 1) % MAX_VORTICES;
     v.x = x;
@@ -102,6 +109,7 @@ export class Fx {
     v.color = color;
     v.age = 0;
     v.dur = dur;
+    v.web = web;
     // Each field turns its own way at a slightly different speed (visual only, so Math.random is fine).
     v.spin = (Math.random() < 0.5 ? -1 : 1) * (2.2 + Math.random() * 0.8);
   }
@@ -192,7 +200,7 @@ export class Fx {
     this.number(x, y, String(Math.max(1, Math.round(value))), tint, style === 2 ? CRIT_SCALE : 1);
   }
 
-  /** A word floating up like a damage number (BLOCK, IMMUNE: a rare enemy ignored a hit). */
+  /** A word floating up like a damage number (BLOCK: a rare enemy ignored a hit; BREAK: its bubble broke). */
   label(x: number, y: number, word: string, color: number): void {
     this.relay?.(['t', Math.round(x), Math.round(y), word, color]);
     this.number(x, y, word, color);
@@ -271,6 +279,10 @@ export class Fx {
       if (v.age >= v.dur) continue;
       const fade = Math.min(1, v.age / VORTEX_FADE, (v.dur - v.age) / VORTEX_FADE);
       const r = v.r * (0.6 + 0.4 * Math.min(1, v.age / VORTEX_FADE));
+      if (v.web) {
+        this.drawWeb(g, v, r, fade);
+        continue;
+      }
       g.fillStyle(v.color, 0.14 * fade);
       g.fillCircle(v.x, v.y, r);
       g.fillStyle(0xffffff, 0.06 * fade);
@@ -303,6 +315,36 @@ export class Fx {
         g.fillStyle(0xffffff, 0.8 * fade);
         g.fillRect(Math.round(v.x + Math.cos(a) * rr), Math.round(v.y + Math.sin(a) * rr), 1, 1);
       }
+    }
+  }
+
+  /** A web field: a faint disc, spokes from the centre and rings of thread that sag between them, shimmering. */
+  private drawWeb(g: Phaser.GameObjects.Graphics, v: Vortex, r: number, fade: number): void {
+    const shimmer = 0.5 + 0.5 * Math.sin(this.time * 4 + v.x);
+    g.fillStyle(v.color, 0.1 * fade);
+    g.fillCircle(v.x, v.y, r);
+    g.lineStyle(1, v.color, 0.7 * fade);
+    for (let i = 0; i < WEB_SPOKES; i++) {
+      const a = v.spin * 0.1 + (i * Math.PI * 2) / WEB_SPOKES;
+      g.lineBetween(v.x, v.y, v.x + Math.cos(a) * r, v.y + Math.sin(a) * r);
+    }
+    for (let k = 1; k <= WEB_RINGS; k++) {
+      const rr = (r * k) / WEB_RINGS;
+      g.lineStyle(1, k === WEB_RINGS ? v.color : 0xffffff, (0.35 + 0.3 * shimmer) * fade);
+      g.beginPath();
+      for (let i = 0; i <= WEB_SPOKES; i++) {
+        const a = v.spin * 0.1 + (i * Math.PI * 2) / WEB_SPOKES;
+        const px = v.x + Math.cos(a) * rr;
+        const py = v.y + Math.sin(a) * rr;
+        if (i === 0) g.moveTo(px, py);
+        else {
+          // Each thread sags toward the centre halfway between two spokes.
+          const m = a - Math.PI / WEB_SPOKES;
+          g.lineTo(v.x + Math.cos(m) * rr * 0.86, v.y + Math.sin(m) * rr * 0.86);
+          g.lineTo(px, py);
+        }
+      }
+      g.strokePath();
     }
   }
 

@@ -145,18 +145,32 @@ export class EnemyModifiers {
   }
 
   /**
-   * How much of `amount` rare enemy `e` takes from a hit by `attacker` (null when no player is behind it). -1: the
-   * hit is ignored (Blocks Attacks, or the attacker is outside a Temporal Shield). Damage reductions multiply.
+   * How much of `amount` rare enemy `e` takes from a hit by `attacker` (null when no player is behind it). `dot`:
+   * damage over time, which is not a hit. -1: the damage is ignored (Blocks Attacks). Damage reductions multiply; a
+   * Temporal Shield reduces hits from outside it once, however many the enemy has.
    */
-  incoming(e: Enemy, amount: number, attacker: Player | null): number {
+  incoming(e: Enemy, amount: number, attacker: Player | null, dot = false): number {
+    let shielded = false;
     for (const m of e.mods) {
       switch (m.id) {
         case 'blocks_attacks':
           if (this.game.rng.float() < m.chance) return this.ignored(e, 'BLOCK', m.color);
           break;
-        case 'temporal_shield':
-          if (attacker && (attacker.x - e.x) ** 2 + (attacker.y - e.y) ** 2 > (m.radius + PLAYER_RADIUS) ** 2) return this.ignored(e, 'IMMUNE', m.color);
+        case 'temporal_shield': {
+          // Only hits are reduced: damage over time keeps ticking whoever applied it and wherever they are.
+          const now = this.game.time.now;
+          if (shielded || dot || !attacker || now < e.shieldDownUntil) break;
+          if ((attacker.x - e.x) ** 2 + (attacker.y - e.y) ** 2 <= (m.radius + PLAYER_RADIUS) ** 2) break;
+          shielded = true;
+          amount *= 1 - m.reduction;
+          if (++e.shieldHits >= m.hits) {
+            e.shieldHits = 0;
+            e.shieldDownUntil = now + m.recharge * 1000;
+            this.game.fx.ring(e.x, e.y, m.color, m.radius, 300);
+            this.game.fx.label(e.x, e.y - e.displayHeight / 2 - 8, 'BREAK', m.color);
+          }
           break;
+        }
         case 'physical_resistant':
           amount *= 1 - m.reduction;
           break;
@@ -179,7 +193,7 @@ export class EnemyModifiers {
     if (this.game.state !== 'playing') return;
     for (const m of e.mods) {
       if (!attacker.alive) return;
-      if (m.id === 'thorns') this.game.hurtPlayer(attacker, this.outgoing(e, attacker, m.flat + m.share * dealt), false, e);
+      if (m.id === 'thorns') this.game.hurtPlayer(attacker, this.outgoing(e, attacker, m.flat + m.share * dealt), false, e, e, m.floor);
       else if (m.id === 'crystalline') this.bud(e, m, attacker);
     }
   }

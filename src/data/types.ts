@@ -23,15 +23,18 @@ export type Targeting =
   | 'infusion'
   | 'seeker'
   | 'petbuff'
-  | 'armory';
+  | 'armory'
+  | 'followup';
 
 /**
  * Ability tags. A modification (data/modifications.ts) changes every weapon that carries one of its tags.
  * `projectile`: thrown or orbiting objects. `aoe`: hits everything in an area (the area part of the weapon).
  * `duration`: leaves a timed effect on enemies (see `WeaponDef.effect`) or on its owner (see `WeaponDef.buff`).
  * `melee`: strikes up close with a blade (or answers a hit taken, for shields).
+ * `dot`: deals damage over time. A weapon whose effect deals damage counts as `dot` even without the tag, and a `dot`
+ * weapon counts as `duration` too (see `effectiveTags` in core/progression.ts).
  */
-export type WeaponTag = 'projectile' | 'aoe' | 'duration' | 'melee';
+export type WeaponTag = 'projectile' | 'aoe' | 'duration' | 'melee' | 'dot';
 
 export interface WeaponStats {
   /**
@@ -79,9 +82,12 @@ export interface WeaponStats {
   slow?: number;
   /** `shield`: share of every hit taken (before any reduction) dealt back to the attacker. */
   reflect?: number;
-  /** `flicker`: chance (0..1) per enemy hit to gain a Shadow Charge. `infusion`: chance per attack to gain a charge. */
+  /**
+   * `flicker`: chance (0..1) per enemy hit to gain a Shadow Charge. Weapons with `charges`: chance per attack that
+   * hits to gain a charge.
+   */
   chargeChance?: number;
-  /** `infusion`: multiplies what every charge does (1 = as in `WeaponDef.charges`, 2 = 100% increased effect). */
+  /** Weapons with `charges`: multiplies what every charge does (1 = as in `WeaponDef.charges`, 2 = 100% increased effect). */
   chargeEffect?: number;
   /** `petbuff`: fraction added to the damage of the owner's pets (0.25 = +25%). */
   petDamage?: number;
@@ -89,12 +95,19 @@ export interface WeaponStats {
   petHaste?: number;
   /** `petbuff`: fraction added to the move speed of the owner's pets. */
   petSpeed?: number;
+  /** `followup`: chance (0..1) per hit the owner lands (not by this weapon) to fire it at the enemy that was hit. */
+  procChance?: number;
 }
 
 export type NumericWeaponStat = Exclude<keyof WeaponStats, 'boomerang'>;
 
 /** A damage-over-time effect a weapon's hits (or fields) leave on enemies (duration weapons). */
 export interface EffectDef {
+  /**
+   * Effects that share an id are one ailment whoever applied them (Shock from Plunder and from Vulnerability):
+   * `WeaponDef.detonate` finds stacks by it.
+   */
+  id?: string;
   /** Shown in the wiki, e.g. 'Rime Trauma'. */
   name?: string;
   /** Damage per tick, before DAMAGE and modification bonuses. */
@@ -107,6 +120,19 @@ export interface EffectDef {
   stacks?: boolean;
   /** Enemies carrying the effect are tinted this colour. */
   tint?: number;
+  /** Most stacks one weapon can keep on one enemy (defaults to MAX_EFFECT_STACKS). Reiterate copies stop here too. */
+  maxStacks?: number;
+}
+
+/**
+ * On hit, the weapon sets off what the enemy's stacks of effect `effect` (EffectDef.id) still have to deal: `share` of
+ * the damage they would do in the time they have left, dealt at once as damage over time. The stacks stay. The
+ * weapon's own damage bonuses (levels, modifications, Ruthless, splits and bounces) scale it; DAMAGE does not again,
+ * since the stacks already have it.
+ */
+export interface DetonateDef {
+  effect: string;
+  share: number;
 }
 
 /** The kinds of charge Unstable Infusion gives (see ChargesDef). */
@@ -214,7 +240,7 @@ export interface WeaponDef {
    * `duration` tag, Reiterate can copy it when it is applied.
    */
   buff?: { name: string };
-  /** `infusion`: the charges it gives. */
+  /** The charges the owner's attacks can give while the weapon is owned (Unstable Infusion, Vulnerability). */
   charges?: ChargesDef;
   /** `flicker`: its Shadow Charges. */
   shadow?: ShadowDef;
@@ -233,6 +259,15 @@ export interface WeaponDef {
   petAnim?: string;
   /** `seeker`: px from the owner the blade floats at while it waits for its next dash. */
   hover?: number;
+  /** Every hit sets off the enemy's stacks of an effect (see DetonateDef). */
+  detonate?: DetonateDef;
+  /** `field`: how the field looks: a freezing swirl (default) or a spider web. */
+  fieldStyle?: 'swirl' | 'web';
+  /**
+   * `field`: an enemy that dies on the field hands all its duration effect stacks (any weapon's) to the closest enemy
+   * on the owner's screen, with the time they have left.
+   */
+  transferOnDeath?: boolean;
 }
 
 /**
@@ -284,6 +319,20 @@ export interface ModEffect {
   impact?: number;
   /** Ruthless: fraction added to the damage of every third attack. */
   ruthless?: number;
+  /** Additional Projectiles: fraction less damage the weapon deals (multiplies). */
+  projectileLess?: number;
+  /** Deadly Ailments: fraction less damage the weapon's hits deal (not its damage over time; multiplies). */
+  hitLess?: number;
+  /** Fraction added to the damage of the weapon's damage over time (adds up with its other damage bonuses). */
+  dotDamage?: number;
+  /** Virulent Chain: fraction less damage over time the weapon deals (multiplies). */
+  dotLess?: number;
+  /** Sadism: fraction the time between damage-over-time ticks is shortened by (0.6: ticks 2.5 times as often). */
+  dotRate?: number;
+  /** Fraction added to how long the weapon's damage-over-time stacks last (adds up with `duration`). */
+  dotDuration?: number;
+  /** Virulent Chain: when an enemy dies, each of its stacks of the weapon moves to this many enemies nearby. */
+  virulent?: number;
 }
 
 export type ModKey = keyof ModEffect;
@@ -333,6 +382,11 @@ export type PassiveDef = { id: string; name: string; description: string; icon: 
    * `attack.stats.size` px. `anim`: the pet's atlas animation (it carries no gear).
    */
   | { kind: 'pets'; start: number; every: number; max: number; speed: number; aggro: number; leash: number; anim: string; attack: WeaponDef }
+  /**
+   * Plunder: every hit the owner lands (not damage over time) puts a stack of `attack.effect` on the enemy. `attack`
+   * owns the stacks: its tags decide which modifications change them, and it keeps their damage for the party screen.
+   */
+  | { kind: 'ailment'; attack: WeaponDef }
 );
 
 export interface PlayerStats {
@@ -497,8 +551,11 @@ export type EnemyModifierDef = { name: string; color: number } & (
   | { id: 'extra_life'; health: number }
   /** Debuffs (duration effects, slows) cannot be applied to it. */
   | { id: 'hexproof' }
-  /** When hit (not by damage over time), deals `flat` plus `share` of the hit's damage back to the attacker. */
-  | { id: 'thorns'; flat: number; share: number }
+  /**
+   * When hit (not by damage over time), deals `flat` plus `share` of the hit's damage back to the attacker, but never
+   * takes them below `floor` of their max HP (the damage is cut to what reaches it).
+   */
+  | { id: 'thorns'; flat: number; share: number; floor: number }
   /** Every `cooldown` seconds teleports `distance` px from the closest player (when further away than that). */
   | { id: 'ambush'; cooldown: number; distance: number }
   /** Gains a soul whenever an ally dies within `radius` px: `damage` increased damage and `haste` Ability Haste per soul. */
@@ -507,8 +564,12 @@ export type EnemyModifierDef = { name: string; color: number } & (
   | { id: 'spirit_walker'; radius: number; alpha: number }
   /** `chance` (0..1) to ignore any damage instance. */
   | { id: 'blocks_attacks'; chance: number }
-  /** Takes no damage from players further than `radius` px away (their body outside the bubble). */
-  | { id: 'temporal_shield'; radius: number }
+  /**
+   * Hits from players further than `radius` px away (their body outside the bubble) deal `reduction` less (damage
+   * over time is not a hit). After `hits` such hits the bubble breaks for `recharge` seconds. One bubble per enemy:
+   * they never stack.
+   */
+  | { id: 'temporal_shield'; radius: number; reduction: number; hits: number; recharge: number }
 );
 
 export type EnemyModifierId = EnemyModifierDef['id'];
@@ -578,7 +639,7 @@ export interface CharacterDef {
   passive?: string;
 }
 
-export type UltimateKind = 'storm' | 'pet' | 'dome' | 'mist' | 'giant';
+export type UltimateKind = 'storm' | 'pet' | 'dome' | 'mist' | 'giant' | 'detonate';
 
 export interface UltimateDef {
   id: string;
@@ -599,7 +660,10 @@ export interface UltimateDef {
   spin?: number;
   /** `dome`: px radius of the dome, centred where it was cast. */
   radius?: number;
-  /** `dome`: colour of the dome and its beams. `mist`: colour of the mist. */
+  /**
+   * `dome`: colour of the dome and its beams. `mist`: colour of the mist. `detonate`: colour the screen flashes as
+   * every enemy's stacks are set off (`attack.detonate`) at once.
+   */
   color?: number;
   /** `mist`: fraction added to the DAMAGE stat once the mist lifts, for `after` seconds. */
   amp?: number;

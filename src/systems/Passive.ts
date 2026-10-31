@@ -4,6 +4,7 @@ import { REVIVE } from '../data/coop';
 import type { ItemDef, PassiveDef } from '../data/types';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
+import type { WeaponInstance } from './Weapons';
 
 /** Colours of the passives' effects: dodges, Death Defied, Dragonborn stacks. */
 const DODGE_COLOR = 0xc8b8ff;
@@ -14,7 +15,8 @@ const PETS_COLOR = 0x8fc8ff;
 /**
  * One character's passive (data/passives.ts). The host (or solo game) runs it: Shroud dodges hits, Ragebaiter stands
  * the character back up, Dragonborn adds a stack of stats every minute, Death Defied turns a hit that would leave
- * the character low into healing and Warren counts the character's bunnies (its stacks; systems/Pets.ts runs them).
+ * the character low into healing, Warren counts the character's bunnies (its stacks; systems/Pets.ts runs them) and
+ * Plunder hands the character's Weapons the ailment every hit puts on enemies.
  * Joiners get the cooldown and stacks from snapshots, for the HUD.
  */
 export class Passive {
@@ -27,6 +29,8 @@ export class Passive {
   private mendRate = 0;
   /** Dragonborn: one stack's stat changes as an item, so they add up with items and powerups (see computeStats). */
   private readonly growthItem: ItemDef | null;
+  /** Plunder: the ailment's weapon instance, which owns its stacks (the owner's Weapons puts them on every hit). */
+  readonly ailment: WeaponInstance | null;
 
   constructor(
     private game: GameScene,
@@ -35,6 +39,8 @@ export class Passive {
   ) {
     this.growthItem =
       def?.kind === 'growth' ? { id: def.id, name: def.name, description: def.description, icon: def.icon, perLevel: def.perStack, levelText: '' } : null;
+    this.ailment = def?.kind === 'ailment' ? owner.weapons.instance(def.attack) : null;
+    owner.weapons.ailment = this.ailment;
   }
 
   get ready(): boolean {

@@ -24,14 +24,17 @@ const MIST_ALPHA = 0.35;
 const MIST_WISPS = 7;
 const MIST_RADIUS = 13;
 const MIST_SPIN = 2.2;
+/** Detonate: ms the screen flash lasts. */
+const DETONATE_FLASH_MS = 350;
 
 /**
  * One player's ultimate (Q). The host (or solo game) casts it and fires its projectiles; joiners
  * get the timers from snapshots and only draw the visuals. The cooldown counts from the cast.
  * Kinds: `storm` spirals projectiles out of the caster, `pet` summons a pet that shoots, `dome` raises a dome
  * where it was cast that fires beams across itself and bounces the caster's projectiles off its edge, `mist`
- * turns the caster to mist (no attacks, no damage taken, not targeted), then amplifies their damage, and `giant` adds
- * a giant pet to the caster's pets while it runs (systems/Pets.ts runs and draws it).
+ * turns the caster to mist (no attacks, no damage taken, not targeted), then amplifies their damage, `giant` adds
+ * a giant pet to the caster's pets while it runs (systems/Pets.ts runs and draws it), and `detonate` flashes the
+ * screen and sets off every enemy's stacks at once (it has no duration).
  */
 export class Ultimate {
   /** Fires the projectiles and keeps the damage and kill count for the party screen. */
@@ -94,11 +97,20 @@ export class Ultimate {
     this.timer = 0;
     this.started();
     if (this.def.kind === 'dome') this.game.relay(['d', p.slot, Math.round(this.domeX), Math.round(this.domeY)]);
+    if (this.def.kind === 'detonate') this.detonateAll();
     p.runStats.ultCasts++;
     this.game.fx.ring(p.x, p.y, COLOR.gold, 90, 600);
     this.game.playSfx('ultimate', p.x, p.y);
     this.game.banner(this.game.coop ? `${p.displayName}: ${this.def.name.toUpperCase()}!` : `${this.def.name.toUpperCase()}!`, COLOR.gold);
     return true;
+  }
+
+  /** `detonate`: the screen flashes, and every enemy's stacks of the attack's effect are set off at once. */
+  private detonateAll(): void {
+    const share = this.attack.def.detonate?.share ?? 0;
+    this.game.flash(DETONATE_FLASH_MS, this.def.color ?? 0xffffff);
+    // A pooled enemy that died and came back this frame can be listed twice until the next update.
+    for (const en of new Set(this.game.enemies.active)) this.owner.weapons.detonate(this.attack, en, share);
   }
 
   /** The dome while it is up (dome ultimates): centre and radius. Projectiles of the caster ricochet off its edge. */
@@ -173,7 +185,7 @@ export class Ultimate {
       this.drawMist(dt, show);
       return;
     }
-    if (this.def.kind === 'giant') return;
+    if (this.def.kind === 'giant' || this.def.kind === 'detonate') return;
     if (this.def.kind === 'storm') {
       while (this.orbiters.length < STORM_ORBITERS) {
         this.orbiters.push(this.game.add.sprite(p.x, p.y, ATLAS, 'banana_0').play('banana-spin').setDepth(DEPTH.projectiles).setVisible(false));

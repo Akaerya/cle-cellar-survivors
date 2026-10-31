@@ -1,4 +1,5 @@
 import type { PassiveDef } from './types';
+import { NO_STATS, SHOCK } from './weapons';
 
 /** Passives: one per character, always on. Run by systems/Passive.ts. */
 export const PASSIVES: PassiveDef[] = [
@@ -80,6 +81,25 @@ export const PASSIVES: PassiveDef[] = [
         arc: 0,
         boomerang: false,
       },
+      levels: [],
+    },
+  },
+  {
+    id: 'plunder',
+    name: 'Plunder',
+    description: 'Every hit you land puts a stack of Shock on the enemy: 3 damage every 0.5 seconds for 5 seconds. Stacks pile up, each with its own time.',
+    icon: 'icon_passive_plunder',
+    kind: 'ailment',
+    attack: {
+      id: 'plunder',
+      name: 'Plunder',
+      description: 'Passive.',
+      icon: 'icon_passive_plunder',
+      targeting: 'passive',
+      // Shock is damage over time on a timer: DoT and duration modifications change Plunder's stacks.
+      tags: ['dot', 'duration'],
+      effect: SHOCK,
+      stats: NO_STATS,
       levels: [],
     },
   },

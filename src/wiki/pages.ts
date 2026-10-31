@@ -11,6 +11,7 @@ import {
   INVULN_SECONDS,
   LEVELUP_INVULN_SECONDS,
   MAX_EFFECT_STACKS,
+  MAX_FOLLOWUPS,
   MAX_PROJECTILES,
   MAX_SHIELD_REDUCTION,
   STAB_LEAD,
@@ -26,7 +27,19 @@ import {
   MIN_MOVE_MULT,
   COLOR,
 } from '../constants';
-import { computeStats, expToNext, formatTime, hasteFactor, itemMaxLevel, modEffectAt, modReach, weaponLevelAt, weaponStatsAt } from '../core/progression';
+import {
+  computeStats,
+  effectiveTags,
+  expToNext,
+  formatTime,
+  hasteFactor,
+  hitsWithProjectiles,
+  itemMaxLevel,
+  modEffectAt,
+  modReach,
+  weaponLevelAt,
+  weaponStatsAt,
+} from '../core/progression';
 import { NAME_MAX } from '../core/profile';
 import {
   ASTRAL_CHAINS,
@@ -68,6 +81,7 @@ import {
   MULTISTRIKE_GAP,
   RUTHLESS_EVERY,
   STUN_SECONDS,
+  VIRULENT_RANGE,
 } from '../data';
 import {
   HP_SCALE_PER_EXTRA_PLAYER,
@@ -173,8 +187,10 @@ const isPercentStat = (k: StatKey) =>
   k === 'critDamage';
 const statValue = (k: StatKey, v: number) => (k === 'regenPercent' ? pct(v, 1) : isPercentStat(k) ? pct(v) : num(v));
 
-const TAG_LABELS: Record<WeaponTag, string> = { projectile: 'PROJECTILE', aoe: 'AOE', duration: 'DURATION', melee: 'MELEE' };
+const TAG_LABELS: Record<WeaponTag, string> = { projectile: 'PROJECTILE', aoe: 'AOE', duration: 'DURATION', melee: 'MELEE', dot: 'DOT' };
 const tagList = (tags: WeaponTag[] | undefined) => (tags?.length ? tags.map((t) => TAG_LABELS[t]).join(', ') : 'NONE');
+/** The tags modifications go by (damage over time counts as DOT and DURATION, see effectiveTags). */
+const weaponTags = (def: WeaponDef) => tagList(effectiveTags(def));
 
 /** How each targeting type uses its stats. Update when a weapon behaviour changes. */
 const TARGETING_NOTES: Record<Targeting, string> = {
@@ -194,7 +210,7 @@ const TARGETING_NOTES: Record<Targeting, string> = {
     'Every COOLDOWN, BOLTS lightning bolts land within RANGE px of you. Each bolt picks a different random enemy in range, or a random spot when there are none, and hits everything within RADIUS px of where it lands. RADIUS is scaled by AREA.',
   shield: `Puts Aegis on you: it blocks one hit completely, then the shield takes RECHARGE seconds to put it back (shortened by COOLDOWN and ABILITY HASTE; it only recharges while you have no Aegis). Aegis is an effect, so duration modifications change RECHARGE (Increase Duration +20%: RECHARGE / 1.2, Less Duration: longer) and Reiterate may put a second Aegis on you when it is applied. Every hit that is not blocked is reduced by ABSORBS (after armor, at most ${pct(MAX_SHIELD_REDUCTION)}, still at least 1). Every hit you take, blocked or not (not damage over time), deals REFLECT of its full damage back to whoever dealt it, as a melee hit of the shield: your DAMAGE, the shield's damage bonuses and melee modifications apply. The bubble around you shows Aegis (a ring per extra stack) and the recharge.`,
   field:
-    'Every COOLDOWN, conjures FIELDS freezing fields of RADIUS px: one under the closest enemy within RANGE, the others under different random enemies in range (holds while nothing is in range). A field stays where it appeared for DURATION seconds and slows every enemy on it by SLOW (slows do not stack). When it appears and then every second, it applies its effect to every enemy on it; each field applies its own, so two fields give two stacks. The field itself deals no damage. RADIUS is scaled by AREA, DURATION by duration modifications.',
+    'Every COOLDOWN, conjures FIELDS fields of RADIUS px: one under the closest enemy within RANGE, the others under different random enemies in range (holds while nothing is in range). A field stays where it appeared for DURATION seconds and slows every enemy on it by SLOW (slows do not stack). When it appears and then at every check (how often is below), it applies its effect to every enemy on it; each field applies its own, so two fields give two stacks. The field itself deals no damage. RADIUS is scaled by AREA, DURATION by duration modifications.',
   passive:
     'Does nothing on its own: it changes how all your other attacks work. CRIT is added to your critical strike chance; every critical strike you land takes CRIT REFUND seconds off all your cooldowns, ultimate included (never below ready). Refunds stop once an ability would come back sooner than FASTEST of its cooldown after it was used, so hundreds of crits a second cannot make abilities fire every frame.',
   beam: 'A straight beam that lingers for LIFETIME seconds and hits every enemy that touches it once. SIZE is half its width.',
@@ -210,6 +226,7 @@ const TARGETING_NOTES: Record<Targeting, string> = {
     'Does nothing on its own: it makes your pets stronger (see CHARACTERS, Warren and Giant Bunny). PET DAMAGE is added to their damage, PET HASTE makes them attack that much faster (their cooldowns are divided by 1 + it) and PET SPEED is added to their move speed.',
   armory:
     'Does nothing on its own: each of your pets carries one piece of GEAR (below), picked at random, and attacks with it instead of its headbutt. Every SWAP seconds (shortened by COOLDOWN and ABILITY HASTE) each pet swaps to another piece. Every level of the armory is a level of every piece of gear. Swords stab the enemy the pet reaches; bows and spellbooks shoot from a distance (the pet stops short of its target).',
+  followup: `Has no cooldown. Every hit you land with anything else (hits, Impact splashes and echoes; not damage over time) has CHANCE to fire it from you at the enemy that was hit, right after that frame; several hits in one frame can each fire one (at most ${MAX_FOLLOWUPS} a frame). Its own hits never fire it again. Each shot is an attack of its own and a projectile: COUNT shots fan out by the spread angle, and projectile modifications change them.`,
 };
 
 /** Table columns per targeting type: which stats mean something for that behaviour. */
@@ -249,6 +266,7 @@ const C = {
   petHaste: { label: 'PET HASTE', w: 74, get: (s) => `+${pct(s.petHaste ?? 0)}` },
   petSpeed: { label: 'PET SPEED', w: 74, get: (s) => `+${pct(s.petSpeed ?? 0)}` },
   swap: { label: 'SWAP', w: 46, get: (s) => secs(s.cooldown) },
+  proc: { label: 'CHANCE', w: 56, get: (s) => pct(s.procChance ?? 0) },
 } satisfies Record<string, Col>;
 const COLUMNS: Record<Targeting, Col[]> = {
   nearest: [C.damage, C.cooldown, C.count, C.pierce, C.area, C.speed, C.range, C.knockback, C.ret],
@@ -271,16 +289,19 @@ const COLUMNS: Record<Targeting, Col[]> = {
   seeker: [C.damage, C.cooldown, C.size, C.speed, C.range, C.knockback],
   petbuff: [C.petDamage, C.petHaste, C.petSpeed],
   armory: [C.swap],
+  followup: [C.damage, C.proc, C.count, C.pierce, C.area, C.speed, C.knockback],
 };
 
 // ------------------------------------------------------------------ pages
 
 /**
  * Columns for one weapon: its targeting type's (blast-on-hit projectiles show their blast RADIUS, like bombs, with
- * no pierce), plus REPEATS when any level repeats the attack.
+ * no pierce), the charge CHANCE and EFFECT of weapons that give charges besides attacking, plus REPEATS when any
+ * level repeats the attack.
  */
 function weaponColumns(def: WeaponDef): Col[] {
   const cols = def.blastOnHit ? [...COLUMNS.bomb] : [...COLUMNS[def.targeting]];
+  if (def.charges && def.targeting !== 'infusion') cols.push(C.chance, C.effect);
   for (let lv = 1; lv <= MAX_LEVEL; lv++) {
     if ((weaponStatsAt(def, lv).repeat ?? 0) > 0) {
       cols.push(C.repeats);
@@ -309,7 +330,7 @@ function weaponsPage(filter: string): Block[] {
     for (const def of c.weapons.map(weaponDef)) {
       out.push({ t: 'gap', h: 4 });
       const start = def.id === c.startingWeapon ? ' · STARTING WEAPON' : '';
-      out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()}${start} · TAGS: ${tagList(def.tags)} · ${def.description}` });
+      out.push({ t: 'entry', icon: def.icon, title: def.name, sub: `${def.targeting.toUpperCase()}${start} · TAGS: ${weaponTags(def)} · ${def.description}` });
       out.push({ t: 'p', text: TARGETING_NOTES[def.targeting], color: COLOR.textDim });
       if (def.blastOnHit) {
         out.push({
@@ -335,23 +356,22 @@ function weaponsPage(filter: string): Block[] {
       }
       if (def.charges) {
         const ch = def.charges;
+        const how = def.targeting === 'infusion' ? '' : 'The first hit of each of your attacks (any weapon) has CHANCE to give you a random charge. ';
         out.push({
           t: 'p',
-          text: `CHARGES last ${secs(ch.duration)} each, up to ${ch.max} of each kind (a new one past that replaces the oldest). BRUTAL: ${pct(ch.brutal, 1)} chance per charge that a hit deals double damage (not a critical strike). SIPHONING: ${pct(ch.siphon)} of damage dealt healed per charge (life steal). VICISSITUDE: the next damage you take is ${pct(ch.vicissitude)} lower, using up one charge. All before EFFECT.`,
+          text: `${how}CHARGES last ${secs(ch.duration)} each, up to ${ch.max} of each kind (a new one past that replaces the oldest). BRUTAL: ${pct(ch.brutal, 1)} chance per charge that a hit deals double damage (not a critical strike). SIPHONING: ${pct(ch.siphon)} of damage dealt healed per charge (life steal). VICISSITUDE: the next damage you take is ${pct(ch.vicissitude)} lower, using up one charge. All before EFFECT.`,
           color: COLOR.textDim,
         });
       }
-      if (def.effect) {
-        const fx = def.effect;
-        const name = fx.name ? fx.name.toUpperCase() : 'EFFECT';
-        const source = def.targeting === 'field' ? 'every check of a field' : 'each hit';
-        const again = fx.stacks ? 'Stacks: every application adds a stack.' : 'Hitting again refreshes it.';
+      if (def.effect) out.push({ t: 'p', text: effectText(def), color: COLOR.textDim });
+      if (def.transferOnDeath) {
         out.push({
           t: 'p',
-          text: `${name}: ${source} leaves a stack dealing ${num(fx.damage)} damage every ${secs(fx.interval)} for ${secs(fx.duration)}. ${again} ${def.damageTags ? `Only ${tagList(def.damageTags)} modifications add to its damage.` : ''}`,
+          text: 'An enemy that dies on one of these fields hands every stack it carries (Shock and any other, from anyone) to the closest enemy on your screen, with the time each has left. Virulent Chain does not move them again.',
           color: COLOR.textDim,
         });
       }
+      if (def.detonate) out.push({ t: 'p', text: detonateText(def), color: COLOR.textDim });
       const cols = weaponColumns(def);
       const rows: Cell[][] = [];
       for (let lv = 1; lv <= MAX_LEVEL; lv++) {
@@ -380,6 +400,27 @@ function gearBlocks(def: WeaponDef): Block[] {
   return out;
 }
 
+/** A weapon's (or Plunder's) damage-over-time effect: what puts a stack on, its numbers and what scales them. */
+function effectText(def: WeaponDef): string {
+  const fx = def.effect!;
+  const name = fx.name ? fx.name.toUpperCase() : 'EFFECT';
+  const source =
+    def.targeting === 'field' ? `every check of a field (every ${secs(def.fieldInterval ?? 1)})` : def.targeting === 'passive' ? 'every hit you land' : 'each hit';
+  const again = fx.stacks ? 'Stacks: every application adds a stack with its own time.' : 'Hitting again refreshes it.';
+  const cap = fx.maxStacks !== undefined ? ` Up to ${fx.maxStacks} stacks of it per enemy.` : '';
+  const only = def.damageTags ? ` Only ${tagList(def.damageTags)} modifications add to its damage (besides DOT modifications' own damage-over-time bonuses).` : '';
+  return `${name}: ${source} leaves a stack dealing ${num(fx.damage)} damage every ${secs(fx.interval)} for ${secs(fx.duration)}. ${again}${cap}${only}`;
+}
+
+/** What a weapon with `detonate` sets off on every hit. */
+function detonateText(def: WeaponDef): string {
+  const d = def.detonate!;
+  const thrown = hitsWithProjectiles(def);
+  const which = thrown ? 'Every hit of it (its splits and bounces too)' : 'Every hit of it';
+  const own = thrown ? 'levels, modifications, the less damage of splits and bounces' : 'levels, modifications, Ruthless';
+  return `${which} sets off the enemy's ${d.effect.toUpperCase()} stacks: the enemy takes ${pct(d.share)} of the damage all of them would still deal in the time they have left, at once. That is damage over time: no Plunder stack, no thorns, and it gets through a bubble (see RARE). The stacks stay. Its own damage bonuses (${own}) scale it; your DAMAGE does not again, since the stacks already have it.`;
+}
+
 /** How a weapon fires its extra projectiles one after another (BurstDef). */
 function burstText(def: WeaponDef): string {
   const b = def.burst!;
@@ -406,6 +447,8 @@ function passiveText(d: PassiveDef): string {
       const a = d.attack.stats;
       return `You start with ${d.start} pets and gain another every ${d.every}S of the run, up to ${d.max}. Pets cannot be hurt and do not block enemies. They wait around you, run at ${d.speed} px/s after enemies within ${d.aggro} px of you (spreading out over several), give up on one that gets further than ${d.leash} px from you, and come running back when you get away. A pet that reaches its enemy headbutts it for ${num(a.damage)} damage every ${secs(a.cooldown)} (${num(a.knockback)} knockback), unless it carries gear (Bunny Armory). Pet damage scales with your DAMAGE and can be a critical strike; modifications do not change pets. Falling sends your pets away until you are back up.`;
     }
+    case 'ailment':
+      return `Every hit you land with any weapon (Impact splashes and echoes too; not damage over time) puts a stack on the enemy. ${effectText(d.attack)} It is tagged ${weaponTags(d.attack)}: DOT and DURATION modifications are offered from the start and change these stacks (Increase Duration makes them last longer, Less Duration hit harder, Reiterate copies them). Its damage scales with your DAMAGE and shows as PLUNDER on the party screen.`;
   }
 }
 
@@ -417,7 +460,7 @@ function charactersPage(filter: string): Block[] {
     },
     {
       t: 'p',
-      text: 'PASSIVES are always on. The box under your ultimate shows yours: green edge when it is ready, greyed out with the seconds left while it recharges. Under it, a gold line lists what is running on you: Aegis, Shadow Charges, Unstable Infusion charges and Mistwalker\'s damage.',
+      text: 'PASSIVES are always on. The box under your ultimate shows yours: green edge when it is ready, greyed out with the seconds left while it recharges. Under it, a gold line lists what is running on you: Aegis, Shadow Charges, charges (Unstable Infusion, Vulnerability) and Mistwalker\'s damage.',
       color: COLOR.textDim,
     },
     { t: 'h', text: 'ULTIMATES (Q)' },
@@ -449,10 +492,23 @@ function charactersPage(filter: string): Block[] {
           ? `For ${ult.duration}S a pet follows you and every ${secs(ult.interval)} fires at the closest enemy within ${a.range} px of it.`
           : ult.kind === 'giant'
             ? `For ${ult.duration}S a giant pet, ${ult.scale ?? 1} times as large, joins your pets. It gets every bonus your pets get (Carrot Rations, its own piece of gear from Bunny Armory), deals ${ult.power ?? 1} times their damage and runs ${pct((ult.speedMult ?? 1) - 1)} faster. Besides what a pet does, every ${secs(a.cooldown)} it stomps the enemy it reaches: everything within ${num(a.size)} px of that enemy (scaled by AREA) takes ${num(a.damage)} damage (before the ${ult.power ?? 1} times) and ${num(a.knockback)} knockback.`
+          : ult.kind === 'detonate'
+            ? `Instant: the screen flashes and every enemy carrying ${(ult.attack.detonate?.effect ?? '').toUpperCase()} takes ${pct(ult.attack.detonate?.share ?? 0)} of the damage its stacks would still deal in the time they have left, at once, as damage over time (it gets through a bubble). The stacks stay and keep ticking. It is tagged NONE: modifications do not change it; how strong your stacks are does.`
           : ult.kind === 'mist'
             ? `For ${ult.duration}S you turn to mist: no weapon of yours attacks (cooldowns keep counting), nothing can hurt you, and enemies and bosses ignore you (playing alone, the horde stands still). When it lifts, ${pct(ult.amp ?? 0)} is added to your DAMAGE for ${ult.after ?? 0}S. It is tagged ${tagList(ult.attack.tags)}: duration modifications stretch both the mist and the bonus, Less Duration's damage bonus raises the bonus, and Reiterate may add a second bonus as it starts.`
             : `For ${ult.duration}S a dome of ${ult.radius} px radius stands where you cast it. Every ${secs(ult.interval)} a beam crosses it in a random straight line, lingering for ${secs(a.lifetime)} and hitting every enemy that touches it once (${num(a.size * 2)} px wide). While your projectiles are inside, the edge works like an enemy they can split on, but they use up no pierce or bounces and deal no damage there; they ricochet toward the closest enemy inside the dome they have not hit (straight back when there is none). The beams are tagged ${tagList(ult.attack.tags)}: area modifications widen them, duration modifications make them linger, and Echo Strike, Reduced AoE and Less Duration work on them. Reiterate does not, since the beams leave no stacks. The dome itself keeps its size and length.`;
     out.push({ t: 'p', text: how, color: COLOR.textDim });
+    if (ult.kind === 'detonate') {
+      out.push({
+        t: 'table',
+        cols: [
+          { label: 'COOLDOWN', w: 70 },
+          { label: 'SETS OFF', w: 70 },
+        ],
+        rows: [[`${ult.cooldown}S`, pct(ult.attack.detonate?.share ?? 0)]],
+      });
+      continue;
+    }
     if (ult.kind === 'mist') {
       out.push({
         t: 'table',
@@ -600,6 +656,13 @@ function modSummary(e: Required<ModEffect>): string {
   const parts: string[] = [];
   if (e.pierce) parts.push(`+${num(e.pierce)} PIERCE`);
   if (e.projectiles) parts.push(`+${num(e.projectiles)} PROJECTILE${e.projectiles === 1 ? '' : 'S'}`);
+  if (e.projectileLess) parts.push(`${pct(e.projectileLess)} LESS DAMAGE`);
+  if (e.hitLess) parts.push(`${pct(e.hitLess)} LESS ON HIT`);
+  if (e.dotRate) parts.push(`TICKS ${pct(e.dotRate)} SOONER`);
+  if (e.dotDamage) parts.push(`${signedPct(e.dotDamage)} DOT DAMAGE`);
+  if (e.dotLess) parts.push(`${pct(e.dotLess)} LESS DOT DAMAGE`);
+  if (e.dotDuration) parts.push(`${signedPct(e.dotDuration)} DOT DURATION`);
+  if (e.virulent) parts.push(`STACKS MOVE TO ${num(e.virulent)} ON DEATH`);
   if (e.split) parts.push(`SPLITS INTO ${num(e.split)} (${pct(e.splitLess)} LESS)`);
   if (e.splitAgain) parts.push(`${pct(e.splitAgain)} TO SPLIT AGAIN`);
   if (e.chain) parts.push(`+${num(e.chain)} BOUNCE${e.chain === 1 ? '' : 'S'} (${pct(e.chainLess)} LESS EACH)`);
@@ -633,18 +696,18 @@ function areaExample(): string {
 }
 
 /** MODS filters: everything, only the rules text, or the modifications carrying one tag. */
-const MOD_FILTERS = ['ALL', 'RULES', 'PROJECTILE', 'AOE', 'DURATION', 'MELEE'];
+const MOD_FILTERS = ['ALL', 'RULES', 'PROJECTILE', 'AOE', 'DURATION', 'MELEE', 'DOT'];
 
 function modsPage(filter: string): Block[] {
   const rules: Block[] = [
     {
       t: 'p',
-      text: `Modifications change every weapon that shares one of their tags (PROJECTILE, AOE, DURATION or MELEE; each weapon's tags are on the WEAPONS page), as far as the weapon has a use for them: CHANGES under each one lists what it really does. Ultimates have tags too (see CHARACTERS). Each goes up to level ${MAX_LEVEL} and takes no slot. A modification is offered once you own a weapon, or have an ultimate, it changes; after you take it, its upgrades keep being offered.`,
+      text: `Modifications change every weapon that shares one of their tags (PROJECTILE, AOE, DURATION, MELEE or DOT; each weapon's tags are on the WEAPONS page), as far as the weapon has a use for them: CHANGES under each one lists what it really does. Ultimates and Plunder have tags too (see CHARACTERS). A weapon whose effect deals damage over time is DOT even when not tagged so, and every DOT weapon is DURATION too. Each goes up to level ${MAX_LEVEL} and takes no slot. A modification is offered once you own a weapon, or have an ultimate or passive, it changes; after you take it, its upgrades keep being offered.`,
     },
     { t: 'h', text: 'PROJECTILES' },
     {
       t: 'p',
-      text: `On hitting an enemy a projectile first splits if it still can: it is replaced by its splits, which fan out over ${SPLIT_ARC} degrees from where it was going, skip the enemies it already hit, start with full pierce and bounces, and deal less damage than it did (Splits' level). Splits never split again, except that at Splits level 5 each projectile from a first split has a chance to split one more time. Otherwise the projectile uses up 1 pierce. Once pierce runs out it chains: it flies to the closest enemy within ${CHAIN_RANGE} px that it has not hit yet (a random direction when there is none), using up 1 bounce per hit. A bounce flies at ${num(CHAIN_SPEED)} × the weapon's speed (more with Chain's speed bonus) and every bounce deals less damage than the hit before it. Projectiles that never hit anything on the way (Coconuts) cannot split or chain; of Pierce they only get the damage bonus. Crystalline Bloom's crystal never pierces and deals no damage itself, so Pierce does nothing for it; Splits and Chain do, and every enemy its crystals touch sets off a blast. Iaijutsu's wave uses no pierce until it reaches the enemy it was aimed at; from there it splits, pierces and chains like any projectile. Additional Projectiles adds to COUNT: spread weapons fan the extra projectiles out, Coconuts and Hailing Arrows fire them one after another, Iaijutsu sends them at random enemies in reach. At most ${MAX_PROJECTILES} projectiles fly at once; splits past that are lost.`,
+      text: `On hitting an enemy a projectile first splits if it still can: it is replaced by its splits, which fan out over ${SPLIT_ARC} degrees from where it was going, skip the enemies it already hit, start with full pierce and bounces, and deal less damage than it did (Splits' level). Splits never split again, except that at Splits level 5 each projectile from a first split has a chance to split one more time. Otherwise the projectile uses up 1 pierce. Once pierce runs out it chains: it flies to the closest enemy within ${CHAIN_RANGE} px that it has not hit yet (a random direction when there is none), using up 1 bounce per hit. A bounce flies at ${num(CHAIN_SPEED)} × the weapon's speed (more with Chain's speed bonus) and every bounce deals less damage than the hit before it. Projectiles that never hit anything on the way (Coconuts) cannot split or chain; of Pierce they only get the damage bonus. Crystalline Bloom's crystal never pierces and deals no damage itself, so Pierce does nothing for it; Splits and Chain do, and every enemy its crystals touch sets off a blast. Iaijutsu's wave uses no pierce until it reaches the enemy it was aimed at; from there it splits, pierces and chains like any projectile. Additional Projectiles adds to COUNT: spread weapons fan the extra projectiles out, Coconuts, Hailing Arrows and Midnight Tumult fire them one after another, Iaijutsu sends them at random enemies in reach. In exchange every weapon it changes deals less damage (a multiplier, smaller at higher levels), its blasts too. At most ${MAX_PROJECTILES} projectiles fly at once; splits past that are lost.`,
     },
     { t: 'h', text: 'AREA' },
     {
@@ -658,7 +721,12 @@ function modsPage(filter: string): Block[] {
     { t: 'h', text: 'DURATION' },
     {
       t: 'p',
-      text: `Duration weapons leave a stack on every enemy they hit (or, for freezing fields, on every enemy on the field at each check) that deals damage each tick until it runs out; hitting again refreshes it, unless the effect stacks (Rime Trauma), when every application adds a stack. Duration modifications also stretch how long fields and beams last. Reiterate: when a stack is applied or deals damage it may copy itself with the time it has left. Copies tick and reiterate too, but are never refreshed. At most ${MAX_EFFECT_STACKS} stacks of one weapon sit on one enemy. Some duration abilities put their effect on you instead: Storm Shield's Aegis (duration modifications change how fast it comes back, Reiterate may add a second Aegis) and Mistwalker (see CHARACTERS).`,
+      text: `Duration weapons leave a stack on every enemy they hit (or, for fields, on every enemy on the field at each check) that deals damage each tick until it runs out; hitting again refreshes it, unless the effect stacks (Rime Trauma, Shock), when every application adds a stack. Duration modifications also stretch how long fields and beams last. Reiterate: when a stack is applied or deals damage it may copy itself with the time it has left. Copies tick and reiterate too, but are never refreshed. At most ${MAX_EFFECT_STACKS} stacks of one weapon sit on one enemy (Shock has its own cap, see WEAPONS). Some duration abilities put their effect on you instead: Storm Shield's Aegis (duration modifications change how fast it comes back, Reiterate may add a second Aegis) and Mistwalker (see CHARACTERS).`,
+    },
+    { t: 'h', text: 'DAMAGE OVER TIME' },
+    {
+      t: 'p',
+      text: `Damage over time is the ticking of stacks (Rime Trauma, Shock) and what sets them off at once (Midnight Tumult, Caressing Moonlight, Twilight Trill). It is not a hit: it applies no stacks and no follow-up shots, Thorns and Crystalline do not answer it, and a bubble (see RARE) does not stop it; hexproof enemies take no stacks at all. The ticks of one weapon's stacks on one enemy in one frame land as one number. Every stack keeps the bonuses of the weapon that put it on, so Shock from Vulnerability gets Vulnerability's AOE and DURATION bonuses and Shock from Plunder gets Plunder's. DOT modifications change every damage-over-time weapon: DEADLY AILMENTS makes their hits (if they hit at all) deal less and their damage over time more; SADISM makes stacks tick sooner (they last as long, so they tick more often) and harder; VIRULENT CHAIN makes stacks move on when their enemy dies, to the closest enemy within ${VIRULENT_RANGE} px (two at level 5, each getting a copy), keeping the time they have left, at the cost of less damage over time. DOT damage bonuses add up with the weapon's other damage bonuses; LESS DAMAGE multiplies.`,
     },
     { t: 'h', text: 'MELEE' },
     {
@@ -668,12 +736,15 @@ function modsPage(filter: string): Block[] {
     { t: 'h', text: 'DAMAGE' },
     {
       t: 'p',
-      text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconuts is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. Some weapons deal damage with one part only: Crystalline Bloom's blast only takes AOE damage bonuses, Rime Trauma only DURATION ones. That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up, plus Dragonborn and Mistwalker), the only damage multiplier.",
+      text: "Damage bonuses add up: a weapon's own damage levels and the damage bonus of every modification that changes it go into one sum. Coconuts is tagged PROJECTILE and AOE, so Pierce and Reduced AoE both count. Some weapons deal damage with one part only: Crystalline Bloom's blast only takes AOE damage bonuses, Rime Trauma only DURATION ones (and DOT modifications' damage-over-time bonuses). That sum is then multiplied by your DAMAGE stat (the Damage powerup, +5% per level, also added up, plus Dragonborn and Mistwalker) and by the LESS DAMAGE of Additional Projectiles, Deadly Ailments (hits only) and Virulent Chain (damage over time only).",
     },
   ];
   if (filter === 'RULES') return rules;
   const out: Block[] = filter === 'ALL' ? rules : [rules[0]];
-  const weapons = CHARACTERS.flatMap((c) => [...c.weapons.map(weaponDef), ultimateDef(c.ultimate).attack]);
+  const weapons = CHARACTERS.flatMap((c) => {
+    const pd = c.passive ? passiveDef(c.passive) : null;
+    return [...c.weapons.map(weaponDef), ultimateDef(c.ultimate).attack, ...(pd?.kind === 'ailment' ? [pd.attack] : [])];
+  });
   for (const def of MODIFICATIONS) {
     if (filter !== 'ALL' && !def.tags.some((t) => TAG_LABELS[t] === filter)) continue;
     out.push({ t: 'gap', h: 6 });
@@ -813,7 +884,7 @@ function rareText(m: EnemyModifierDef): string {
     case 'hexproof':
       return 'Duration effects and slows (freezing fields) do nothing to it.';
     case 'thorns':
-      return `Every hit you land on it (not damage over time) deals ${num(m.flat)} plus ${pct(m.share)} of the hit back to you.`;
+      return `Every hit you land on it (not damage over time) deals ${num(m.flat)} plus ${pct(m.share)} of the hit back to you, but never takes you below ${pct(m.floor)} of your max HP (the damage is cut to what reaches it).`;
     case 'ambush':
       return `Every ${secs(m.cooldown)} it teleports to ${m.distance} px from the closest player, in a puff of smoke.`;
     case 'soul_absorption':
@@ -823,7 +894,7 @@ function rareText(m: EnemyModifierDef): string {
     case 'blocks_attacks':
       return `${pct(m.chance)} chance to ignore any hit, damage over time included: BLOCK shows instead of a number.`;
     case 'temporal_shield':
-      return `Takes no damage from players outside its ${m.radius} px bubble: IMMUNE shows instead of a number. Step inside to hurt it.`;
+      return `Hits from players outside its ${m.radius} px bubble deal ${pct(m.reduction)} less. After ${m.hits} of them the bubble breaks (BREAK shows) for ${secs(m.recharge)} while it recharges; only a faint dashed ring is left. Step inside to hit it in full. Damage over time is not a hit: stacks on it keep ticking (and can be set off) at full damage wherever you are. An enemy has one bubble at most; bubbles never stack.`;
   }
 }
 
@@ -852,7 +923,7 @@ function raresPage(): Block[] {
     },
     {
       t: 'p',
-      text: 'Modifiers that add max HP, move speed or damage add up with each other; damage reductions multiply. What rare enemies do to you hurts like a touch: through armor and shields, and its thorns share one hit timer with its touch (caustic ground is damage over time, see below). A hit they ignore (BLOCK, IMMUNE) does nothing: no knockback, no effect, no echo. Their auras reach other monsters too, bosses included. Some modifiers have a look of their own (below); an enemy shows every one it has.',
+      text: 'Modifiers that add max HP, move speed or damage add up with each other; damage reductions multiply. What rare enemies do to you hurts like a touch: through armor and shields, and its thorns share one hit timer with its touch (caustic ground is damage over time, see below). A hit they ignore (BLOCK) does nothing: no knockback, no effect, no echo. Their auras reach other monsters too, bosses included. Some modifiers have a look of their own (below); an enemy shows every one it has.',
       color: COLOR.textDim,
     },
     { t: 'h', text: 'MODIFIERS' },

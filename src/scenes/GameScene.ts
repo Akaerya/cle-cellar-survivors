@@ -127,6 +127,8 @@ const POS_HZ = 30;
 const CULL_MARGIN = 96;
 /** Effects queued for one snapshot beyond this are dropped (only under extreme load). */
 const MAX_EVENTS = 400;
+/** Colour of the screen flash when dawn breaks. */
+const DAWN_FLASH = 0xffecbe;
 /** px width of the HP bar drawn over a boss. */
 const BOSS_BAR_W = 64;
 
@@ -532,7 +534,7 @@ export class GameScene extends Phaser.Scene {
   private hostRareViews(): RareView[] {
     const out: RareView[] = [];
     for (const e of this.enemyMods.rares) {
-      if (e.active) out.push({ sprite: e, radius: e.radius, mask: e.modMask, enrage: e.enrage, souls: e.souls });
+      if (e.active) out.push({ sprite: e, radius: e.radius, mask: e.modMask, enrage: e.enrage, souls: e.souls, shieldDown: this.time.now < e.shieldDownUntil });
     }
     return out;
   }
@@ -545,9 +547,9 @@ export class GameScene extends Phaser.Scene {
    * Aegis may block it, armor, shields, DAMAGE TAKEN and Vicissitude reduce it, and Death Defied may refuse it. Storm
    * Shield reflects a share of `raw` at the source whether or not it got through, and at 0 HP Ragebaiter may stand `p`
    * right back up. `dot`: a tick of damage over time, which ignores invulnerability and hit timers, cannot be dodged or
-   * blocked and is not reflected.
+   * blocked and is not reflected. `floor` (Thorns): the damage is cut so it never takes `p` below that share of max HP.
    */
-  hurtPlayer(p: Player, raw: number, dot = false, source: Enemy | null = null, hitter: object | null = source): void {
+  hurtPlayer(p: Player, raw: number, dot = false, source: Enemy | null = null, hitter: object | null = source, floor = 0): void {
     if (!p.canBeHit(dot)) return;
     if (hitter && !dot) {
       const now = this.time.now;
@@ -560,6 +562,7 @@ export class GameScene extends Phaser.Scene {
       p.runStats.blocks++;
     } else {
       dmg = p.damageFrom(raw);
+      if (floor > 0) dmg = Math.max(0, Math.min(dmg, p.hp - floor * p.stats.maxHp));
       if (p.passive.defy(dmg)) dmg = 0;
       else p.takeDamage(dmg, dot);
     }
@@ -571,6 +574,16 @@ export class GameScene extends Phaser.Scene {
     if (p.hp > 0) return;
     if (p.passive.rebirth()) this.onPlayerHealed(p);
     else this.die(p);
+  }
+
+  /** Flashes every player's screen `color` for `ms` (dawn, Twilight Trill). */
+  flash(ms: number, color: number): void {
+    this.flashCamera(ms, color);
+    this.relay(['f', ms, color]);
+  }
+
+  private flashCamera(ms: number, color: number): void {
+    this.cameras.main.flash(ms, (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
   }
 
   /** Host: moves `p` to (x, y) at once (Flicker Strike). Joiners move their own character, so they are told to. */
@@ -753,7 +766,7 @@ export class GameScene extends Phaser.Scene {
     };
     stat('item', ITEMS, p.items, itemSlotsFull);
     const impact = hasImpact(p.mods);
-    const attacks = [...p.weapons.list.map((w) => w.def), p.ultimate.def.attack];
+    const attacks = [...p.weapons.list.map((w) => w.def), p.ultimate.def.attack, ...(p.passive.ailment ? [p.passive.ailment.def] : [])];
     for (const def of MODIFICATIONS) {
       const max = def.levels.length;
       const have = p.mods.find((m) => m.def.id === def.id);
@@ -970,8 +983,7 @@ export class GameScene extends Phaser.Scene {
     this.state = 'victory';
     this.runTime = RUN_SECONDS;
     this.playSfx('victory');
-    this.cameras.main.flash(900, 255, 236, 190);
-    this.relay(['f', 900]);
+    this.flash(900, DAWN_FLASH);
     this.stopEffects();
     this.bosses.clear();
     this.enemyMods.clear();
@@ -1017,6 +1029,7 @@ export class GameScene extends Phaser.Scene {
           ...p.weapons.list.map((w) => this.weaponReport(p, w)),
           this.weaponReport(p, p.ultimate.attack, 'ultimate'),
           ...(p.pets.headbutt ? [this.weaponReport(p, p.pets.headbutt, 'passive')] : []),
+          ...(p.passive.ailment ? [this.weaponReport(p, p.passive.ailment, 'passive')] : []),
         ],
         items: this.buildItems(p),
         mods: this.buildMods(p),
@@ -1172,6 +1185,7 @@ export class GameScene extends Phaser.Scene {
           (e.flipX ? EF.flip : 0) |
           (e.flashUntil > now ? EF.flash : 0) |
           (e.tintState === 2 ? EF.chill : 0) |
+          (e.tintState === 4 ? EF.shock : 0) |
           (e.spirit ? EF.spirit : 0) |
           (e.tintState === 3 ? EF.stun : 0);
         writeEntity(w, e.netId, enemyKind.get(e.def) ?? 0, flags, e.x, e.y);
@@ -1231,7 +1245,7 @@ export class GameScene extends Phaser.Scene {
       writeBosses(w, bosses);
       const rares: SnapRare[] = [];
       for (const e of this.enemyMods.rares) {
-        if (e.active && this.nearView(p, e.x, e.y)) rares.push({ id: e.netId, mask: e.modMask, enrage: e.enrage, souls: e.souls });
+        if (e.active && this.nearView(p, e.x, e.y)) rares.push({ id: e.netId, mask: e.modMask, enrage: e.enrage, souls: e.souls, shieldDown: this.time.now < e.shieldDownUntil });
       }
       writeRares(w, rares);
 
@@ -1410,7 +1424,7 @@ export class GameScene extends Phaser.Scene {
         this.players[ev[1]]?.weapons.pulse(ev[2]);
         break;
       case 'f':
-        this.cameras.main.flash(ev[1], 255, 236, 190);
+        this.flashCamera(ev[1], ev[2] ?? DAWN_FLASH);
         break;
       case 'l':
         this.fx.lightning(ev[1], ev[2], ev[3], ev[4]);
@@ -1425,7 +1439,7 @@ export class GameScene extends Phaser.Scene {
         this.fx.frost(ev[1], ev[2], ev[3], ev[4]);
         break;
       case 'v':
-        this.fx.vortex(ev[1], ev[2], ev[3], ev[4], ev[5]);
+        this.fx.vortex(ev[1], ev[2], ev[3], ev[4], ev[5], ev[6] ? 'web' : 'swirl');
         break;
       case 'z':
         this.fx.beam(ev[1], ev[2], ev[3], ev[4], ev[5], ev[6], ev[7]);
