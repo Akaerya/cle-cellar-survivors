@@ -48,17 +48,18 @@ export class TitleScene extends Phaser.Scene {
     this.tweens.add({ targets: [t1, shadowT], y: '-=3', yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
     this.tweens.add({ targets: t2, alpha: 0.75, yoyo: true, repeat: -1, duration: 1800, ease: 'Sine.easeInOut' });
 
-    // The cast, with a ring of enemies peeking in
+    // The cast, with enemies closing in from both sides (placed from the ends of the line, however long it is)
+    const half = ((CHARACTERS.length - 1) / 2) * 56;
     CHARACTERS.forEach((c, i) => {
       const x = VIEW_W / 2 + (i - (CHARACTERS.length - 1) / 2) * 56;
       this.add.image(x, 222, ATLAS, 'shadow_l').setScale(1.2);
       this.add.sprite(x, 196, ATLAS, c.firstFrame).setScale(3).play(`${c.anim}-idle`).setFlipX(x > VIEW_W / 2);
     });
     const foes: [string, number, number, boolean][] = [
-      ['zombie-walk', 214, 206, false],
-      ['ghoul-run', 160, 214, false],
-      ['brute-walk', 452, 200, true],
-      ['zombie-walk', 400, 216, true],
+      ['zombie-walk', VIEW_W / 2 - half - 50, 206, false],
+      ['ghoul-run', VIEW_W / 2 - half - 88, 214, false],
+      ['brute-walk', VIEW_W / 2 + half + 54, 200, true],
+      ['zombie-walk', VIEW_W / 2 + half + 94, 216, true],
     ];
     for (const [anim, x, y, flip] of foes) {
       this.add.sprite(x, y, ATLAS).play(anim).setScale(2).setFlipX(flip).setAlpha(0.9);

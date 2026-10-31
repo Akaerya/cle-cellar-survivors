@@ -1,4 +1,5 @@
 import type { UltimateDef } from './types';
+import { NO_STATS } from './weapons';
 
 /** Ultimates: one per character, cast with Q. Damage scales with the caster's DAMAGE and AREA stats. */
 export const ULTIMATES: UltimateDef[] = [
@@ -186,6 +187,28 @@ export const ULTIMATES: UltimateDef[] = [
         arc: 0,
         boomerang: false,
       },
+      levels: [],
+    },
+  },
+  {
+    id: 'twilight_trill',
+    name: 'Twilight Trill',
+    description: 'Flashes the screen white and sets off every Shock stack on every enemy: each takes 200% of the damage its Shock stacks have left, at once.',
+    icon: 'icon_ult_trill',
+    kind: 'detonate',
+    duration: 0,
+    cooldown: 55,
+    interval: 0,
+    count: 0,
+    color: 0xffffff,
+    attack: {
+      id: 'twilight_trill',
+      name: 'Twilight Trill',
+      description: 'Ultimate.',
+      icon: 'icon_ult_trill',
+      targeting: 'passive',
+      detonate: { effect: 'shock', share: 2 },
+      stats: NO_STATS,
       levels: [],
     },
   },

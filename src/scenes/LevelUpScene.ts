@@ -1,14 +1,37 @@
 import Phaser from 'phaser';
-import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
+import { ATLAS, FONT, FONT_SIZE, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
 import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { EV } from '../core/events';
 import { sfx } from '../core/sfx';
 import { Button, drawPanel, onKey, text } from '../ui/widgets';
 import type { Choice, GameScene } from './GameScene';
 
-const CARD_W = 176;
+const CARD_W = 192;
 const CARD_H = 172;
 const GAP = 12;
+/** Card text: px in from the sides, px kept clear at the bottom (level pips), and the name's height. */
+const TEXT_PAD = 9;
+const TEXT_BOTTOM = 20;
+const NAME_H = 11;
+/**
+ * Where things sit on a card (px below its top): the icon's middle and scale, the name, the kind and the description.
+ * When a description does not fit the roomy layout, every card of the offer uses the compact one (a smaller icon
+ * and the text moved up), so the cards stay alike.
+ */
+interface CardLayout {
+  iconY: number;
+  iconScale: number;
+  nameY: number;
+  kindY: number;
+  textY: number;
+}
+const ROOMY: CardLayout = { iconY: 40, iconScale: 3, nameY: 72, kindY: 84, textY: 102 };
+const COMPACT: CardLayout = { iconY: 24, iconScale: 2, nameY: 44, kindY: 56, textY: 72 };
+/**
+ * Font sizes tried, largest first, until a text fits its box. Always the main font (the small one only has digits);
+ * below its native size glyphs lose pixel rows, so this is a last resort after the compact layout.
+ */
+const TEXT_SIZES = [FONT_SIZE, 8, 7, 6];
 const INPUT_GUARD_MS = 250;
 const KIND_LABELS: Record<Choice['kind'], string> = {
   weapon: 'WEAPON',
@@ -148,9 +171,10 @@ export class LevelUpScene extends Phaser.Scene {
     const total = choices.length * CARD_W + (choices.length - 1) * GAP;
     const x0 = Math.round((VIEW_W - total) / 2);
     const y = 92;
+    const layout = choices.every((c) => this.fits(c.text, ROOMY)) ? ROOMY : COMPACT;
     choices.forEach((choice, i) => {
       const x = x0 + i * (CARD_W + GAP);
-      const card = this.makeCard(choice, i, x, y);
+      const card = this.makeCard(choice, i, x, y, layout);
       this.cards.push(card);
       card.root.setAlpha(0).setY(18);
       this.tweens.add({ targets: card.root, alpha: 1, y: 0, delay: i * 70, duration: 220, ease: 'Quad.easeOut' });
@@ -158,7 +182,29 @@ export class LevelUpScene extends Phaser.Scene {
     this.select(0, false);
   }
 
-  private makeCard(choice: Choice, index: number, x: number, y: number): Card {
+  /**
+   * Centred text from (x, y) down, wrapped to `w` px, at the largest of TEXT_SIZES that keeps it within `h` px (the
+   * smallest when even that does not).
+   */
+  /** True when `str` fits a card's description box in `layout` at the font's native size. */
+  private fits(str: string, layout: CardLayout): boolean {
+    const t = this.add.bitmapText(0, 0, FONT, str.toUpperCase(), FONT_SIZE).setMaxWidth(CARD_W - 2 * TEXT_PAD);
+    const ok = t.height <= CARD_H - TEXT_BOTTOM - layout.textY;
+    t.destroy();
+    return ok;
+  }
+
+  private fitText(x: number, y: number, str: string, w: number, h: number, color: number): Phaser.GameObjects.BitmapText {
+    const t = this.add.bitmapText(x, y, FONT, str, FONT_SIZE).setOrigin(0.5, 0).setTint(color);
+    t.align = 1;
+    for (const size of TEXT_SIZES) {
+      t.setFontSize(size).setMaxWidth(w);
+      if (t.height <= h && t.width <= w) break;
+    }
+    return t;
+  }
+
+  private makeCard(choice: Choice, index: number, x: number, y: number, layout: CardLayout): Card {
     const root = this.add.container(0, 0);
     const frame = this.add.graphics();
     root.add(frame);
@@ -168,20 +214,14 @@ export class LevelUpScene extends Phaser.Scene {
       const tag = choice.isNew ? 'NEW!' : `LV ${choice.level}`;
       root.add(text(this, x + CARD_W - 7, y + 6, tag, { origin: [1, 0], color: choice.isNew ? COLOR.gold : COLOR.text }));
     }
-    const icon = this.add.image(x + CARD_W / 2, y + 40, ATLAS, choice.icon).setScale(3);
+    const icon = this.add.image(x + CARD_W / 2, y + layout.iconY, ATLAS, choice.icon).setScale(layout.iconScale);
     root.add(icon);
-    this.tweens.add({ targets: icon, y: y + 37, yoyo: true, repeat: -1, duration: 700, ease: 'Sine.easeInOut' });
-    root.add(text(this, x + CARD_W / 2, y + 72, choice.name.toUpperCase(), { origin: [0.5, 0], color: COLOR.gold }));
+    this.tweens.add({ targets: icon, y: y + layout.iconY - layout.iconScale, yoyo: true, repeat: -1, duration: 700, ease: 'Sine.easeInOut' });
+    root.add(this.fitText(x + CARD_W / 2, y + layout.nameY, choice.name.toUpperCase(), CARD_W - 2 * TEXT_PAD, NAME_H, COLOR.gold));
     const kind = KIND_LABELS[choice.kind];
-    root.add(text(this, x + CARD_W / 2, y + 84, kind, { origin: [0.5, 0], color: COLOR.textDim }));
-    root.add(
-      text(this, x + CARD_W / 2, y + 102, choice.text.toUpperCase(), {
-        origin: [0.5, 0],
-        align: 1,
-        maxWidth: CARD_W - 18,
-        color: COLOR.text,
-      }),
-    );
+    root.add(text(this, x + CARD_W / 2, y + layout.kindY, kind, { origin: [0.5, 0], color: COLOR.textDim }));
+    const textH = CARD_H - TEXT_BOTTOM - layout.textY;
+    root.add(this.fitText(x + CARD_W / 2, y + layout.textY, choice.text.toUpperCase(), CARD_W - 2 * TEXT_PAD, textH, COLOR.text));
 
     if (choice.kind !== 'heal') {
       // Level pips: owned levels white, the one this card grants in gold. Powerups (20 levels) get smaller pips.

@@ -28,7 +28,6 @@ export const IMPACT_RADIUS = 25;
 export const RUTHLESS_EVERY = 3;
 
 const pierce = { text: '+1 pierce, +15% damage.', add: { pierce: 1, damage: 0.15 } };
-const moreProjectiles = { text: '+1 projectile.', add: { projectiles: 1 } };
 const moreArea = { text: '+20% area, +5% damage.', add: { area: 0.2, damage: 0.05 } };
 const lessArea = { text: '-10% area, +18% damage.', add: { area: -0.1, damage: 0.18 } };
 const moreDuration = { text: '+20% duration.', add: { duration: 0.2 } };
@@ -75,10 +74,16 @@ export const MODIFICATIONS: ModificationDef[] = [
   {
     id: 'more_projectiles',
     name: 'Additional Projectiles',
-    description: 'Projectile weapons fire 1 more projectile each time they are used.',
+    description: 'Projectile weapons fire 1 more projectile each time they are used, but deal 35% less damage.',
     icon: 'icon_mod_projectiles',
     tags: ['projectile'],
-    levels: [moreProjectiles, moreProjectiles, moreProjectiles, moreProjectiles, moreProjectiles],
+    levels: [
+      { text: '+1 projectile. 35% less damage.', set: { projectiles: 1, projectileLess: 0.35 } },
+      { text: '+2 projectiles. 30% less damage.', set: { projectiles: 2, projectileLess: 0.3 } },
+      { text: '+3 projectiles. 25% less damage.', set: { projectiles: 3, projectileLess: 0.25 } },
+      { text: '+4 projectiles. 20% less damage.', set: { projectiles: 4, projectileLess: 0.2 } },
+      { text: '+5 projectiles. 15% less damage.', set: { projectiles: 5, projectileLess: 0.15 } },
+    ],
   },
   // ---------------------------------------------------------------- area
   {
@@ -211,6 +216,43 @@ export const MODIFICATIONS: ModificationDef[] = [
       { text: 'Every 3rd attack: +50% damage.', set: { ruthless: 0.5 } },
       { text: 'Every 3rd attack: +60% damage.', set: { ruthless: 0.6 } },
       { text: 'Every 3rd attack: +70% damage.', set: { ruthless: 0.7 } },
+    ],
+  },
+  // ---------------------------------------------------------------- damage over time
+  {
+    id: 'deadly_ailments',
+    name: 'Deadly Ailments',
+    description: 'Damage-over-time weapons deal 40% less damage on hit, but your damage over time deals 30% more.',
+    icon: 'icon_mod_deadly',
+    tags: ['dot'],
+    levels: [0.3, 0.4, 0.5, 0.6, 0.7].map((d) => ({
+      text: `40% less damage on hit. +${Math.round(d * 100)}% damage over time.`,
+      set: { hitLess: 0.4, dotDamage: d },
+    })),
+  },
+  {
+    id: 'sadism',
+    name: 'Sadism',
+    description: 'Damage over time ticks 20% sooner (it lasts as long) and deals 10% more damage.',
+    icon: 'icon_mod_sadism',
+    tags: ['dot'],
+    levels: [0.2, 0.25, 0.33, 0.5, 0.6].map((r, i) => ({
+      text: `Ticks ${Math.round(r * 100)}% sooner. +10% damage over time.`,
+      set: { dotRate: r, dotDamage: 0.1 * (i + 1) },
+    })),
+  },
+  {
+    id: 'virulent_chain',
+    name: 'Virulent Chain',
+    description: `When an enemy dies, each of its damage-over-time stacks moves to the closest enemy, however far, with the time it has left. Damage over time deals 20% less.`,
+    icon: 'icon_mod_virulent',
+    tags: ['dot'],
+    levels: [
+      { text: 'Stacks move on. 20% less damage over time.', set: { virulent: 1, dotLess: 0.2 } },
+      { text: 'Stacks last 5% longer. 20% less damage over time.', set: { virulent: 1, dotLess: 0.2, dotDuration: 0.05 } },
+      { text: 'Stacks last 10% longer. 20% less damage over time.', set: { virulent: 1, dotLess: 0.2, dotDuration: 0.1 } },
+      { text: 'Stacks last 15% longer. 20% less damage over time.', set: { virulent: 1, dotLess: 0.2, dotDuration: 0.15 } },
+      { text: 'Stacks last 20% longer and are copied to 2 enemies. 20% less damage over time.', set: { virulent: 2, dotLess: 0.2, dotDuration: 0.2 } },
     ],
   },
 ];

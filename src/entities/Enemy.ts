@@ -19,6 +19,15 @@ export interface EffectStack {
   copy: boolean;
 }
 
+/** Seconds of slack so a tick due at the very end of a stack's time still counts. */
+export const TICK_EPSILON = 1e-6;
+
+/** Ticks `st` still has to deal, `interval` seconds apart (the next one is `st.next` away). */
+export function remainingTicks(st: EffectStack, interval: number): number {
+  if (st.next > st.left + TICK_EPSILON || interval <= 0) return 0;
+  return Math.floor((st.left - st.next) / interval + TICK_EPSILON) + 1;
+}
+
 /** A random frame of animation `key` to start on, so a crowd does not move in lockstep. */
 export function randomStartFrame(scene: Phaser.Scene, key: string): number {
   return Math.floor(Math.random() * (scene.anims.get(key)?.frames.length ?? 1));
@@ -55,7 +64,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Slowed (e.g. standing on a freezing field) until this scene time, by this fraction of its speed. */
   slowUntil = 0;
   slowAmount = 0;
-  /** Tint shown right now: 0 none, 1 hit flash, 2 chilled (slowed or carrying a tinted effect), 3 stunned. */
+  /**
+   * Tint shown right now: 0 none, 1 hit flash, 2 chilled (slowed, or carrying an effect tinted CHILL_TINT), 3 stunned,
+   * 4 carrying an effect of another tint (Shock).
+   */
   tintState = 0;
   /** Stands still until this scene time (a boss winding up an attack). */
   rootedUntil = 0;
@@ -89,6 +101,9 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   empower: Extract<EnemyModifierDef, { id: 'empower_allies' }> | null = null;
   /** Already came back once through Spirit Walker: it will not again (drawn see-through). */
   spirit = false;
+  /** Temporal Shield: hits its bubble has taken since it last came back, and the scene time it is broken until. */
+  shieldHits = 0;
+  shieldDownUntil = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, ATLAS, 'bat_0');
@@ -131,6 +146,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.intervention = false;
     this.empower = null;
     this.spirit = false;
+    this.shieldHits = 0;
+    this.shieldDownUntil = 0;
     this.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
     this.setAlpha(1).setFlipX(false);
     this.setDepth(DEPTH.units + y / ARENA_SIZE);

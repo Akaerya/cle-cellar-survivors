@@ -64,8 +64,8 @@ export type FxEvent =
   | ['w', number, number, number, number, number, number]
   /** aura pulse: slot, weapon index */
   | ['a', number, number]
-  /** camera flash for everyone: duration */
-  | ['f', number]
+  /** camera flash for everyone: duration, colour (warm white when missing) */
+  | ['f', number, number?]
   /** lightning strike: x, y, radius, colour */
   | ['l', number, number, number, number]
   /** Echo Strike ring: x, y, radius, colour */
@@ -74,8 +74,10 @@ export type FxEvent =
   | ['x', number, number, number, number]
   /** cold crystal burst: x, y, radius, colour */
   | ['k', number, number, number, number]
-  /** freezing field (a swirling vortex): x, y, radius, seconds, colour */
-  | ['v', number, number, number, number, number]
+  /** Virulent Chain ink blob: from x, y to x2, y2 */
+  | ['i', number, number, number, number]
+  /** field: x, y, radius, seconds, colour, 1 for a spider web (else a swirling freezing vortex) */
+  | ['v', number, number, number, number, number, 1?]
   /** lingering beam: x1, y1, x2, y2, width, seconds, colour */
   | ['z', number, number, number, number, number, number, number]
   /** dome ultimate cast: caster slot, centre x, centre y */
@@ -92,8 +94,8 @@ export type FxEvent =
 export const STATE_CODES = ['playing', 'dying', 'victory', 'ended'] as const;
 
 export const PF = { dead: 1, gone: 2, moving: 4, god: 8 } as const;
-/** Enemy flags. `spirit`: came back once through Spirit Walker (drawn see-through). `stun`: stunned (Stun modification). */
-export const EF = { flip: 1, flash: 2, chill: 4, spirit: 8, stun: 16 } as const;
+/** Enemy flags. `spirit`: came back once through Spirit Walker (drawn see-through). `stun`: stunned (Stun modification). `shock`: carrying Shock. */
+export const EF = { flip: 1, flash: 2, chill: 4, spirit: 8, stun: 16, shock: 32 } as const;
 /** Summon flags (low bits of `extra`); the bits above SUMMON_ANGLE_SHIFT are the art's turn in 64ths of a circle. */
 export const SF = { flip: 1, giant: 2 } as const;
 export const SUMMON_ANGLE_SHIFT = 2;
@@ -177,6 +179,8 @@ export interface SnapRare {
   enrage: number;
   /** Soul Absorption souls (capped at 255 here). */
   souls: number;
+  /** Temporal Shield: its bubble is broken (recharging). */
+  shieldDown: boolean;
 }
 
 /** Writes the rare enemy list; must match decodeSnapshot. */
@@ -187,6 +191,7 @@ export function writeRares(w: Writer, rares: SnapRare[]): void {
     w.u32(r.mask);
     w.u8(Math.round(Phaser.Math.Clamp(r.enrage, 0, 1) * 255));
     w.u8(Math.min(255, r.souls));
+    w.u8(r.shieldDown ? 1 : 0);
   }
 }
 
@@ -375,7 +380,8 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
     const mask = u32();
     const enrage = u8() / 255;
     const souls = u8();
-    rares.push({ id, mask, enrage, souls });
+    const shieldDown = u8() === 1;
+    rares.push({ id, mask, enrage, souls, shieldDown });
   }
 
   const len = u32();

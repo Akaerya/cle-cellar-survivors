@@ -81,6 +81,13 @@ export function emptyModEffect(): Required<ModEffect> {
     momentum: 0,
     impact: 0,
     ruthless: 0,
+    projectileLess: 0,
+    hitLess: 0,
+    dotDamage: 0,
+    dotLess: 0,
+    dotRate: 0,
+    dotDuration: 0,
+    virulent: 0,
   };
 }
 
@@ -101,10 +108,26 @@ export interface OwnedMod {
   level: number;
 }
 
+/** The weapon leaves an effect that deals damage (damage over time). */
+export function dealsDot(def: WeaponDef): boolean {
+  return (def.effect?.damage ?? 0) > 0;
+}
+
+/**
+ * The tags modifications go by: the weapon's own, plus `dot` when its effect deals damage, plus `duration` for any
+ * `dot` weapon (damage over time is a duration effect).
+ */
+export function effectiveTags(def: WeaponDef): WeaponTag[] {
+  const tags = [...(def.tags ?? [])];
+  if (dealsDot(def) && !tags.includes('dot')) tags.push('dot');
+  if (tags.includes('dot') && !tags.includes('duration')) tags.push('duration');
+  return tags;
+}
+
 /** Totals of every owned modification that shares at least one tag with the weapon. */
 export function modsForWeapon(def: WeaponDef, mods: OwnedMod[]): Required<ModEffect> {
   const out = emptyModEffect();
-  const tags = def.tags ?? [];
+  const tags = effectiveTags(def);
   const damageTags = def.damageTags ?? tags;
   for (const m of mods) {
     if (!m.def.tags.some((t) => tags.includes(t))) continue;
@@ -120,6 +143,9 @@ export function modsForWeapon(def: WeaponDef, mods: OwnedMod[]): Required<ModEff
   if (def.noPierce) out.pierce = 0;
   if (def.harmlessArea) out.echo = out.echoArea = out.echoRepeats = 0;
   if (!def.effect && !def.buff) out.reiterate = 0;
+  // Damage-over-time bonuses need damage over time; the less-damage-on-hit only matters for weapons that hit.
+  if (!dealsDot(def)) out.dotDamage = out.dotLess = out.dotRate = out.dotDuration = out.virulent = 0;
+  if (def.harmlessArea || def.targeting === 'passive') out.hitLess = 0;
   // Shields have no attack of their own to repeat; Flicker Strike's teleport counts as standing still.
   if (def.targeting === 'shield') out.multistrike = out.repeatChance = 0;
   if (def.targeting === 'flicker') out.momentum = 0;
@@ -127,7 +153,7 @@ export function modsForWeapon(def: WeaponDef, mods: OwnedMod[]): Required<ModEff
 }
 
 export function hasTag(def: WeaponDef, tag: WeaponTag): boolean {
-  return def.tags?.includes(tag) ?? false;
+  return effectiveTags(def).includes(tag);
 }
 
 /**
@@ -157,7 +183,7 @@ export function hasImpact(mods: OwnedMod[]): boolean {
 
 /** The weapon fires projectiles that stop at enemies (so pierce, split and chain mean something). */
 export function hitsWithProjectiles(def: WeaponDef): boolean {
-  const flies = def.targeting === 'nearest' || def.targeting === 'random' || def.targeting === 'facing' || def.targeting === 'wave';
+  const flies = def.targeting === 'nearest' || def.targeting === 'random' || def.targeting === 'facing' || def.targeting === 'wave' || def.targeting === 'followup';
   return flies && def.stats.speed > 0 && def.stats.pierce !== Infinity;
 }
 

@@ -55,6 +55,14 @@
    "brute_3": [84, 0, 160]
   }
  },
+ "bullet": {
+  "w": 6,
+  "h": 3,
+  "frames": {
+   "bullet_0": [0, 0, 80],
+   "bullet_1": [6, 0, 80]
+  }
+ },
  "bunny": {
   "w": 18,
   "h": 14,
@@ -236,7 +244,16 @@
    "icon_passive_warren": [832, 0, 100],
    "icon_pet_sword": [848, 0, 100],
    "icon_pet_bow": [864, 0, 100],
-   "icon_pet_book": [880, 0, 100]
+   "icon_pet_book": [880, 0, 100],
+   "icon_tumult": [896, 0, 100],
+   "icon_moonlight": [912, 0, 100],
+   "icon_gentle": [928, 0, 100],
+   "icon_vulnerability": [944, 0, 100],
+   "icon_ult_trill": [960, 0, 100],
+   "icon_passive_plunder": [976, 0, 100],
+   "icon_mod_deadly": [992, 0, 100],
+   "icon_mod_sadism": [1008, 0, 100],
+   "icon_mod_virulent": [1024, 0, 100]
   }
  },
  "knight": {
@@ -265,6 +282,22 @@
    "leviathan_3": [132, 0, 220]
   }
  },
+ "licras": {
+  "w": 16,
+  "h": 20,
+  "frames": {
+   "licras_idle_0": [0, 0, 500],
+   "licras_idle_1": [16, 0, 350],
+   "licras_idle_2": [32, 0, 500],
+   "licras_idle_3": [48, 0, 120],
+   "licras_walk_0": [64, 0, 110],
+   "licras_walk_1": [80, 0, 110],
+   "licras_walk_2": [96, 0, 110],
+   "licras_walk_3": [112, 0, 110],
+   "licras_hurt_0": [128, 0, 100],
+   "licras_hurt_1": [144, 0, 100]
+  }
+ },
  "monkey": {
   "w": 16,
   "h": 20,
@@ -279,6 +312,16 @@
    "monkey_walk_3": [112, 0, 110],
    "monkey_hurt_0": [128, 0, 100],
    "monkey_hurt_1": [144, 0, 100]
+  }
+ },
+ "moonshard": {
+  "w": 7,
+  "h": 7,
+  "frames": {
+   "moonshard_0": [0, 0, 80],
+   "moonshard_1": [7, 0, 80],
+   "moonshard_2": [14, 0, 80],
+   "moonshard_3": [21, 0, 80]
   }
  },
  "orb": {

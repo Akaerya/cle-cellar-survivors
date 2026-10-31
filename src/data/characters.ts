@@ -7,7 +7,7 @@ import type { CharacterDef } from './types';
 export const CHARACTERS: CharacterDef[] = [
   {
     id: 'rsncle',
-    name: 'cle',
+    name: 'rsncle',
     title: 'THE BANANA MONKEY',
     description: 'Throws bananas, lashes its tail and howls at the night.',
     anim: 'monkey',
@@ -64,6 +64,18 @@ export const CHARACTERS: CharacterDef[] = [
     weapons: ['arcane_bolt', 'carrot_sword', 'carrot_rations', 'bunny_armory'],
     ultimate: 'giant_bunny',
     passive: 'warren',
+  },
+  {
+    id: 'licras',
+    name: 'Licras',
+    title: "HUMANITY'S NEMESIS",
+    description: "'bearie saving till eos just like in aniimo'",
+    anim: 'licras',
+    firstFrame: 'licras_idle_0',
+    startingWeapon: 'midnight_tumult',
+    weapons: ['midnight_tumult', 'caressing_moonlight', 'gentle_but_cruel', 'vulnerability'],
+    ultimate: 'twilight_trill',
+    passive: 'plunder',
   },
 ];
 

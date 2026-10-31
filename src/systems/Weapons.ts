@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
-import { DEPTH, INNER, MAX_EFFECT_STACKS, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
+import { DEPTH, INNER, MAX_EFFECT_STACKS, MAX_FOLLOWUPS, MAX_PROJECTILES, MAX_SHIELD_REDUCTION, STAB_LEAD } from '../constants';
 import { applyLevelBonuses, hasTag, hasteFactor, modsForWeapon, splashModsFor, weaponLevelAt, type WeaponLevelStats } from '../core/progression';
 import {
   CHAIN_RANGE,
@@ -16,7 +16,7 @@ import {
 } from '../data';
 import { PLAYER_RADIUS } from '../data/player';
 import type { ModEffect, WeaponDef, WeaponStats } from '../data/types';
-import type { Enemy } from '../entities/Enemy';
+import { remainingTicks, stillAlive, type Enemy } from '../entities/Enemy';
 import { CHARGE_KINDS, type Player } from '../entities/Player';
 import { Projectile } from '../entities/Projectile';
 import { nextNetId } from '../net/ids';
@@ -147,9 +147,12 @@ export interface Effective extends WeaponStats {
   echo: number;
   echoRadius: number;
   echoRepeats: number;
-  /** Duration effect: damage per tick and seconds a stack lasts (0 without an effect). */
+  /** Duration effect: damage per tick, seconds between ticks and seconds a stack lasts (0 without an effect). */
   effectDamage: number;
+  effectInterval: number;
   effectDuration: number;
+  /** Virulent Chain: enemies each stack moves to when the enemy carrying it dies (0 = it is lost). */
+  virulent: number;
   /** Duration effect (or buff): chance it copies itself when applied or when it deals damage. */
   reiterate: number;
   /** Fields: fraction of speed enemies inside lose. */
@@ -179,6 +182,13 @@ interface Field {
   /** Seconds left, and seconds until the next check for enemies on the field. */
   left: number;
   next: number;
+}
+
+/** A `followup` shot waiting to be fired at the enemy a hit landed on (fired after the hits of this frame). */
+interface Followup {
+  weapon: WeaponInstance;
+  target: Enemy;
+  targetId: number;
 }
 
 /** A lingering beam (dome ultimate): hits every enemy that touches it once. */
@@ -240,9 +250,11 @@ const SEEK_GIVE_UP = 2.5;
  * reflects damage, `bomb` throws a projectile that explodes on reaching its target, `field` conjures freezing fields
  * under enemies, `wave` sends a sword wave that cuts through everything until it reaches its target, `spin` swings
  * all around the owner, `flicker` teleports the owner onto a random enemy, `seeker` floats a blade by the owner that
- * dashes through the nearest enemy within `range` and flies back, and `passive` / `infusion` weapons only change how
- * the others work (critical strikes, charges). `petbuff` and `armory` weapons do nothing here: the owner's pets
- * (systems/Pets.ts) read them. `beam` is for ultimate attacks: lingering beams across a dome.
+ * dashes through the nearest enemy within `range` and flies back, `followup` fires at an enemy another hit of the
+ * owner just landed on (by chance), and `passive` / `infusion` weapons only change how the others work (critical
+ * strikes, charges). `petbuff` and `armory` weapons do nothing here: the owner's pets (systems/Pets.ts) read them.
+ * `beam` is for ultimate attacks: lingering beams across a dome. Weapons with `detonate` set off the enemy's stacks
+ * on every hit, and the passive's `ailment` (Plunder) puts a stack on every enemy the owner hits.
  * The owner's modifications (data/modifications.ts) are folded into `eff()` by weapon tag; this class also
  * runs what they add: projectile splits and chains, Echo Strike echoes, duration effects on enemies, and for melee
  * weapons Multistrike repeats, Ruthless attacks, Stun, Momentum and Impact splashes.
@@ -260,8 +272,13 @@ export class Weapons {
   private splashRings = 0;
   private fields: Field[] = [];
   private beams: Beam[] = [];
+  private followups: Followup[] = [];
+  /** `detonate`: each stack weapon's stats, worked out once per call. */
+  private detonateCache = new Map<WeaponInstance, Effective>();
   /** A reflected hit can set off Thorns, which hurts the owner again: no reflecting from inside a reflect. */
   private reflecting = false;
+  /** The passive's ailment (Plunder): every hit the owner lands puts a stack of its effect on the enemy. */
+  ailment: WeaponInstance | null = null;
 
   /** `projectiles` is shared by every player's weapons. */
   constructor(
@@ -337,17 +354,13 @@ export class Weapons {
     w.stats = applyLevelBonuses(w.levelStats);
   }
 
-  /** The owner's modifications changed: recompute what they add to every weapon and to the ultimate's attack. */
+  /** The owner's modifications changed: recompute what they add to every weapon, the ultimate's attack and the ailment. */
   refreshMods(): void {
     const mods = this.owner.mods;
-    for (const w of this.list) {
+    for (const w of [...this.list, this.owner.ultimate?.attack, this.ailment]) {
+      if (!w) continue;
       w.mod = modsForWeapon(w.def, mods);
       w.splashMod = splashModsFor(w.def, mods);
-    }
-    const ult = this.owner.ultimate?.attack;
-    if (ult) {
-      ult.mod = modsForWeapon(ult.def, mods);
-      ult.splashMod = splashModsFor(ult.def, mods);
     }
   }
 
@@ -360,10 +373,11 @@ export class Weapons {
     const sm = w.splashMod;
     // Percent bonuses add up into one sum per stat. Area: the weapon's own size levels, the AREA stat and area
     // modifications (only AoE weapons get those). Damage: the weapon's own damage levels and modification
-    // bonuses; only DAMAGE (the Damage powerup, Mistwalker) multiplies the result.
+    // bonuses; DAMAGE (the Damage powerup, Mistwalker) and "less damage" modifications multiply the result.
     const area = Math.max(0.1, st.areaMult + (pct.size ?? 0) + m.area);
     const damageSum = 1 + (pct.damage ?? 0) + m.damage;
-    const damageScale = damageSum * p.damageMult;
+    const less = (1 - m.projectileLess) * (1 - m.hitLess);
+    const damageScale = damageSum * p.damageMult * less;
     const durationMult = Math.max(0.1, 1 + m.duration);
     const effect = w.def.effect;
     let cooldown = Math.max(0.05, s.cooldown * st.cooldownMult * hasteFactor(st.abilityHaste));
@@ -376,7 +390,7 @@ export class Weapons {
       damage: base.damage * damageScale,
       damageScale,
       baseDamage: base.damage,
-      ruthlessScale: (damageSum + m.ruthless) * p.damageMult,
+      ruthlessScale: (damageSum + m.ruthless) * p.damageMult * less,
       ruthless: m.ruthless,
       cooldown,
       size: base.size * area,
@@ -395,8 +409,11 @@ export class Weapons {
       echoRepeats: m.echo > 0 ? Math.max(1, Math.round(m.echoRepeats)) : 0,
       // Duration modifications stretch how long the weapon's fields, beams and effects last.
       lifetime: s.lifetime * durationMult,
-      effectDamage: effect ? effect.damage * damageScale : 0,
-      effectDuration: effect ? effect.duration * durationMult : 0,
+      // Damage over time: its own bonuses join the damage sum, and less damage on hit does not reach it.
+      effectDamage: effect ? effect.damage * (damageSum + m.dotDamage) * p.damageMult * (1 - m.dotLess) * (1 - m.projectileLess) : 0,
+      effectInterval: effect ? effect.interval * Math.max(0.05, 1 - m.dotRate) : 0,
+      effectDuration: effect ? effect.duration * Math.max(0.1, 1 + m.duration + m.dotDuration) : 0,
+      virulent: m.virulent,
       reiterate: m.reiterate,
       slow: s.slow ?? 0,
       multistrike: m.multistrike,
@@ -462,6 +479,7 @@ export class Weapons {
       this.updateBeams(dt);
       this.processSplashes();
       this.processEchoes();
+      this.processFollowups(locked);
     }
   }
 
@@ -850,10 +868,20 @@ export class Weapons {
     }
     for (const t of targets) {
       this.fields.push({ weapon: w, x: t.x, y: t.y, radius: e.size, left: e.lifetime, next: 0 });
-      this.game.fx.vortex(t.x, t.y, e.size, e.lifetime, w.def.color ?? 0x9fe4ff);
+      this.game.fx.vortex(t.x, t.y, e.size, e.lifetime, w.def.color ?? 0x9fe4ff, w.def.fieldStyle);
     }
     this.game.playSfx('freeze', p.x, p.y);
     return true;
+  }
+
+  /** True when `en` stands on one of the owner's fields that hand on the stacks of enemies dying there (as fields reach it). */
+  onTransferField(en: Enemy): boolean {
+    for (const f of this.fields) {
+      if (f.left <= FIELD_EPSILON || !f.weapon.def.transferOnDeath) continue;
+      const rr = f.radius + en.radius * 0.5;
+      if ((en.x - f.x) ** 2 + (en.y - f.y) ** 2 <= rr * rr) return true;
+    }
+    return false;
   }
 
   /**
@@ -1711,9 +1739,10 @@ export class Weapons {
 
   /**
    * One of the weapon's own hits on `en` (not a splash, echo or effect tick). Momentum first adds its share of the
-   * owner's current speed, scaled like the weapon's base damage (`scale`). When the hit lands it applies the weapon's
-   * duration effect, queues Echo Strike echoes (`area` hits of AoE weapons only), and for melee weapons may stun and
-   * splashes (Impact). A hit a rare enemy ignores (blocked, shielded) does none of that. Returns whether it landed.
+   * owner's current speed, scaled like the weapon's base damage (`scale`). When the hit lands it sets off the enemy's
+   * stacks (`detonate`), applies the weapon's duration effect and the owner's ailment, may set off a follow-up shot,
+   * queues Echo Strike echoes (`area` hits of AoE weapons only), and for melee weapons may stun and splashes (Impact).
+   * A hit a rare enemy ignores (blocked, shielded) does none of that. Returns whether it landed.
    */
   private directHit(
     w: WeaponInstance,
@@ -1735,7 +1764,10 @@ export class Weapons {
     if (!enemies.hit(en, amount, dirX, dirY, knockback, w)) return false;
     const dealt = enemies.lastDealt;
     const killed = enemies.lastKilled;
+    // The weapon's own damage bonuses scale what it sets off; DAMAGE is already in the stacks.
+    if (w.def.detonate) this.detonate(w, en, w.def.detonate.share * (scale / Math.max(1e-6, p.damageMult)));
     this.applyEffect(w, e, en);
+    this.onLanded(w, en);
     if (area) this.queueEchoes(w, en, x, y, amount * e.echo, e.echoRadius, e.echoRepeats, serial);
     if (e.stunChance > 0 && this.game.rng.float() < e.stunChance) {
       // The stun lasts longer the larger the share of the enemy's max HP the hit took.
@@ -1786,6 +1818,7 @@ export class Weapons {
         const y = en.y;
         if (!this.game.enemies.hit(en, amount, 0, 0, 0, w)) continue;
         const killed = this.game.enemies.lastKilled;
+        this.onLanded(w, en);
         this.queueEchoes(w, en, x, y, amount * e.splashEcho, e.splashEchoRadius, e.splashEchoRepeats, w.serial);
         this.afterHit(w, w.serial, killed);
       }
@@ -1833,7 +1866,12 @@ export class Weapons {
     this.echoes.length = keep;
     for (const [w, sums] of this.echoSums) {
       const serial = serials.get(w) ?? w.serial;
-      for (const [en, amount] of sums) if (this.game.enemies.hit(en, amount, 0, 0, 0, w)) this.afterHit(w, serial, this.game.enemies.lastKilled);
+      for (const [en, amount] of sums) {
+        if (!this.game.enemies.hit(en, amount, 0, 0, 0, w)) continue;
+        const killed = this.game.enemies.lastKilled;
+        this.onLanded(w, en);
+        this.afterHit(w, serial, killed);
+      }
       sums.clear();
     }
   }
@@ -1860,8 +1898,67 @@ export class Weapons {
   }
 
   /**
-   * Duration weapons: a hit applies the weapon's effect (refreshing the stack it applied before) and may reiterate.
-   * Hexproof enemies take none.
+   * Something of `w` that is not damage over time landed on `en` (a hit, splash or echo): the owner's ailment puts a
+   * stack on it, and every `followup` weapon of the owner (but `w` itself) may queue a shot at it.
+   */
+  private onLanded(w: WeaponInstance, en: Enemy): void {
+    if (!en.active) return;
+    const ail = this.ailment;
+    if (ail && w !== ail) this.applyEffect(ail, this.eff(ail), en);
+    for (const f of this.list) {
+      if (f.def.targeting !== 'followup' || f === w || this.followups.length >= MAX_FOLLOWUPS) continue;
+      if (this.game.rng.float() < (f.stats.procChance ?? 0)) this.followups.push({ weapon: f, target: en, targetId: en.netId });
+    }
+  }
+
+  /**
+   * Follow-up shots queued by this frame's hits go off: each is an attack of its own, fired from the owner at the enemy
+   * that was hit (dropped when it died meanwhile, or the owner is mist).
+   */
+  private processFollowups(locked: boolean): void {
+    if (this.followups.length === 0) return;
+    const p = this.owner;
+    for (const f of this.followups) {
+      const t = stillAlive(f.target, f.targetId);
+      if (!t || locked) continue;
+      const w = f.weapon;
+      w.serial++;
+      this.volley(w, this.eff(w), Math.atan2(t.y - p.y, t.x - p.x));
+    }
+    this.followups.length = 0;
+  }
+
+  /**
+   * Sets off `en`'s stacks of the effect `w.def.detonate` names: every stack deals, at once, `mult` times the damage its
+   * ticks still to come would deal (with its own weapon's bonuses), as one hit of damage over time credited to `w`.
+   * The stacks stay. Returns the damage set off (before the enemy's own reductions), 0 with no stacks.
+   */
+  detonate(w: WeaponInstance, en: Enemy, mult: number): number {
+    const id = w.def.detonate?.effect;
+    if (!id || !en.active || en.effects.length === 0 || mult <= 0) return 0;
+    const cache = this.detonateCache;
+    cache.clear();
+    let total = 0;
+    for (const st of en.effects) {
+      if (st.weapon.def.effect?.id !== id) continue;
+      let e = cache.get(st.weapon);
+      if (!e) {
+        e = st.weapon.owner.weapons.eff(st.weapon);
+        cache.set(st.weapon, e);
+      }
+      total += remainingTicks(st, e.effectInterval) * e.effectDamage;
+    }
+    if (total <= 0) return 0;
+    const x = en.x;
+    const y = en.y;
+    this.game.enemies.hit(en, total * mult, 0, 0, 0, w, true);
+    this.game.fx.echo(x, y, en.radius + 6, w.def.color ?? 0xd2a8ff);
+    return total * mult;
+  }
+
+  /**
+   * Duration weapons: a hit applies the weapon's effect (refreshing the stack it applied before, unless the effect
+   * stacks) and may reiterate. Hexproof enemies take none.
    */
   private applyEffect(w: WeaponInstance, e: Effective, en: Enemy): void {
     const def = w.def.effect;
@@ -1871,8 +1968,8 @@ export class Weapons {
     else {
       let count = 0;
       for (const st of en.effects) if (st.weapon === w) count++;
-      if (count >= MAX_EFFECT_STACKS) return;
-      stack = { weapon: w, left: e.effectDuration, next: def.interval, copy: false };
+      if (count >= (def.maxStacks ?? MAX_EFFECT_STACKS)) return;
+      stack = { weapon: w, left: e.effectDuration, next: e.effectInterval, copy: false };
       en.effects.push(stack);
     }
     this.game.enemies.reiterate(en, stack, e.reiterate);
@@ -1939,6 +2036,7 @@ export class Weapons {
     this.splashSums.clear();
     this.fields.length = 0;
     this.beams.length = 0;
+    this.followups.length = 0;
     for (const w of this.list) {
       for (const s of w.orbiters) s.destroy();
       w.orbiters.length = 0;
@@ -1970,5 +2068,6 @@ export class Weapons {
     this.splashSums.clear();
     this.fields.length = 0;
     this.beams.length = 0;
+    this.followups.length = 0;
   }
 }

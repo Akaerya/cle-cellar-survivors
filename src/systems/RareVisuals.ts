@@ -15,6 +15,8 @@ export interface RareView {
   /** Enrage, 0..1. */
   enrage: number;
   souls: number;
+  /** Temporal Shield: the bubble is broken while it recharges. */
+  shieldDown: boolean;
 }
 
 /** The border: four copies of the sprite, one px out on each side, behind it. */
@@ -219,7 +221,16 @@ export class RareVisuals {
         break;
       }
       case 'temporal_shield': {
-        // A bubble: hits from outside it do nothing.
+        // A bubble that weakens hits from outside it; while it recharges only a faint dashed ring is left.
+        if (v.shieldDown) {
+          o.lineStyle(1, m.color, 0.2);
+          for (let i = 0; i < 12; i += 2) {
+            o.beginPath();
+            o.arc(x, y, m.radius, (i * Math.PI) / 6, ((i + 1) * Math.PI) / 6);
+            o.strokePath();
+          }
+          break;
+        }
         o.fillStyle(m.color, 0.07);
         o.fillCircle(x, y, m.radius);
         o.lineStyle(1, m.color, 0.45 + 0.2 * Math.sin(t * 4 + ph));
