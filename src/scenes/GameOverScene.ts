@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { COLOR, MAX_LEVEL, PLAYER_COLORS, SCENES, VIEW_H, VIEW_W } from '../constants';
-import type { BuildEntry, PartyMember, RunSummary } from '../core/events';
+import type { BuildEntry, PartyMember, RunSummary, WeaponReport } from '../core/events';
 import { formatTime } from '../core/progression';
 import { sfx } from '../core/sfx';
 import { characterDef } from '../data';
@@ -16,6 +16,18 @@ const PH = VIEW_H - 16;
 const LEFT = PX + 14;
 const PARTY_Y = 106;
 const ROW_H = 12;
+/**
+ * Parties larger than this get the compact layout: the headline numbers on one line, shorter party rows and the
+ * selected player's weapons in two columns, so up to MAX_PLAYERS rows still fit.
+ */
+const ROOMY_PARTY = 4;
+const COMPACT_PARTY_Y = 86;
+const COMPACT_ROW_H = 11;
+/** Compact weapon list: px per column, and the longest name shown before it is cut short. */
+const COMPACT_COL_W = 290;
+const COMPACT_NAME_MAX = 17;
+/** One weapon row. */
+const WEAPON_ROW_H = 17;
 
 /** Party table columns: label, width in px, value. */
 const PARTY_COLS: { label: string; w: number; value: (m: PartyMember) => string }[] = [
@@ -32,6 +44,11 @@ const PARTY_COLS: { label: string; w: number; value: (m: PartyMember) => string 
   { label: 'ULTS', w: 38, value: (m) => String(m.stats.ultCasts) },
   { label: 'CRITS', w: 38, value: (m) => short(m.stats.crits ?? 0) },
 ];
+
+/** LEVEL column of a weapon row: ULT, PASSIVE (a passive's pets) or the weapon's level. */
+function levelLabel(w: WeaponReport): string {
+  return w.ultimate ? 'ULT' : w.passive ? 'PASSIVE' : `LV ${w.level}`;
+}
 
 /** 1234 -> 1234, 12345 -> 12.3K, 1234567 -> 1.2M. Decimals only below 100. */
 function short(v: number): string {
@@ -50,6 +67,10 @@ export class GameOverScene extends Phaser.Scene {
   private selected = 0;
   private rowBg!: Phaser.GameObjects.Graphics;
   private detail!: Phaser.GameObjects.Container;
+  /** Large party: the compact layout (see ROOMY_PARTY). */
+  private compact = false;
+  private partyY = PARTY_Y;
+  private rowH = ROW_H;
 
   constructor() {
     super(SCENES.gameOver);
@@ -57,6 +78,9 @@ export class GameOverScene extends Phaser.Scene {
 
   create(summary: RunSummary): void {
     this.summary = summary;
+    this.compact = summary.party.length > ROOMY_PARTY;
+    this.partyY = this.compact ? COMPACT_PARTY_Y : PARTY_Y;
+    this.rowH = this.compact ? COMPACT_ROW_H : ROW_H;
     const win = summary.victory;
     const dim = this.add.rectangle(0, 0, VIEW_W, VIEW_H, win ? 0x2a2010 : 0x12030a, 0).setOrigin(0);
     this.tweens.add({ targets: dim, fillAlpha: 0.8, duration: 500 });
@@ -86,9 +110,12 @@ export class GameOverScene extends Phaser.Scene {
       ['KILLS', String(summary.kills)],
     ];
     if (summary.teamDeaths !== undefined) stats.push(['TEAM DEATHS', String(summary.teamDeaths)]);
+    if (this.compact) {
+      text(this, VIEW_W / 2, PY + 52, stats.map(([k, v]) => `${k} ${v}`).join(' · '), { origin: [0.5, 0], color: COLOR.text });
+    }
     const colW = 110;
     const sx0 = VIEW_W / 2 - (colW * stats.length) / 2;
-    stats.forEach(([k, v], i) => {
+    if (!this.compact) stats.forEach(([k, v], i) => {
       const cx = sx0 + colW * (i + 0.5);
       text(this, cx, PY + 52, k, { origin: [0.5, 0], color: COLOR.textDim });
       text(this, cx, PY + 62, v, { scale: 2, origin: [0.5, 0], color: COLOR.text });
@@ -129,18 +156,18 @@ export class GameOverScene extends Phaser.Scene {
   /** One row per player; click a row to see that player's weapons. */
   private drawParty(): void {
     const party = this.summary.party;
-    text(this, LEFT, PARTY_Y - 14, 'PARTY', { color: COLOR.gold });
+    text(this, LEFT, this.partyY - 14, 'PARTY', { color: COLOR.gold });
     this.rowBg = this.add.graphics();
     let x = LEFT;
     for (const c of PARTY_COLS) {
-      text(this, x, PARTY_Y, c.label, { color: COLOR.textDim });
+      text(this, x, this.partyY, c.label, { color: COLOR.textDim });
       x += c.w;
     }
     const line = this.add.graphics();
     line.lineStyle(1, COLOR.panelEdge, 1);
-    line.lineBetween(LEFT, PARTY_Y + 10.5, PX + PW - 14, PARTY_Y + 10.5);
+    line.lineBetween(LEFT, this.partyY + 10.5, PX + PW - 14, this.partyY + 10.5);
     party.forEach((m, i) => {
-      const y = PARTY_Y + 13 + i * ROW_H;
+      const y = this.partyY + 13 + i * this.rowH;
       let cx = LEFT;
       PARTY_COLS.forEach((c, k) => {
         const color = k === 0 ? (this.summary.coopPlayers !== undefined ? PLAYER_COLORS[m.slot] : COLOR.gold) : COLOR.text;
@@ -148,7 +175,7 @@ export class GameOverScene extends Phaser.Scene {
         text(this, cx, y, c.value(m), { color }).setAlpha(m.left ? 0.45 : 1);
         cx += c.w;
       });
-      const zone = this.add.zone(LEFT - 4, y - 1, PW - 20, ROW_H).setOrigin(0).setInteractive({ useHandCursor: true });
+      const zone = this.add.zone(LEFT - 4, y - 1, PW - 20, this.rowH).setOrigin(0).setInteractive({ useHandCursor: true });
       zone.on('pointerup', () => this.select(i, true));
     });
   }
@@ -162,7 +189,7 @@ export class GameOverScene extends Phaser.Scene {
     if (n > 1) {
       this.rowBg.clear();
       this.rowBg.fillStyle(COLOR.gold, 0.12);
-      this.rowBg.fillRect(LEFT - 4, PARTY_Y + 12 + next * ROW_H, PW - 20, ROW_H);
+      this.rowBg.fillRect(LEFT - 4, this.partyY + 12 + next * this.rowH, PW - 20, this.rowH);
     }
     this.drawDetail(this.summary.party[next]);
   }
@@ -172,22 +199,45 @@ export class GameOverScene extends Phaser.Scene {
     const d = this.detail;
     d.removeAll(true);
     const add = <T extends Phaser.GameObjects.GameObject>(o: T) => (d.add(o), o);
-    let y = PARTY_Y + 18 + Math.max(1, this.summary.party.length) * ROW_H;
-    const cols = { lv: LEFT + 190, damage: LEFT + 250, dps: LEFT + 320, kills: LEFT + 380, share: LEFT + 440 };
-    add(text(this, LEFT, y, `${m.name}'S WEAPONS`, { color: COLOR.gold }));
-    for (const [k, x] of Object.entries(cols)) add(text(this, x, y, k === 'lv' ? 'LEVEL' : k.toUpperCase(), { color: COLOR.textDim }));
-    y += 12;
+    let y = this.partyY + 18 + Math.max(1, this.summary.party.length) * this.rowH;
     const total = Math.max(1, m.stats.damage);
-    for (const w of m.weapons) {
-      add(this.add.image(LEFT, y, ATLAS, w.icon).setOrigin(0));
-      add(text(this, LEFT + 20, y + 4, w.name.toUpperCase(), { color: w.ultimate ? COLOR.gold : COLOR.text }));
-      const lv = w.ultimate ? 'ULT' : w.passive ? 'PASSIVE' : `LV ${w.level}`;
-      add(text(this, cols.lv, y + 4, lv, { color: w.ultimate || w.level >= MAX_LEVEL ? COLOR.gold : COLOR.text }));
-      add(text(this, cols.damage, y + 4, short(w.damage), { color: COLOR.gold }));
-      add(text(this, cols.dps, y + 4, short(w.dps), { color: COLOR.text }));
-      add(text(this, cols.kills, y + 4, String(w.kills), { color: COLOR.text }));
-      add(text(this, cols.share, y + 4, `${Math.round((w.damage / total) * 100)}%`, { color: COLOR.textDim }));
-      y += 17;
+    if (this.compact) {
+      // Two columns of weapons, without DPS.
+      const cols = { lv: 130, damage: 178, kills: 218, share: 252 };
+      add(text(this, LEFT, y, `${m.name}'S WEAPONS`, { color: COLOR.gold }));
+      for (let c = 0; c < 2; c++) {
+        for (const [k, x] of Object.entries(cols)) {
+          add(text(this, LEFT + c * COMPACT_COL_W + x, y, k === 'lv' ? 'LEVEL' : k.toUpperCase(), { color: COLOR.textDim }));
+        }
+      }
+      y += 12;
+      m.weapons.forEach((w, i) => {
+        const x = LEFT + (i % 2) * COMPACT_COL_W;
+        const wy = y + Math.floor(i / 2) * WEAPON_ROW_H;
+        const name = w.name.length > COMPACT_NAME_MAX ? `${w.name.slice(0, COMPACT_NAME_MAX - 1)}.` : w.name;
+        add(this.add.image(x, wy, ATLAS, w.icon).setOrigin(0));
+        add(text(this, x + 20, wy + 4, name.toUpperCase(), { color: w.ultimate ? COLOR.gold : COLOR.text }));
+        add(text(this, x + cols.lv, wy + 4, levelLabel(w), { color: w.ultimate || w.level >= MAX_LEVEL ? COLOR.gold : COLOR.text }));
+        add(text(this, x + cols.damage, wy + 4, short(w.damage), { color: COLOR.gold }));
+        add(text(this, x + cols.kills, wy + 4, String(w.kills), { color: COLOR.text }));
+        add(text(this, x + cols.share, wy + 4, `${Math.round((w.damage / total) * 100)}%`, { color: COLOR.textDim }));
+      });
+      y += Math.ceil(m.weapons.length / 2) * WEAPON_ROW_H;
+    } else {
+      const cols = { lv: LEFT + 190, damage: LEFT + 250, dps: LEFT + 320, kills: LEFT + 380, share: LEFT + 440 };
+      add(text(this, LEFT, y, `${m.name}'S WEAPONS`, { color: COLOR.gold }));
+      for (const [k, x] of Object.entries(cols)) add(text(this, x, y, k === 'lv' ? 'LEVEL' : k.toUpperCase(), { color: COLOR.textDim }));
+      y += 12;
+      for (const w of m.weapons) {
+        add(this.add.image(LEFT, y, ATLAS, w.icon).setOrigin(0));
+        add(text(this, LEFT + 20, y + 4, w.name.toUpperCase(), { color: w.ultimate ? COLOR.gold : COLOR.text }));
+        add(text(this, cols.lv, y + 4, levelLabel(w), { color: w.ultimate || w.level >= MAX_LEVEL ? COLOR.gold : COLOR.text }));
+        add(text(this, cols.damage, y + 4, short(w.damage), { color: COLOR.gold }));
+        add(text(this, cols.dps, y + 4, short(w.dps), { color: COLOR.text }));
+        add(text(this, cols.kills, y + 4, String(w.kills), { color: COLOR.text }));
+        add(text(this, cols.share, y + 4, `${Math.round((w.damage / total) * 100)}%`, { color: COLOR.textDim }));
+        y += WEAPON_ROW_H;
+      }
     }
     y += 2;
     add(text(this, LEFT, y + 4, 'ITEMS', { color: COLOR.textDim }));

@@ -11,9 +11,12 @@ import { Button, Menu, drawPanel, onKey, text } from '../ui/widgets';
 type LobbyMode = 'host' | 'join' | 'resume';
 
 const PANEL_X = 40;
+/** Player cards: CARDS_PER_ROW to a row, as many rows as MAX_PLAYERS needs. */
 const CARD_W = 128;
+const CARD_H = 74;
+const CARD_GAP = 6;
+const CARDS_PER_ROW = 4;
 const CARD_Y = 132;
-const CARD_H = 140;
 const BUTTON_Y = 292;
 
 /**
@@ -180,7 +183,7 @@ export class LobbyScene extends Phaser.Scene {
     const character = () => this.scene.start(SCENES.select, { from: 'lobby' });
     const name = () => this.startEdit();
     if (s.isHost) {
-      this.status.setText('SHARE THIS CODE OR THE LINK WITH UP TO 3 FRIENDS').setTint(COLOR.textDim);
+      this.status.setText(`SHARE THIS CODE OR THE LINK WITH UP TO ${MAX_PLAYERS - 1} FRIENDS`).setTint(COLOR.textDim);
       const start = () => hostStartRun(this.game, s);
       const copy = () => this.copyLink(s.code);
       const w = 100;
@@ -217,30 +220,34 @@ export class LobbyScene extends Phaser.Scene {
     const s = this.session;
     if (!s || !this.live) return;
     this.roster.removeAll(true);
-    const x0 = VIEW_W / 2 - (MAX_PLAYERS * CARD_W) / 2;
+    // Each card: the character on the left; slot, name, character and status on the right.
+    const perRow = Math.min(CARDS_PER_ROW, MAX_PLAYERS);
+    const x0 = VIEW_W / 2 - (perRow * CARD_W + (perRow - 1) * CARD_GAP) / 2;
     for (let slot = 0; slot < MAX_PLAYERS; slot++) {
-      const cx = x0 + slot * CARD_W + CARD_W / 2;
+      const x = x0 + (slot % perRow) * (CARD_W + CARD_GAP);
+      const y = CARD_Y + Math.floor(slot / perRow) * (CARD_H + CARD_GAP);
       const here = s.slots.includes(slot);
       const mine = slot === s.mySlot;
       const g = this.add.graphics();
       const edge = here ? PLAYER_COLORS[slot] : COLOR.panelEdge;
-      drawPanel(g, cx - CARD_W / 2 + 5, CARD_Y, CARD_W - 10, CARD_H, edge, COLOR.inkSoft, here ? 0.9 : 0.5);
+      drawPanel(g, x, y, CARD_W, CARD_H, edge, COLOR.inkSoft, here ? 0.9 : 0.5);
       this.roster.add(g);
-      this.roster.add(text(this, cx, CARD_Y + 11, `P${slot + 1}`, { origin: [0.5, 0.5], color: here ? PLAYER_COLORS[slot] : COLOR.textDim }));
+      const tx = x + 46;
+      this.roster.add(text(this, tx, y + 8, `P${slot + 1}`, { color: here ? PLAYER_COLORS[slot] : COLOR.textDim }));
       if (!here) {
-        this.roster.add(text(this, cx, CARD_Y + 70, 'OPEN', { origin: [0.5, 0.5], color: 0x5a4f73 }));
+        this.roster.add(text(this, tx, y + 30, 'OPEN', { color: 0x5a4f73 }));
         continue;
       }
       const profile = s.profiles[slot];
       const c = characterDef(profile?.character);
       const editingMine = mine && this.editing !== null;
       const shownName = editingMine ? `${this.editing}_` : displayName(profile?.name, slot);
-      this.roster.add(text(this, cx, CARD_Y + 25, shownName, { origin: [0.5, 0.5], color: editingMine ? COLOR.gold : COLOR.text }));
-      const m = this.add.sprite(cx, CARD_Y + 68, ATLAS, c.firstFrame).setScale(3).play(`${c.anim}-idle`).setTint(PLAYER_TINTS[slot]);
+      const m = this.add.sprite(x + 23, y + CARD_H / 2, ATLAS, c.firstFrame).setScale(2).play(`${c.anim}-idle`).setTint(PLAYER_TINTS[slot]);
       this.roster.add(m);
-      this.roster.add(text(this, cx, CARD_Y + 108, c.name.toUpperCase(), { origin: [0.5, 0.5], color: COLOR.gold }));
+      this.roster.add(text(this, tx, y + 22, shownName, { color: editingMine ? COLOR.gold : COLOR.text }));
+      this.roster.add(text(this, tx, y + 36, c.name.toUpperCase(), { color: COLOR.gold }));
       const tag = mine ? 'YOU' : slot === 0 ? 'HOST' : 'READY';
-      this.roster.add(text(this, cx, CARD_Y + 124, tag, { origin: [0.5, 0.5], color: mine ? COLOR.gold : COLOR.textDim }));
+      this.roster.add(text(this, tx, y + 54, tag, { color: mine ? COLOR.gold : COLOR.textDim }));
     }
   }
 

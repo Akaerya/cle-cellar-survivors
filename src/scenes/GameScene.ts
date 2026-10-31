@@ -120,6 +120,10 @@ const SPAWN_OFFSETS = [
   [28, 0],
   [-28, 0],
   [0, 26],
+  [0, -26],
+  [28, 26],
+  [-28, 26],
+  [28, -26],
 ] as const;
 /** Joiners report their character's position this often. */
 const POS_HZ = 30;

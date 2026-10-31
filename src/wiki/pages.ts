@@ -413,7 +413,7 @@ function charactersPage(filter: string): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby. Each character has its own weapon kit, ultimate and passive. Items, modifications, powerups and base stats are shared (see ITEMS, MODS and POWERUPS), and several players may pick the same character.`,
+      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby: click a portrait (or LEFT / RIGHT) to see that character's abilities and kit, and click it again (or ENTER) to pick it. Each character has its own weapon kit, ultimate and passive. Items, modifications, powerups and base stats are shared (see ITEMS, MODS and POWERUPS), and several players may pick the same character.`,
     },
     {
       t: 'p',
@@ -978,7 +978,7 @@ function coopPage(): Block[] {
     { t: 'h', text: 'LOBBY' },
     {
       t: 'p',
-      text: `Everyone picks a character with CHARACTER and can set a display name (up to ${NAME_MAX} letters, digits or . - _ ! ? ') with NAME; without one you are shown as P1 to P4. Names are shown over each character, in the teammate list and on the party screen. Both are remembered for next time.`,
+      text: `Everyone picks a character with CHARACTER and can set a display name (up to ${NAME_MAX} letters, digits or . - _ ! ? ') with NAME; without one you are shown as P1 to P${MAX_PLAYERS}. Names are shown over each character, in the teammate list and on the party screen. Both are remembered for next time.`,
     },
     { t: 'h', text: 'SHARED EXP' },
     {
@@ -1060,7 +1060,7 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'PARTY SCREEN' },
     {
       t: 'p',
-      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal and passives, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate (and a passive\'s pets: Warren\'s headbutts; Bunny Armory counts the damage of its gear): level, damage, DPS since it was picked up, kills and share of their damage.',
+      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal and passives, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate (and a passive\'s pets: Warren\'s headbutts; Bunny Armory counts the damage of its gear): level, damage, DPS since it was picked up, kills and share of their damage. With more than 4 players the screen is compact: the weapons are in two columns, without DPS.',
     },
     { t: 'h', text: 'CONTROLS' },
     { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click; R rerolls.' },

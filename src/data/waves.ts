@@ -29,7 +29,7 @@ export function speedScaleForMinute(minute: number): number {
 
 /**
  * Co-op: enemy HP is multiplied by 1 + this x (players - 1), so 2 players face 1.75x HP,
- * 3 players 2.5x and 4 players 3.25x.
+ * 4 players 3.25x and 8 players 6.25x.
  */
 export const HP_SCALE_PER_EXTRA_PLAYER = 0.75;
 
@@ -40,7 +40,7 @@ export function hpScaleForPlayers(players: number): number {
 /**
  * Spawn pressure: the wave's ON FIELD target (and with it how fast the horde is topped up) is multiplied by
  * (1 + PER_MINUTE x minute) x (1 + PER_EXTRA_PLAYER x (players - 1)), capped at MAX_ENEMIES.
- * So +4% per minute (x1.56 at 14:00) and +15% per extra player (x1.45 with 4 players).
+ * So +4% per minute (x1.56 at 14:00) and +15% per extra player (x1.45 with 4 players, x2.05 with 8).
  */
 export const SPAWN_SCALE_PER_MINUTE = 0.04;
 export const SPAWN_SCALE_PER_EXTRA_PLAYER = 0.15;
