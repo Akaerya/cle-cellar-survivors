@@ -2,7 +2,7 @@ import type { CharacterDef } from './types';
 
 /**
  * Playable characters (members of the Cle Cellar Discord server). Each has its own weapon kit, ultimate and
- * passive; items, base stats and everything else are shared.
+ * passive; curios, base stats and everything else are shared.
  */
 export const CHARACTERS: CharacterDef[] = [
   {

@@ -2,13 +2,13 @@ import { BOSSES, BOSS_HAZARDS, MINIONS } from './bosses';
 import { CHARACTERS } from './characters';
 import { ENEMIES } from './enemies';
 import { ENEMY_MODIFIERS, RARE_HAZARDS } from './enemyModifiers';
-import { ITEMS } from './items';
+import { CURIOS, CURIO_ATTACKS } from './curios';
 import { MODIFICATIONS } from './modifications';
 import { PASSIVES } from './passives';
 import { POWERUPS } from './powerups';
 import { ULTIMATES } from './ultimates';
 import { WEAPONS } from './weapons';
-import type { CharacterDef, EnemyDef, EnemyModifierDef, EnemyModifierId, HazardDef, ItemDef, ModificationDef, PassiveDef, UltimateDef, WeaponDef } from './types';
+import type { CharacterDef, EnemyDef, EnemyModifierDef, CurioDef, CurioId, EnemyModifierId, HazardDef, ModificationDef, PassiveDef, PowerupDef, UltimateDef, WeaponDef } from './types';
 
 export * from './types';
 export { ENEMIES } from './enemies';
@@ -23,7 +23,7 @@ export const HAZARDS: HazardDef[] = [...BOSS_HAZARDS, ...RARE_HAZARDS];
  * snapshots tell joiners which art to draw.
  */
 export const ALL_ENEMIES: EnemyDef[] = [...ENEMIES, ...MINIONS, ...BOSSES];
-export { ITEMS } from './items';
+export { CURIOS, CURIO_TIERS, CURIO_EVERY, CURIO_CHOICES, CURIO_ATTACKS, curioText } from './curios';
 export {
   MODIFICATIONS,
   SPLIT_ARC,
@@ -50,28 +50,33 @@ export const PET_ATTACKS: WeaponDef[] = [
   ...WEAPONS.flatMap((w) => w.gear ?? []),
 ];
 
+/** Atlas animation of Shadows and Dust's cyclones (drawn in the summon layer). */
+export const CYCLONE_ANIM = 'cyclone-spin';
+
 /**
  * Art of everything drawn in the snapshot's summon layer: pets (bare, then with each piece of gear), then seeker
- * blades. A summon's index in this list is how snapshots tell joiners which animation to play.
+ * blades, then Shadows and Dust's cyclones. A summon's index in this list is how snapshots tell joiners which
+ * animation to play.
  */
 export const SUMMON_ANIMS: string[] = [
   ...new Set([
     ...PASSIVES.flatMap((p) => (p.kind === 'pets' ? [p.anim] : [])),
     ...WEAPONS.flatMap((w) => (w.gear ?? []).flatMap((g) => (g.petAnim ? [g.petAnim] : []))),
     ...WEAPONS.flatMap((w) => (w.targeting === 'seeker' && w.projectileAnim ? [w.projectileAnim] : [])),
+    CYCLONE_ANIM,
   ]),
 ];
 
 /**
- * Everything that can fire a projectile: weapons, ultimate attacks, then pet attacks. A projectile's index in this
- * list is how snapshots tell joiners which art to draw.
+ * Everything that can fire a projectile: weapons, ultimate attacks, pet attacks, then curio attacks. A projectile's
+ * index in this list is how snapshots tell joiners which art to draw.
  */
-export const ATTACK_DEFS: WeaponDef[] = [...WEAPONS, ...ULTIMATES.map((u) => u.attack), ...PET_ATTACKS];
+export const ATTACK_DEFS: WeaponDef[] = [...WEAPONS, ...ULTIMATES.map((u) => u.attack), ...PET_ATTACKS, ...CURIO_ATTACKS];
 
 const byId = <T extends { id: string }>(list: T[]) => new Map(list.map((e) => [e.id, e]));
 
 const weaponMap = byId(WEAPONS);
-const itemMap = byId(ITEMS);
+const curioMap = byId(CURIOS);
 const modMap = byId(MODIFICATIONS);
 const powerupMap = byId(POWERUPS);
 const enemyMap = byId(ALL_ENEMIES);
@@ -86,10 +91,15 @@ export function weaponDef(id: string): WeaponDef {
   return d;
 }
 
-export function itemDef(id: string): ItemDef {
-  const d = itemMap.get(id);
-  if (!d) throw new Error(`Unknown item ${id}`);
+export function curioDef(id: string): CurioDef {
+  const d = curioMap.get(id);
+  if (!d) throw new Error(`Unknown curio ${id}`);
   return d;
+}
+
+/** The curio `id`, typed by its kind. */
+export function curioOf<K extends CurioId>(id: K): Extract<CurioDef, { id: K }> {
+  return curioDef(id) as Extract<CurioDef, { id: K }>;
 }
 
 export function modDef(id: string): ModificationDef {
@@ -98,7 +108,7 @@ export function modDef(id: string): ModificationDef {
   return d;
 }
 
-export function powerupDef(id: string): ItemDef {
+export function powerupDef(id: string): PowerupDef {
   const d = powerupMap.get(id);
   if (!d) throw new Error(`Unknown powerup ${id}`);
   return d;

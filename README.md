@@ -13,12 +13,14 @@ A survivor-like for desktop browsers where you play as members of the Cle Cellar
 | **rabbit**, the bunny conjurer | Arcane Bolt (start; projectile: a slow magic orb, cast faster and a little harder with levels), Carrot Sword (melee: a carrot sword floats around you, dashes through the nearest enemy and flies back), Carrot Rations (your bunnies deal more damage, attack faster and run faster), Bunny Armory (every bunny carries a sword, bow or spellbook and swaps it every 8 s; levels add damage to all three) | **Giant Bunny**: a giant hardhat bunny joins your bunnies for 20 s; it gets every bunny bonus, deals 3x their damage and stomps around the enemy it reaches; 150 s cooldown | **Warren**: start with 2 hardhat bunnies and gain another every minute (up to 12); they chase enemies near you and headbutt them |
 | **Licras**, humanity's nemesis (a goldfish on human legs) | Midnight Tumult (start; projectile: a submachine gun burst at the nearest enemy; the first bullet to hit sets off 50% of the Shock its target still has to take), Caressing Moonlight (melee, AoE: a katana swing all around you that sets off 75% of each enemy's Shock), Gentle But Cruel (projectile: any hit you land may fire a follow-up shot at that enemy, extra shots one after another; its first hit sets off 40% of the enemy's Shock), Vulnerability (duration, AoE: a web that slows by 60% and puts Shock on enemies four times a second; enemies dying on it hand their stacks on; one more web per level) | **Twilight Trill**: flashes the screen and sets off 200% of the Shock every enemy still has to take; 55 s cooldown | **Plunder**: every hit you land puts a stack of Shock on the enemy (3 damage every 0.5 s for 5 s; stacks pile up) |
 
-Each character has its own four weapons (level-up cards only offer your character's), ultimate and passive; items, modifications, powerups and base stats are shared. The character select screen shows a portrait per character: click one (or LEFT / RIGHT) to see its description, starting weapon, ultimate, passive and kit, and click it again (or ENTER) to pick it.
+Each character has its own four weapons (level-up cards only offer your character's), ultimate and passive; curios, modifications, powerups and base stats are shared. The character select screen shows a portrait per character: click one (or LEFT / RIGHT) to see its description, starting weapon, ultimate, passive and kit, and click it again (or ENTER) to pick it.
 
 Level-up cards can also offer:
 
 - **Modifications** (up to level 5, no slots) change every weapon that shares one of their tags. Projectile: Pierce, Splits, Chain, Additional Projectiles. AoE: Increased AoE, Reduced AoE, Echo Strike. Duration: Increase Duration, Less Duration, Reiterate. Melee: Multistrike, Stun, Momentum, Impact (melee hits splash, and AoE modifications then change the splash), Ruthless. DoT (damage over time): Deadly Ailments, Sadism, Virulent Chain. A weapon whose effect deals damage over time counts as DoT, and DoT counts as Duration. A modification is offered once you own a weapon, or have an ultimate or passive, it changes. Tags per weapon are on the wiki's WEAPONS page.
 - **Generic powerups** (up to level 20, no slots): Damage, Maximum Health, Ability Haste, Movement Speed, Health Regen, Damage Taken (only offered while you own a melee weapon). The HUD shows your ultimate under your build: green edge when ready, gold with a bar while it runs, greyed out with the seconds left while it recharges. Your passive is under it, and a gold line lists what is running on you (Aegis, Shadow Charges, Unstable Infusion charges, Mistwalker's damage); Warren shows how many bunnies you have and when the next one comes. In co-op every teammate's ultimate is shown the same way next to their name and HP.
+
+**Curios** come every 8 levels (8, 16, 24, ...): right after that level's card you pick one of three curios. They are kept for the run, take no slot, are never offered twice and cannot be rerolled. Each card rolls a tier: tier 0 (3%, e.g. Headhunter, Original Sin, Shadows and Dust, Suffering Mass, Chronobreak, Resonance Dynamo, Martyr's Crown), tier 1 (8%), tier 2 (39%) and tier 3 (50%, e.g. Jewel Magnet, which replaced the old Magnet item). Items are gone: curios took their place. The HUD shows your curios under the weapons (their tier in the corner) and their counters on the buff line (Rampage, Static, Fleeting Fantasy, shields, stolen modifiers). The wiki's CURIOS page lists every one with its numbers.
 
 Each player has **5 rerolls** per run: R (or the REROLL button) replaces all three cards. When the run resumes after a pick you are invulnerable for 0.25 s. That and the 2 s after any revive (a co-op revive, Ragebaiter; `REVIVE.invulnSeconds` in `data/coop.ts`) are the only invulnerability: taking a hit gives none, so every enemy touching you can hurt you, each at most once every 0.5 s (`ENEMY_HIT_COOLDOWN` in `constants.ts`; boss hazards have their own timers too).
 
@@ -90,7 +92,7 @@ Code lives in `src/net/` (session, lobby profiles, message and snapshot format, 
 
 ## Wiki
 
-Title screen > **WIKI** (also in the pause menu) lists every character, ultimate, weapon, modification, item, powerup, monster, rare enemy modifier, boss, wave, drop and co-op rule with its numbers, read straight from `src/data`. Long pages have filter chips under the tabs (click, 1-9, or Q/E): by character on CHARACTERS and WEAPONS, by tag on MODS, by entry on POWERUPS and BOSSES. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
+Title screen > **WIKI** (also in the pause menu) lists every character, ultimate, weapon, modification, curio, powerup, monster, rare enemy modifier, boss, wave, drop and co-op rule with its numbers, read straight from `src/data`. Long pages have filter chips under the tabs (click, 1-9, or Q/E): by character on CHARACTERS and WEAPONS, by tag on MODS, by tier on CURIOS, by entry on POWERUPS and BOSSES. The prose lives in `src/wiki/pages.ts`; keep it current when adding content or mechanics (see `CLAUDE.md`).
 
 ## Controls
 
@@ -103,7 +105,7 @@ src/
   main.ts              game config: 640x360, pixelArt, FIT scaling, Arcade at a fixed 60 Hz
   constants.ts         engine constants (arena size, caps, depths, colours, scene keys)
   data/                everything a designer tunes
-    characters.ts ultimates.ts passives.ts weapons.ts modifications.ts items.ts powerups.ts enemies.ts enemyModifiers.ts bosses.ts waves.ts drops.ts coop.ts player.ts types.ts
+    characters.ts ultimates.ts passives.ts weapons.ts modifications.ts curios.ts powerups.ts enemies.ts enemyModifiers.ts bosses.ts waves.ts drops.ts coop.ts player.ts types.ts
   wiki/pages.ts        in-game wiki pages, built from data/
   core/
     progression.ts     level curve, weapon stats per level, player stat calculation
@@ -126,11 +128,11 @@ scripts/
 
 ## Adding content
 
-Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine code reads them generically.
+Every character, ultimate, weapon, curio, enemy and wave is a data entry. Engine code reads them generically.
 
 **A character** goes in `data/characters.ts`: a name, art (`anim` prefix with `-idle`, `-walk` and `-hurt` animations: a sheet with `<anim>_idle`, `<anim>_walk` and `<anim>_hurt` tags, listed in `ANIMS` in `art/textures.ts`), a starting weapon, its weapon kit (the ids level-up cards may offer), an ultimate id and a passive id.
 
-**A passive** goes in `data/passives.ts`, run by `systems/Passive.ts`. `kind: 'dodge'` dodges hits by `chance`; `'rebirth'` stands the character back up at 0 HP; `'growth'` adds a stack of stat changes (`perStack`, like an item's `perLevel`) every `every` seconds; `'reprieve'` refuses damage that would leave the character below `below` of max HP and heals instead; `'pets'` gives the character `start` pets and another every `every` seconds up to `max`, run by `systems/Pets.ts` (move `speed`, `aggro` and `leash` ranges, the pet's `anim` and its `attack`); `'ailment'` puts a stack of `attack.effect` on every enemy the character hits (Plunder), and `attack.tags` decide which modifications change those stacks. A new kind needs a case in `Passive.ts` and in the wiki's `passiveText`.
+**A passive** goes in `data/passives.ts`, run by `systems/Passive.ts`. `kind: 'dodge'` dodges hits by `chance`; `'rebirth'` stands the character back up at 0 HP; `'growth'` adds a stack of stat changes (`perStack`, like a powerup's `perLevel`) every `every` seconds; `'reprieve'` refuses damage that would leave the character below `below` of max HP and heals instead; `'pets'` gives the character `start` pets and another every `every` seconds up to `max`, run by `systems/Pets.ts` (move `speed`, `aggro` and `leash` ranges, the pet's `anim` and its `attack`); `'ailment'` puts a stack of `attack.effect` on every enemy the character hits (Plunder), and `attack.tags` decide which modifications change those stacks. A new kind needs a case in `Passive.ts` and in the wiki's `passiveText`.
 
 **An ultimate** goes in `data/ultimates.ts`. `kind: 'storm'` fires `count` projectiles from the caster every `interval` in a spiral turning `spin` degrees per second; `kind: 'pet'` summons a pet that follows the caster and fires at the closest enemy within `attack.stats.range`; `kind: 'dome'` raises a dome that fires beams; `kind: 'mist'` turns the caster to mist (no attacks, no damage taken, not targeted) and then adds `amp` to DAMAGE for `after` seconds; `kind: 'giant'` adds a giant pet to the caster's pets (`scale` times as large, `power` times their damage, `speedMult` times as fast), whose `attack` is a stomp around the enemy it reaches; `kind: 'detonate'` is instant: the screen flashes `color` and every enemy's stacks of the effect named in `attack.detonate` are set off. `duration` and `cooldown` are in seconds. `attack` is a weapon definition for the projectile, so it shares the projectile pool, the co-op sync and the damage counting; its `tags` decide which modifications change the ultimate. The HUD greys out the `icon`, using an `_grey` copy that `textures.ts` builds for every `icon_ult_*` sprite.
 
@@ -173,9 +175,9 @@ Every character, ultimate, weapon, item, enemy and wave is a data entry. Engine 
 }
 ```
 
-**An item** goes in `data/items.ts` with `perLevel` modifiers. Each modifier changes one stat from `data/player.ts` by `flat` and/or `percent`. Final stat = (base + flat) x (1 + percent), summed over item and powerup levels.
+**A generic powerup** goes in `data/powerups.ts` with `perLevel` modifiers. Each modifier changes one stat from `data/player.ts` by `flat` and/or `percent`. Final stat = (base + flat) x (1 + percent), summed over powerup levels and stat curios. `maxLevel` is 20; `requiresTag` only offers it while the player owns a weapon with that tag.
 
-**A generic powerup** goes in `data/powerups.ts`. It has the same shape as an item, plus `maxLevel` (20), and takes no slot. `requiresTag` (items too) only offers it while the player owns a weapon with that tag.
+**A curio** goes in `CURIOS` in `data/curios.ts`: a new `id` in the `CurioDef` union in `data/types.ts` with its numbers, a `tier` (0 rarest to 3; `CURIO_TIERS` sets each tier's chance per card, colour and icon) and optional `tags` (modifications of those tags change its damage, area and duration). Damage it deals goes through its `attack` (a `WeaponDef`, credited to the curio on the party screen, and in `ATTACK_DEFS` so joiners can draw its projectiles). What it does goes in `systems/Curios.ts` (hooks: `outgoing`, `landed`, `onKill`, `weaponHit`, `takenMult`, `onDamaged`, `answer`, `absorb`, `beforeHeal`, `statSources`, `moveSpeed`, `haste`, `update`), and its card and wiki text in `curioText`. `CURIO_EVERY` is how often a pick comes.
 
 **A modification** goes in `data/modifications.ts`: `tags` (the weapons it changes) and five `levels`, each with card text and `add` (summed over levels) or `set` (replaces the total) changes to the `ModEffect` fields in `data/types.ts` (pierce, damage, split, splitLess, splitAgain, chain, chainLess, chainSpeed, area, echo, duration, reiterate, multistrike, repeatChance, stunChance, stunBonus, momentum, impact, ruthless, projectileLess, hitLess, dotDamage, dotLess, dotRate, dotDuration, virulent, ...). Split fan, chain range and speed, echo radius and gap, Multistrike's gap, the stun length, Impact's radius and Ruthless' count are constants at the top of that file.
 
@@ -205,14 +207,14 @@ Style: a single dark outline (`#1c1322`), light from the top left, 3-4 shades pe
 
 ## Debug overlay (F3)
 
-FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, toggle god mode, make every ultimate ready, bring in a random boss, and spawn a rare enemy with 6 random modifiers next to you.
+FPS, live enemies against the wave target, projectiles, gems, damage numbers, physics bodies, minute and seed, with Arcade debug bodies drawn over the world. Buttons spawn 50 enemies, add a level, skip a minute, toggle god mode, make every ultimate ready, bring in a random boss, spawn a rare enemy with 6 random modifiers next to you, and queue a curio pick.
 
 ## Decisions made while building
 
 Where the spec left room, these are the calls taken. All are easy to change.
 
 - **Ultimates** start ready, and their cooldown counts from the cast and ignores the Cooldown stat (so the HUD number is exact). Falling ends a running ultimate early.
-- **Character weapon kits**: each character has exactly four weapons, which fills the four weapon slots; items are shared by everyone.
+- **Character weapon kits**: each character has exactly four weapons, which fills the four weapon slots; curios are shared by everyone.
 - **Pierce** counts enemies hit before the projectile vanishes, so the starting banana hits one enemy. A boomerang projectile (none at the moment) turns around when its outbound pierce runs out or after 0.9 s, whichever comes first, and gets a fresh pierce for the return trip.
 - **Projectile modifications** resolve a hit in this order: split if the projectile still can (it is replaced by its splits, which fan out over 90 degrees, skip enemies it already hit and deal Splits' "less damage" share less than it did), otherwise use up pierce, then chain to the closest unhit enemy within 140 px (a random direction if none), each bounce dealing Chain's "less damage" share less than the hit before. Splits level 5 gives each projectile from a first split a 20% chance to split once more. Coconuts never hit anything on the way (infinite pierce), so Splits and Chain do nothing for them and Pierce only adds damage. Additional Projectiles adds to a weapon's projectile count (Banana Throw fans the extra bananas out, Coconuts and Midnight Tumult fire theirs one after another) and makes the weapon deal 35% less damage at level 1, down to 15% less at level 5.
 - **Increased AoE** follows the revised modification sheet: +20% area and +5% damage per level (it had been nerfed to +10% area before).

@@ -1,6 +1,6 @@
 import type { PlayerStats } from './types';
 
-/** Base stats for every character. Items and powerups modify these through flat or percentage changes. */
+/** Base stats for every character. Powerups and curios modify these through flat or percentage changes. */
 export const BASE_STATS: PlayerStats = {
   maxHp: 100,
   moveSpeed: 160,

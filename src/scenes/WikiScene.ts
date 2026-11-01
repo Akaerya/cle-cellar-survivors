@@ -19,7 +19,7 @@ const CHIP_H = 15;
 const CHIP_ROW = CHIP_H + 3;
 
 /**
- * Wiki: characters, weapons, modifications, items, powerups, monsters, rare enemies, bosses, waves, drops, co-op and rules,
+ * Wiki: characters, weapons, modifications, curios, powerups, monsters, rare enemies, bosses, waves, drops, co-op and rules,
  * generated from the game data (see wiki/pages.ts). Long pages have filter chips (by character, tag or entry).
  * Opened from the title screen or the pause menu.
  */

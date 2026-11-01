@@ -1,9 +1,11 @@
 import Phaser from 'phaser';
 import { ATLAS, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
-import { COLOR, MAX_ITEMS, MAX_LEVEL, MAX_WEAPONS, PLAYER_COLORS, RUN_SECONDS, SCENES, VIEW_H, VIEW_W } from '../constants';
+import { COLOR, MAX_LEVEL, MAX_WEAPONS, PLAYER_COLORS, RUN_SECONDS, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry } from '../core/events';
 import { formatTime } from '../core/progression';
+import { CURIO_TIERS } from '../data';
 import type { Player } from '../entities/Player';
+import { FANTASY_COLOR } from '../systems/Curios';
 import { Button, drawPanel, text } from '../ui/widgets';
 import type { GameScene } from './GameScene';
 
@@ -29,6 +31,13 @@ const BOSS_BAR_Y = 33;
 const BOSS_BAR_STEP = 20;
 const BOSS_BAR_W = 220;
 const MAX_BOSS_BARS = 2;
+
+/** Set bits in `n` (stolen modifiers). */
+function bitCount(n: number): number {
+  let c = 0;
+  for (let v = n >>> 0; v; v >>>= 1) c += v & 1;
+  return c;
+}
 
 /** HUD drawn in its own scene on top of the Game scene, so it stays fixed while the camera moves. */
 export class UIScene extends Phaser.Scene {
@@ -123,7 +132,7 @@ export class UIScene extends Phaser.Scene {
     this.drawExp();
     this.onTime(snap.time);
     this.onKills(snap.kills);
-    this.onBuild(snap.weapons, snap.items, snap.mods, snap.powerups);
+    this.onBuild(snap.weapons, snap.curios, snap.mods, snap.powerups);
     this.onDebugState(snap.debug);
 
     const ev = this.run.events;
@@ -135,7 +144,7 @@ export class UIScene extends Phaser.Scene {
       [EV.levelUp, () => (this.expFlash = 1)],
       [EV.timeChanged, (t: number) => this.onTime(t)],
       [EV.killsChanged, (k: number) => this.onKills(k)],
-      [EV.buildChanged, (w: BuildEntry[], i: BuildEntry[], m: BuildEntry[], pu: BuildEntry[]) => this.onBuild(w, i, m, pu)],
+      [EV.buildChanged, (w: BuildEntry[], c: BuildEntry[], m: BuildEntry[], pu: BuildEntry[]) => this.onBuild(w, c, m, pu)],
       [EV.playerHurt, () => this.onHurt()],
       [EV.banner, (t: string, c: number) => this.showBanner(t, c)],
       [EV.debugState, (on: boolean) => this.onDebugState(on)],
@@ -255,6 +264,12 @@ export class UIScene extends Phaser.Scene {
     if (s.siphon > 0) parts.push(`SIPHON ${s.siphon}`);
     if (s.vicissitude > 0) parts.push(`VICISSITUDE ${s.vicissitude}`);
     if (s.amp > 0) parts.push(`+${Math.round(s.amp * 100)}% DMG ${Math.ceil(s.ampLeft)}S`);
+    if (s.ffMax > 0) parts.push(`FANTASY ${Math.ceil(s.ff)}/${Math.round(s.ffMax)}`);
+    if (s.shield > 0) parts.push(`SHIELD ${Math.ceil(s.shield)}`);
+    if (s.rampage > 0) parts.push(`RAMPAGE ${s.rampage}`);
+    if (p.curios.has('clockwork_capacitor')) parts.push(`STATIC ${s.static}`);
+    if (s.luck > 0) parts.push(`LUCK ${s.luck}`);
+    if (s.stolen !== 0) parts.push(`STOLEN ${bitCount(s.stolen)} ${Math.ceil(s.stolenLeft)}S`);
     this.buffs.setText(p.alive ? parts.join(' · ') : '');
   }
 
@@ -281,12 +296,14 @@ export class UIScene extends Phaser.Scene {
       badge.icon.setAlpha(p.alive ? 1 : 0.5);
       if (p.alive) {
         const w = 40;
-        const frac = Phaser.Math.Clamp(p.hp / p.stats.maxHp, 0, 1);
+        const s = p.status();
+        // Suffering Mass: the bar is Fleeting Fantasy.
+        const frac = s.ffMax > 0 ? Phaser.Math.Clamp(s.ff / s.ffMax, 0, 1) : Phaser.Math.Clamp(p.hp / p.stats.maxHp, 0, 1);
         g.fillStyle(COLOR.ink, 1);
         g.fillRect(25, y + 11, w + 2, 5);
         g.fillStyle(COLOR.hpDark, 1);
         g.fillRect(26, y + 12, w, 3);
-        g.fillStyle(COLOR.hp, 1);
+        g.fillStyle(s.ffMax > 0 ? FANTASY_COLOR : COLOR.hp, 1);
         g.fillRect(26, y + 12, Math.ceil(w * frac), 3);
 
         // Off-screen: an arrow on the edge of the screen in the teammate's colour.
@@ -344,10 +361,10 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
-   * Top left: weapon slots, item slots under them, and to the right of each row the modifications
-   * (next to the weapons) and generic powerups (next to the items), which take no slots.
+   * Top left: weapon slots with the modifications to their right, and under them the curios (their tier in the
+   * corner) followed by the generic powerups. Only weapons take slots.
    */
-  private onBuild(weapons: BuildEntry[], items: BuildEntry[], mods: BuildEntry[] = [], powerups: BuildEntry[] = []): void {
+  private onBuild(weapons: BuildEntry[], curios: BuildEntry[], mods: BuildEntry[] = [], powerups: BuildEntry[] = []): void {
     this.build.removeAll(true);
     const slot = (x: number, y: number, e: BuildEntry | undefined) => {
       const g = this.add.graphics();
@@ -358,10 +375,12 @@ export class UIScene extends Phaser.Scene {
       this.build.add(g);
       if (!e) return;
       this.build.add(this.add.image(x + 1, y + 1, ATLAS, e.icon).setOrigin(0));
+      // Curios (max 0) show their tier in its colour.
+      const curio = e.max === 0;
       const lv = this.add
         .bitmapText(x + 18, y + 19, FONT_SMALL, String(e.level), FONT_SMALL_SIZE)
         .setOrigin(1, 1)
-        .setTint(e.level >= (e.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.white);
+        .setTint(curio ? CURIO_TIERS[e.level].color : e.level >= (e.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.white);
       this.build.add(lv);
     };
     const row = (list: BuildEntry[], slots: number, y: number) => {
@@ -372,9 +391,9 @@ export class UIScene extends Phaser.Scene {
       list.forEach((e, i) => slot(x0 + i * 19, y, e));
     };
     row(weapons, MAX_WEAPONS, 13);
-    row(items, MAX_ITEMS, 33);
     extras(mods, MAX_WEAPONS, 13);
-    extras(powerups, MAX_ITEMS, 33);
+    curios.forEach((e, i) => slot(4 + i * 19, 33, e));
+    extras(powerups, curios.length, 33);
   }
 
   private onHurt(): void {
@@ -413,6 +432,7 @@ export class UIScene extends Phaser.Scene {
       ['ULT READY', DEBUG_EV.ultReady],
       ['BOSS', DEBUG_EV.boss],
       ['RARE', DEBUG_EV.rare],
+      ['CURIO', DEBUG_EV.curio],
     ];
     this.debugButtons = defs.map(([label, name], i) => {
       const bx = x + 6 + (i % 2) * 80;

@@ -8,6 +8,9 @@ import type { WeaponInstance } from '../systems/Weapons';
 /** Boomerang bananas slow to a stop over this many seconds, then fly back. */
 const BOOMERANG_OUT = 0.9;
 const BOOMERANG_RETURN_ACCEL = 0.45; // seconds to reach full return speed
+/** Resonance Dynamo: seconds a recalled projectile may take to come back, and its speed if it had none. */
+const RECALL_LIFE = 4;
+const RECALL_SPEED = 200;
 /** Bombs whose target died explode once they are this close (px) to where it was last seen. */
 const BOMB_LOST_REACH = 4;
 
@@ -72,6 +75,8 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
   /** Where the projectile was last frame (dome edges are found by the step from inside to outside). */
   prevX = 0;
   prevY = 0;
+  /** Resonance Dynamo: flying back to its owner, piercing everything (it never comes back twice). */
+  recalled = false;
   /** Enemies hit on the current pass. Cleared when a boomerang turns around. */
   readonly hit = new Set<Enemy>();
   /** Identifies this shot to network clients (pooled objects are reused). */
@@ -110,6 +115,7 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.dirY = Math.sin(angle);
     this.boomerang = o.boomerang;
     this.returning = false;
+    this.recalled = false;
     this.returnAge = 0;
     this.life = o.boomerang ? BOOMERANG_OUT + 3 : o.lifetime;
     this.age = 0;
@@ -176,6 +182,23 @@ export class Projectile extends Phaser.Physics.Arcade.Sprite {
     this.returnAge = 0;
     this.pierceLeft = this.pierceMax;
     this.hit.clear();
+  }
+
+  /**
+   * Resonance Dynamo: flies back to its owner from here like a returning boomerang, piercing every enemy (each once
+   * more), never splitting or chaining again. It keeps its damage.
+   */
+  recall(): void {
+    this.recalled = true;
+    this.boomerang = true;
+    this.turnAround();
+    this.pierceMax = this.pierceLeft = Infinity;
+    this.splitsLeft = 0;
+    this.bouncesLeft = 0;
+    this.passThrough = false;
+    this.age = 0;
+    this.life = RECALL_LIFE;
+    if (this.speed <= 0) this.speed = RECALL_SPEED;
   }
 
   /** Returns false when the projectile should be released back to the pool. */

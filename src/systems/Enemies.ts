@@ -278,7 +278,8 @@ export class Enemies {
   /**
    * dirX/dirY: unit vector to push the enemy along. `dot`: a tick of a duration effect (damage over time), which
    * Thorns and Crystalline do not answer. Returns false when the hit did not land: the enemy was already dead, or a
-   * rare enemy's modifiers ignored it (blocked, shielded).
+   * rare enemy's modifiers ignored it (blocked, shielded). The attacker's curios add their damage bonus, react to the
+   * hit and the kill, and deal what they set off (chains, explosions) before this returns.
    */
   hit(e: Enemy, amount: number, dirX: number, dirY: number, knockback: number, weapon?: WeaponInstance, dot = false): boolean {
     this.lastDealt = 0;
@@ -289,6 +290,7 @@ export class Enemies {
     let brutal = false;
     if (weapon) {
       const owner = weapon.owner;
+      amount *= owner.curios.outgoing(weapon, e, dot);
       const chance = owner.critChance;
       if (chance > 0 && this.game.rng.float() < chance) {
         crit = true;
@@ -324,6 +326,7 @@ export class Enemies {
     e.kby += dirY * k;
     this.game.playSfx('hit', e.x, e.y);
     if (attacker && !dot && e.mods.length > 0) mods.afterHit(e, amount, attacker);
+    if (weapon) weapon.owner.curios.landed(weapon, e, amount, dealt, dot);
     let killed = false;
     if (e.hp <= 0 && !mods.revive(e)) {
       killed = true;
@@ -331,12 +334,15 @@ export class Enemies {
       if (weapon) {
         weapon.kills++;
         weapon.owner.runStats.kills++;
+        weapon.owner.curios.onKill(e, amount - dealt);
       }
     }
     if (crit && weapon) {
       weapon.owner.runStats.crits++;
       weapon.owner.weapons.onCrit();
+      weapon.owner.curios.onCrit();
     }
+    weapon?.owner.curios.flush();
     // Set last: Thorns can set off a reflected hit (another `hit`) in the middle of this one.
     this.lastDealt = dealt;
     this.lastKilled = killed;
@@ -350,6 +356,7 @@ export class Enemies {
     if (dropGem) {
       if (e.effects.length > 0) this.passOnEffects(e);
       this.game.enemyMods.onDeath(e);
+      for (const p of this.game.players) if (p && !p.gone) p.curios.onMonsterDeath(e);
       this.game.gems.drop(e.x, e.y + 2, e.def.exp);
       this.game.potions.roll(e.x, e.y - 2, e.def.potionChance);
     }

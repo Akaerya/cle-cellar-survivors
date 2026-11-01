@@ -1,5 +1,5 @@
 /**
- * Shapes for every data file. Adding a weapon, item or enemy means adding an entry
+ * Shapes for every data file. Adding a weapon, curio or enemy means adding an entry
  * that satisfies one of these types; engine code reads them generically.
  */
 
@@ -427,7 +427,8 @@ export interface StatModifier {
   percent?: number;
 }
 
-export interface ItemDef {
+/** A stack of stat changes: generic powerups (data/powerups.ts), Dragonborn's stacks and stat curios. */
+export interface PowerupDef {
   id: string;
   name: string;
   description: string;
@@ -440,6 +441,123 @@ export interface ItemDef {
   maxLevel?: number;
   /** Only offered new while you own a weapon with this tag. */
   requiresTag?: WeaponTag;
+}
+
+/** Curio tiers: 0 is the rarest, 3 the most common. */
+export type CurioTier = 0 | 1 | 2 | 3;
+
+/** How often a curio card is of a tier (0..1, the four add up to 1), its colour and its card icon. */
+export interface CurioTierDef {
+  tier: CurioTier;
+  chance: number;
+  color: number;
+  icon: string;
+}
+
+/**
+ * One curio (data/curios.ts): picked every CURIO_EVERY levels, kept for the run, never twice. `tags` are what it
+ * scales with: modifications with one of them change its `attack`s like a weapon's. Every number is in seconds, px,
+ * HP or a fraction (0.01 = 1%). `attack`s are the damage the curio deals, credited to it on the party screen;
+ * their `stats.damage` is base damage, scaled by DAMAGE and the modifications like a weapon's.
+ */
+export type CurioDef = { id: string; name: string; tier: CurioTier; tags?: WeaponTag[]; icon?: string } & (
+  /** Killing a rare enemy steals all its modifiers for `duration` seconds each (see `StolenModifiers`). */
+  | { id: 'headhunter'; duration: number; attack: WeaponDef }
+  /** A kill sends `share` of the overkill damage on to the closest enemy to it; kills from that carry on. */
+  | { id: 'original_sin'; share: number; attack: WeaponDef }
+  /**
+   * Rampage: every kill is a stack, each giving `speed` move speed and `damage` damage (increased); all stacks go
+   * when damage is taken. At `novaAt` stacks a nova of `nova.stats.projectileCount` spears flies out; at `pulseAt` a
+   * pulse hits everything within `pulse.stats.size` px; at `cycloneAt` a cyclone comes out (see CycloneDef).
+   */
+  | { id: 'shadows_and_dust'; speed: number; damage: number; novaAt: number; nova: WeaponDef; pulseAt: number; pulse: WeaponDef; cycloneAt: number; cyclone: CycloneDef }
+  /**
+   * Max HP is locked to 1. Fleeting Fantasy (`base`, raised by max HP bonuses in proportion) takes damage first and
+   * gets every heal and regen; after `delay` seconds without damage it refills by `regen` of its max per second.
+   */
+  | { id: 'suffering_mass'; base: number; delay: number; regen: number }
+  /**
+   * Every weapon's cooldown becomes `cooldown` seconds (before Cooldown and Ability Haste); each use costs `cost` of
+   * max HP (never the last HP). `damage` increased damage per 1% of HP missing (1.2 = 1.2%).
+   */
+  | { id: 'chronobreak'; cooldown: number; cost: number; damage: number }
+  /** Projectiles come back at the edge of the screen or their natural end, piercing everything and never splitting or chaining. */
+  | { id: 'resonance_dynamo' }
+  /**
+   * Damage taken stores `store` times itself for `window` seconds. The `triggers`-th hit in that time releases
+   * `mult` times all of it on every enemy within `attack.stats.size` px.
+   */
+  | { id: 'martyrs_crown'; store: number; window: number; triggers: number; mult: number; attack: WeaponDef }
+  /** Every `per` HP restored is `damage` increased damage for the rest of the run. */
+  | { id: 'bloodrush'; per: number; damage: number }
+  /**
+   * While you own `need` other curios of tier `maxTier` or rarer, killing a rare enemy steals one of its modifiers
+   * for `duration` seconds.
+   */
+  | { id: 'inspired_learning'; need: number; maxTier: CurioTier; duration: number; attack: WeaponDef }
+  /**
+   * `mitigation` less damage taken (multiplies). Damage taken gives a shield for `duration` seconds worth `shield`
+   * times your damage mitigation in points (60% mitigation: 90), at most `max` times it in all.
+   */
+  | { id: 'aegis_aurora'; mitigation: number; shield: number; duration: number; max: number }
+  /** Every `every`-th attack of your starting weapon also deals `attack.stats.damage`, +`missing` per 1% of the enemy's HP missing. */
+  | { id: 'kraken_slayer'; every: number; missing: number; attack: WeaponDef }
+  /** Enemies you kill explode for `share` of their max HP (base damage) within `attack.stats.size` px; those kills explode too. */
+  | { id: 'prismatic_violence'; share: number; attack: WeaponDef }
+  /**
+   * You get `keep` of every heal; the rest is dealt to every enemy within `attack.stats.size` px, summed and dealt
+   * every `interval` seconds.
+   */
+  | { id: 'necrotic_prism'; keep: number; interval: number; attack: WeaponDef }
+  /** Kills leave caustic ground for `life` seconds: `slow` on enemies in it, and `attack.stats.damage` every `interval` seconds. */
+  | { id: 'vaporising_catalyst'; life: number; slow: number; interval: number; attack: WeaponDef }
+  /** Hitting a slowed enemy burns it (`attack.effect`), and burning enemies are slowed by `slow`. */
+  | { id: 'frostfire_brand'; slow: number; attack: WeaponDef }
+  /** Killing a rare enemy drops `potions` health potions and gives `damage` more damage for `duration` seconds. */
+  | { id: 'gluttons_pouch'; potions: number; damage: number; duration: number }
+  /**
+   * Per 1% of HP missing, melee weapons get `damage` increased damage and `haste` Ability Haste, and heal `leech` of
+   * the damage they deal.
+   */
+  | { id: 'still_here'; damage: number; haste: number; leech: number }
+  /** A Static stack every `per` px moved. At `max` stacks the next hit deals `bonus` increased damage and also hits everything within `attack.stats.size` px. */
+  | { id: 'clockwork_capacitor'; per: number; max: number; bonus: number; attack: WeaponDef }
+  /** Hitting an enemy that has less than `below` of its max HP left kills it. */
+  | { id: 'the_collector'; below: number }
+  /** Each hit taken in the last `duration` seconds: `mitigation` less damage taken and `haste` Ability Haste. */
+  | { id: 'lone_hero'; mitigation: number; haste: number; duration: number }
+  /** Plain stat changes. */
+  | { id: 'jewel_magnet'; stats: StatModifier[] }
+  /** `speed` more move speed (flat) while you have not taken damage for `delay` seconds. */
+  | { id: 'walking_stick'; speed: number; delay: number }
+  /** `crit` critical strike chance, and `per` more for every critical strike in a `window`-second streak (all reset when it ends). */
+  | { id: 'dumb_luck'; crit: number; per: number; window: number }
+  /**
+   * Each hit has `chance` to zap `targets` other enemies within `range` px for `share` of it. Every `every` zaps add
+   * `more` chance and one target, `max` times.
+   */
+  | { id: 'statik_shiv'; chance: number; share: number; range: number; targets: number; every: number; more: number; max: number; attack: WeaponDef }
+  /** Every damage instance taken is `flat` lower, before armor and mitigation. */
+  | { id: 'heavy_iron'; flat: number }
+  /** `damage` increased damage against enemies above `above` of their max HP. */
+  | { id: 'whetstone'; above: number; damage: number }
+  /** Kills heal `heal` of max HP. */
+  | { id: 'vampirism'; heal: number }
+  /** `share` of every hit taken (before mitigation) is dealt back to whoever dealt it. */
+  | { id: 'mirror_shard'; share: number; attack: WeaponDef }
+);
+
+export type CurioId = CurioDef['id'];
+
+/**
+ * Shadows and Dust's cyclone: lasts `attack.stats.lifetime` seconds and goes after the closest enemy at `speed`
+ * times your move speed, dealing `attack.stats.damage` every `attack.stats.cooldown` seconds to everything within
+ * `attack.stats.size` px. Each kill it makes brings another (at most `max` at once per player).
+ */
+export interface CycloneDef {
+  speed: number;
+  max: number;
+  attack: WeaponDef;
 }
 
 export interface EnemyDef {
@@ -635,7 +753,7 @@ export interface CharacterDef {
   /** Atlas frame for previews (wiki, lobby). */
   firstFrame: string;
   startingWeapon: string;
-  /** Weapon ids this character can be offered on level-up (its own kit). Items are shared. */
+  /** Weapon ids this character can be offered on level-up (its own kit). Curios are shared. */
   weapons: string[];
   /** Ultimate id (data/ultimates.ts), cast with Q. */
   ultimate: string;

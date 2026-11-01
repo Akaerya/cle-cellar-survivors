@@ -17,7 +17,9 @@ import {
   STAB_LEAD,
   MAX_ENEMIES,
   MAX_GEMS,
-  MAX_ITEMS,
+  MAX_CURIO_FIELDS,
+  MAX_CURIO_JOBS,
+  MAX_CURIO_MITIGATION,
   MAX_LEVEL,
   MAX_PLAYERS,
   MAX_WEAPONS,
@@ -34,7 +36,7 @@ import {
   formatTime,
   hasteFactor,
   hitsWithProjectiles,
-  itemMaxLevel,
+  powerupMaxLevel,
   modEffectAt,
   modReach,
   weaponLevelAt,
@@ -53,7 +55,11 @@ import {
   ENEMIES,
   ENEMY_MODIFIERS,
   GEM_TIERS,
-  ITEMS,
+  CURIOS,
+  CURIO_CHOICES,
+  CURIO_EVERY,
+  CURIO_TIERS,
+  curioText,
   MAX_SOUL_WISPS,
   MODIFICATIONS,
   POTION,
@@ -94,7 +100,7 @@ import type {
   BossSkill,
   EnemyDef,
   EnemyModifierDef,
-  ItemDef,
+  PowerupDef,
   ModEffect,
   PassiveDef,
   StatKey,
@@ -440,7 +446,7 @@ function passiveText(d: PassiveDef): string {
     case 'rebirth':
       return `On reaching 0 HP you stand right back up with ${pct(d.hp)} of your max HP instead of falling, invulnerable for ${secs(REVIVE.invulnSeconds)} as after a co-op revive. A banner tells everyone to put a random other player in the bin (${d.fallback.toUpperCase()} when nobody else is in the run). Once every ${d.cooldown}S; it is not a death, so it costs no team death in co-op.`;
     case 'growth':
-      return `Every ${d.every}S of the run (fallen or not) you gain a stack for the rest of the run. Each stack: ${d.perStack.map((m) => bonusText(m, 1)).join(', ')}. Stacks add up with items and powerups like any other bonus (see ITEMS).`;
+      return `Every ${d.every}S of the run (fallen or not) you gain a stack for the rest of the run. Each stack: ${d.perStack.map((m) => bonusText(m, 1)).join(', ')}. Stacks add up with powerups and curios like any other bonus (see POWERUPS).`;
     case 'reprieve':
       return `When damage (damage over time included) would leave you below ${pct(d.below)} of your max HP, it is not taken: you heal ${pct(d.heal)} of your max HP over ${secs(d.over)} instead. Once every ${d.cooldown}S.`;
     case 'pets': {
@@ -456,7 +462,7 @@ function charactersPage(filter: string): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby: click a portrait (or LEFT / RIGHT) to see that character's abilities and kit, and click it again (or ENTER) to pick it. Each character has its own weapon kit, ultimate and passive. Items, modifications, powerups and base stats are shared (see ITEMS, MODS and POWERUPS), and several players may pick the same character.`,
+      text: `Pick who you play as on the character select screen (SOLO), or with CHARACTER in the co-op lobby: click a portrait (or LEFT / RIGHT) to see that character's abilities and kit, and click it again (or ENTER) to pick it. Each character has its own weapon kit, ultimate and passive. Curios, modifications, powerups and base stats are shared (see CURIOS, MODS and POWERUPS), and several players may pick the same character.`,
     },
     {
       t: 'p',
@@ -582,8 +588,8 @@ function bonusText(m: StatModifier, lv: number): string {
   return `${parts.join(' ')} ${STAT_LABELS[m.stat]}`;
 }
 
-/** One row per level shown: the total bonus of an item or powerup and the stats it gives from base. */
-function statRows(def: ItemDef, levels: number[]): Cell[][] {
+/** One row per level shown: the total bonus of a powerup and the stats it gives from base. */
+function statRows(def: PowerupDef, levels: number[]): Cell[][] {
   return levels.map((lv) => {
     const stats = computeStats([{ def, level: lv }]);
     const bonus = def.perLevel.map((m) => bonusText(m, lv)).join(', ');
@@ -603,19 +609,116 @@ const STAT_COLS = [
   { label: 'RESULT (FROM BASE)', w: 300 },
 ];
 
-function itemsPage(): Block[] {
+/** Filter chips of the CURIOS page: by tier, and the stolen modifiers. */
+const CURIO_FILTERS = ['ALL', ...CURIO_TIERS.map((t) => `TIER ${t.tier}`), 'STOLEN'];
+
+function curiosPage(filter: string): Block[] {
   const out: Block[] = [
     {
       t: 'p',
-      text: `Items raise your stats. You can hold ${MAX_ITEMS} items; each goes up to level ${MAX_LEVEL}. Final stat = (base + flat bonuses) × (1 + percent bonuses), added up over every item and powerup level (see POWERUPS).`,
+      text: `Every ${CURIO_EVERY} levels (${CURIO_EVERY}, ${CURIO_EVERY * 2}, ${CURIO_EVERY * 3}, ...), right after that level's card, each player picks one of ${CURIO_CHOICES} curios. Curios do niche things that can make a build, or do nothing for it. You keep them for the run, they take no slot, and one you own is never offered again. Curio picks cannot be rerolled. Each card rolls its tier (a tier with nothing left to offer you passes its chance on); the three cards are always different curios.`,
+    },
+    {
+      t: 'table',
+      cols: [
+        { label: 'TIER', w: 60 },
+        { label: 'CHANCE', w: 70 },
+        { label: 'CURIOS', w: 70 },
+        { label: 'COLOUR', w: 60 },
+      ],
+      rows: CURIO_TIERS.map((t) => [`TIER ${t.tier}`, pct(t.chance), num(CURIOS.filter((c) => c.tier === t.tier).length), { text: '####', color: t.color }]),
+    },
+    {
+      t: 'p',
+      text: `Curio damage bonuses add up with each other and multiply all your other damage (damage over time, pets and the ultimate included). Damage a curio deals counts as yours: it can crit, heals with life steal, and its kills set off kill curios (chains stop after ${MAX_CURIO_JOBS} follow-ups from one hit). A curio's TAGS are what it scales with: modifications of those tags change its damage, area and duration like a weapon's, and the AREA and DAMAGE stats scale every curio's area and base damage. Curios that reduce damage taken multiply, never past ${pct(MAX_CURIO_MITIGATION)} in all. Curios that deal damage show on the party screen. On fields, at most ${MAX_CURIO_FIELDS} of yours lie on the ground at once.`,
+      color: COLOR.textDim,
     },
   ];
-  for (const def of ITEMS) {
+  for (const t of CURIO_TIERS) {
+    if (!shows(filter, `TIER ${t.tier}`)) continue;
+    out.push({ t: 'gap', h: 4 });
+    out.push({ t: 'h', text: `TIER ${t.tier} · ${pct(t.chance)} A CARD` });
+    for (const c of CURIOS) {
+      if (c.tier !== t.tier) continue;
+      const tags = c.tags?.length ? ` · ${c.tags.map((x) => TAG_LABELS[x]).join(', ')}` : '';
+      out.push({ t: 'entry', icon: c.icon ?? t.icon, title: c.name, sub: `TIER ${c.tier} CURIO${tags}` });
+      out.push({ t: 'p', text: curioText(c) });
+    }
+  }
+  if (shows(filter, 'STOLEN')) {
+    out.push({ t: 'gap', h: 4 });
+    out.push({ t: 'h', text: 'STOLEN MODIFIERS' });
+    out.push({
+      t: 'p',
+      text: 'Headhunter and Inspired Learning steal rare enemy modifiers (see RARE). A stolen modifier works for you as it did for the monster, with the same numbers: for you, "allies" are your teammates and "enemies" the monsters. Each stolen copy runs on its own timer, and the same modifier stolen twice stacks. Damage they deal counts as the curio\'s. The HUD shows how many you hold (STOLEN) and how long the last lasts.',
+      color: COLOR.textDim,
+    });
+    for (const m of ENEMY_MODIFIERS) out.push({ t: 'p', text: `${rareLook(m)} · ${stolenText(m)}` });
+  }
+  return out;
+}
+
+/** What a stolen rare enemy modifier does for the player who holds it (systems/Curios.ts). */
+function stolenText(m: EnemyModifierDef): string {
+  switch (m.id) {
+    case 'astral_touched': {
+      const h = hazardDef(m.hazard);
+      return `Every ${secs(m.every)} a void field (${h.radius} px) opens within ${m.spread} px of you for ${secs(m.life)}, slowing monsters in it by ${pct(h.slow ?? 0)}.`;
+    }
+    case 'invulnerability':
+      return `Teammates within ${m.radius} px of you cannot drop below 1 HP (it never protects you).`;
+    case 'enrage':
+      return `The more HP you have lost, the more damage you deal (up to +${pct(m.damage)}), the faster you move (up to +${pct(m.speed)}) and the less you take (up to ${pct(m.reduction)} less), in full at ${pct(m.fullAt)} HP left.`;
+    case 'physical_resistant':
+      return `You take ${pct(m.reduction)} less damage.`;
+    case 'caustic_ground': {
+      const h = hazardDef(m.hazard);
+      return `Monsters you kill leave caustic ground (${h.radius} px) for ${secs(m.life)}, dealing ${num(m.damage)} every ${secs(m.interval)} to monsters in it (scaled by DAMAGE).`;
+    }
+    case 'crystalline':
+      return `A monster that hits you grows a crystal bud under itself that explodes after ${secs(m.charge)} for ${num(m.damage)} to every monster within ${m.radius} px (scaled by DAMAGE).`;
+    case 'empower_allies':
+      return `You and teammates within ${m.radius} px deal +${pct(m.damage)} damage and move +${pct(m.speed)} faster (no max HP; two do not stack).`;
+    case 'executioner':
+      return `You deal ${pct(m.more)} more damage to a monster for every full ${pct(m.per)} of its max HP it is missing.`;
+    case 'extra_life':
+      return `+${pct(m.health)} max HP while it lasts.`;
+    case 'hexproof':
+      return 'Nothing slows you: webs, void fields and Astral Chains do nothing to you.';
+    case 'thorns':
+      return `A monster that hits you takes ${num(m.flat)} plus ${pct(m.share)} of the damage back.`;
+    case 'ambush':
+      return `Every ${secs(m.cooldown)} you teleport to ${m.distance} px from the closest monster on your screen (when further away than that).`;
+    case 'soul_absorption':
+      return `You gain a soul whenever a monster dies within ${m.radius} px of you: +${pct(m.damage)} damage and ${num(m.haste)} Ability Haste each, until it runs out.`;
+    case 'spirit_walker':
+      return `Once, when you or a teammate within ${m.radius} px would fall, they stand right back up with full HP.`;
+    case 'blocks_attacks':
+      return `${pct(m.chance)} chance to ignore any damage you take, damage over time included (BLOCK shows).`;
+    case 'temporal_shield':
+      return `Hits from monsters further than ${m.radius} px away deal ${pct(m.reduction)} less. After ${m.hits} of them it breaks for ${secs(m.recharge)}.`;
+  }
+}
+
+function powerupsPage(filter: string): Block[] {
+  const out: Block[] = [
+    {
+      t: 'p',
+      text: `Generic powerups are plain stat boosts. They take no slots and each goes up to level ${POWERUP_MAX_LEVEL}, so they keep showing up on cards after your weapon slots are full. Final stat = (base + flat bonuses) × (1 + percent bonuses), added up over every powerup level and stat curio (see CURIOS). Base values are at the bottom of this page.`,
+    },
+  ];
+  for (const def of POWERUPS) {
+    if (!shows(filter, def.name)) continue;
     out.push({ t: 'gap', h: 6 });
     out.push({ t: 'entry', icon: def.icon, title: def.name, sub: def.description });
-    const levels = Array.from({ length: itemMaxLevel(def) }, (_, i) => i + 1);
+    if (def.requiresTag) {
+      out.push({ t: 'p', text: `Only offered while you own a ${TAG_LABELS[def.requiresTag]} weapon (see WEAPONS).`, color: COLOR.textDim });
+    }
+    const max = powerupMaxLevel(def);
+    const levels = [1, 5, 10, 15, max].filter((lv, i, a) => lv <= max && a.indexOf(lv) === i);
     out.push({ t: 'table', cols: STAT_COLS, rows: statRows(def, levels) });
   }
+  if (filter !== 'ALL') return out;
   out.push({ t: 'gap', h: 8 });
   out.push({ t: 'h', text: 'BASE STATS (EVERY CHARACTER)' });
   out.push({
@@ -627,27 +730,6 @@ function itemsPage(): Block[] {
     ],
     rows: (Object.keys(BASE_STATS) as StatKey[]).map((k) => [STAT_LABELS[k], { text: statValue(k, BASE_STATS[k]), color: COLOR.gold }, STAT_NOTES[k]]),
   });
-  return out;
-}
-
-function powerupsPage(filter: string): Block[] {
-  const out: Block[] = [
-    {
-      t: 'p',
-      text: `Generic powerups are plain stat boosts. They take no slots and each goes up to level ${POWERUP_MAX_LEVEL}, so they keep showing up on cards after your slots are full. They add to the same stats as items: (base + flat bonuses) × (1 + percent bonuses), added up over every item and powerup level. Base values are on the ITEMS page.`,
-    },
-  ];
-  for (const def of POWERUPS) {
-    if (!shows(filter, def.name)) continue;
-    out.push({ t: 'gap', h: 6 });
-    out.push({ t: 'entry', icon: def.icon, title: def.name, sub: def.description });
-    if (def.requiresTag) {
-      out.push({ t: 'p', text: `Only offered while you own a ${TAG_LABELS[def.requiresTag]} weapon (see WEAPONS).`, color: COLOR.textDim });
-    }
-    const max = itemMaxLevel(def);
-    const levels = [1, 5, 10, 15, max].filter((lv, i, a) => lv <= max && a.indexOf(lv) === i);
-    out.push({ t: 'table', cols: STAT_COLS, rows: statRows(def, levels) });
-  }
   return out;
 }
 
@@ -1021,7 +1103,7 @@ function dropsPage(): Block[] {
     { t: 'h', text: 'LEVELS' },
     {
       t: 'p',
-      text: `Each level up offers 3 random cards: new weapons or items (while you have free slots), modifications (once you own a weapon they change), generic powerups, and upgrades to ones you own. With everything maxed the only card is a heal of ${FALLBACK_HEAL} HP. Each player has ${REROLLS_PER_RUN} rerolls per run (R or the REROLL button): a reroll replaces all three cards, with different ones whenever the pool has enough. When the run resumes after your picks you are invulnerable for ${secs(LEVELUP_INVULN_SECONDS)}. EXP needed for the next level:`,
+      text: `Each level up offers 3 random cards: new weapons (while you have free slots), modifications (once you own a weapon they change), generic powerups, and upgrades to ones you own. Every ${CURIO_EVERY} levels a pick of ${CURIO_CHOICES} curios follows that level's card (see CURIOS). With everything maxed the only card is a heal of ${FALLBACK_HEAL} HP. Each player has ${REROLLS_PER_RUN} rerolls per run (R or the REROLL button): a reroll replaces all three cards, with different ones whenever the pool has enough. When the run resumes after your picks you are invulnerable for ${secs(LEVELUP_INVULN_SECONDS)}. EXP needed for the next level:`,
     },
     {
       t: 'table',
@@ -1124,14 +1206,14 @@ function mechanicsPage(): Block[] {
     { t: 'h', text: 'CARDS AND SLOTS' },
     {
       t: 'p',
-      text: `${MAX_WEAPONS} weapon slots and ${MAX_ITEMS} item slots. Each weapon, item and modification goes up to level ${MAX_LEVEL}, each generic powerup to level ${POWERUP_MAX_LEVEL}. Modifications and powerups take no slots. Several level-ups in a row are offered one after another. Each player can reroll the cards ${REROLLS_PER_RUN} times per run.`,
+      text: `${MAX_WEAPONS} weapon slots. Each weapon and modification goes up to level ${MAX_LEVEL}, each generic powerup to level ${POWERUP_MAX_LEVEL}. Modifications, powerups and curios take no slots; curios have no levels. Several level-ups in a row are offered one after another, each level's curio pick right after its card. Each player can reroll the level-up cards ${REROLLS_PER_RUN} times per run (curio picks cannot be rerolled).`,
     },
     { t: 'h', text: 'WINNING' },
     { t: 'p', text: `Survive until ${formatTime(RUN_SECONDS)} and dawn breaks: every enemy on the field dies and the run is won. A boss that arrives at ${formatTime(RUN_SECONDS)} holds dawn back until it is defeated.` },
     { t: 'h', text: 'PARTY SCREEN' },
     {
       t: 'p',
-      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal and passives, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate (and a passive\'s pets: Warren\'s headbutts; Bunny Armory counts the damage of its gear): level, damage, DPS since it was picked up, kills and share of their damage. With more than 4 players the screen is compact: the weapons are in two columns, without DPS.',
+      text: 'After a run, every player gets a row: DAMAGE dealt (overkill not counted, ultimate included), DPS (damage over the whole run), KILLS (final blows), TAKEN (HP lost after armor and shields), HEALED (potions, heal cards, life steal, passives and curios, not regen), BLOCKS (hits Aegis stopped), DEATHS, REVIVES (each teammate standing on the body when a revive completes gets one), ULTS cast and CRITS (critical strikes landed). REROLLS used is shown under the weapons. Pick a row to see that player\'s weapons and ultimate (and a passive\'s pets: Warren\'s headbutts; Bunny Armory counts the damage of its gear): level, damage, DPS since it was picked up, kills and share of their damage; curios that dealt damage are listed too (CURIO). Under them are that player\'s curios, their tier in its colour. With more than 4 players the screen is compact: the weapons are in two columns, without DPS.',
     },
     { t: 'h', text: 'CONTROLS' },
     { t: 'p', text: 'Q: ultimate. ESC or P: menu (pauses in solo). M: mute. F3: debug overlay. Level-up: 1 2 3, arrows and ENTER, or click; R rerolls.' },
@@ -1216,8 +1298,8 @@ export const WIKI_PAGES: WikiPage[] = [
   { tab: 'CHARACTERS', source: 'src/data/characters.ts, src/data/ultimates.ts, src/data/passives.ts', filters: characterFilters, blocks: charactersPage },
   { tab: 'WEAPONS', source: 'src/data/weapons.ts', filters: characterFilters, blocks: weaponsPage },
   { tab: 'MODS', source: 'src/data/modifications.ts, src/constants.ts', filters: () => MOD_FILTERS, blocks: modsPage },
-  { tab: 'ITEMS', source: 'src/data/items.ts, src/data/player.ts', blocks: itemsPage },
-  { tab: 'POWERUPS', source: 'src/data/powerups.ts', filters: () => ['ALL', ...POWERUPS.map((p) => p.name.toUpperCase())], blocks: powerupsPage },
+  { tab: 'CURIOS', source: 'src/data/curios.ts, src/systems/Curios.ts, src/constants.ts', filters: () => CURIO_FILTERS, blocks: curiosPage },
+  { tab: 'POWERUPS', source: 'src/data/powerups.ts, src/data/player.ts', filters: () => ['ALL', ...POWERUPS.map((p) => p.name.toUpperCase())], blocks: powerupsPage },
   { tab: 'MONSTERS', source: 'src/data/enemies.ts', blocks: monstersPage },
   { tab: 'RARE', source: 'src/data/enemyModifiers.ts', blocks: raresPage },
   { tab: 'BOSSES', source: 'src/data/bosses.ts', filters: () => ['ALL', ...BOSSES.map((b) => b.name.toUpperCase())], blocks: bossesPage },

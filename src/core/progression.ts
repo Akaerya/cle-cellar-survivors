@@ -1,6 +1,6 @@
 import { MAX_LEVEL } from '../constants';
 import { BASE_STATS } from '../data/player';
-import type { ItemDef, ModEffect, ModificationDef, ModKey, NumericWeaponStat, PlayerStats, StatKey, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
+import type { ModEffect, ModificationDef, ModKey, NumericWeaponStat, PlayerStats, PowerupDef, StatKey, WeaponDef, WeaponStats, WeaponTag } from '../data/types';
 
 /** EXP needed to go from `level` to `level + 1`. */
 export function expToNext(level: number): number {
@@ -211,27 +211,27 @@ export function hasteFactor(haste: number): number {
   return 100 / (100 + Math.max(0, haste));
 }
 
-/** Highest level an item or powerup can reach. */
-export function itemMaxLevel(def: ItemDef): number {
+/** Highest level a powerup can reach. */
+export function powerupMaxLevel(def: PowerupDef): number {
   return def.maxLevel ?? MAX_LEVEL;
 }
 
-export interface OwnedItem {
-  def: ItemDef;
+export interface OwnedPowerup {
+  def: PowerupDef;
   level: number;
 }
 
 const STAT_KEYS = Object.keys(BASE_STATS) as StatKey[];
 
-/** Player stats = (base + flat) x (1 + percent), summed over every owned item and powerup level. */
-export function computeStats(items: OwnedItem[]): PlayerStats {
+/** Player stats = (base + flat) x (1 + percent), summed over every powerup level and other stat source (curios, Dragonborn). */
+export function computeStats(sources: OwnedPowerup[]): PlayerStats {
   const flat: Record<string, number> = {};
   const pct: Record<string, number> = {};
   for (const k of STAT_KEYS) {
     flat[k] = 0;
     pct[k] = 0;
   }
-  for (const it of items) {
+  for (const it of sources) {
     for (const m of it.def.perLevel) {
       flat[m.stat] += (m.flat ?? 0) * it.level;
       pct[m.stat] += (m.percent ?? 0) * it.level;

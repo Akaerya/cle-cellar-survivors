@@ -3,6 +3,7 @@ import { ATLAS } from '../art/textures';
 import { COLOR, MAX_LEVEL, SCENES, VIEW_H, VIEW_W } from '../constants';
 import { formatTime, hasteFactor } from '../core/progression';
 import { sfx } from '../core/sfx';
+import { CURIO_TIERS } from '../data';
 import { Button, Menu, drawPanel, onKey, text } from '../ui/widgets';
 import { leaveSession } from '../net/flow';
 import type { BuildEntry } from '../core/events';
@@ -69,16 +70,17 @@ export class PauseScene extends Phaser.Scene {
     onKey(this, 'keydown-ESC', resume);
     onKey(this, 'keydown-P', resume);
 
-    // Build: weapons and items with levels, then modifications and powerups (wrapping, 9 per row).
+    // Build: weapons with levels and curios with their tier, then modifications and powerups (wrapping, 9 per row).
     const listX = px + 20;
     let ly = py + 200;
     text(this, listX, ly, 'BUILD', { color: COLOR.textDim });
     ly += 12;
     const icon = (e: BuildEntry, x: number, y: number) => {
       this.add.image(x, y, ATLAS, e.icon).setOrigin(0);
-      text(this, x + 16, y + 16, String(e.level), { origin: [1, 0], color: e.level >= (e.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.text });
+      const color = e.max === 0 ? CURIO_TIERS[e.level].color : e.level >= (e.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.text;
+      text(this, x + 16, y + 16, String(e.level), { origin: [1, 0], color });
     };
-    [...run.buildWeapons(), ...run.buildItems()].forEach((e, i) => icon(e, listX + i * 19, ly));
+    [...run.buildWeapons(), ...run.buildCurios()].forEach((e, i) => icon(e, listX + i * 19, ly));
     [...run.buildMods(), ...run.buildPowerups()].forEach((e, i) => icon(e, listX + (i % 9) * 19, ly + 22 + Math.floor(i / 9) * 22));
 
     // Stats column.
@@ -90,7 +92,7 @@ export class PauseScene extends Phaser.Scene {
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     const rows: [string, string][] = [
       ['HP', `${Math.ceil(run.player.hp)} / ${s.maxHp}`],
-      ['MOVE SPEED', `${Math.round(s.moveSpeed)}`],
+      ['MOVE SPEED', `${Math.round(run.player.moveSpeed)}`],
       ['REGEN', `${run.player.regenPerSecond.toFixed(1)}/S`],
       ['ARMOR', `${s.armor}`],
       ['DAMAGE TAKEN', pct(s.damageTaken)],

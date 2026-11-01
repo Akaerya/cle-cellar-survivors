@@ -258,6 +258,8 @@ const ANIMS: { key: string; frames: string; once?: boolean }[] = [
   { key: 'carrot-glint', frames: 'carrot' },
   { key: 'bullet-tracer', frames: 'bullet' },
   { key: 'moonshard-spin', frames: 'moonshard' },
+  { key: 'spear-glint', frames: 'spear' },
+  { key: 'cyclone-spin', frames: 'cyclone' },
   { key: 'bunny-hop', frames: 'bunny' },
   ...['sword', 'bow', 'book'].map((g) => ({ key: `bunny-${g}`, frames: `bunny_${g}` })),
   ...['blue', 'green', 'red'].map((c) => ({ key: `gem-${c}`, frames: `gem_${c}` })),

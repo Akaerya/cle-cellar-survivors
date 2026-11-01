@@ -1,7 +1,7 @@
 import { COLOR } from '../constants';
-import type { OwnedItem } from '../core/progression';
+import type { OwnedPowerup } from '../core/progression';
 import { REVIVE } from '../data/coop';
-import type { ItemDef, PassiveDef } from '../data/types';
+import type { PassiveDef, PowerupDef } from '../data/types';
 import type { Player } from '../entities/Player';
 import type { GameScene } from '../scenes/GameScene';
 import type { WeaponInstance } from './Weapons';
@@ -27,8 +27,8 @@ export class Passive {
   /** Death Defied: seconds of healing left, and HP healed per second meanwhile. */
   private mendLeft = 0;
   private mendRate = 0;
-  /** Dragonborn: one stack's stat changes as an item, so they add up with items and powerups (see computeStats). */
-  private readonly growthItem: ItemDef | null;
+  /** Dragonborn: one stack's stat changes as a powerup level, so they add up with powerups and curios (see computeStats). */
+  private readonly growthStack: PowerupDef | null;
   /** Plunder: the ailment's weapon instance, which owns its stacks (the owner's Weapons puts them on every hit). */
   readonly ailment: WeaponInstance | null;
 
@@ -37,7 +37,7 @@ export class Passive {
     readonly owner: Player,
     readonly def: PassiveDef | null,
   ) {
-    this.growthItem =
+    this.growthStack =
       def?.kind === 'growth' ? { id: def.id, name: def.name, description: def.description, icon: def.icon, perLevel: def.perStack, levelText: '' } : null;
     this.ailment = def?.kind === 'ailment' ? owner.weapons.instance(def.attack) : null;
     owner.weapons.ailment = this.ailment;
@@ -79,9 +79,9 @@ export class Passive {
     }
   }
 
-  /** Stats the passive adds on top of items and powerups (Dragonborn stacks). */
-  statSources(): OwnedItem[] {
-    return this.growthItem && this.stacks > 0 ? [{ def: this.growthItem, level: this.stacks }] : [];
+  /** Stats the passive adds on top of powerups and curios (Dragonborn stacks). */
+  statSources(): OwnedPowerup[] {
+    return this.growthStack && this.stacks > 0 ? [{ def: this.growthStack, level: this.stacks }] : [];
   }
 
   /** Shroud: true when the hit is dodged. */

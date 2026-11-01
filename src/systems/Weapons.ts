@@ -292,7 +292,7 @@ export class Weapons {
 
   /** `projectiles` is shared by every player's weapons. */
   constructor(
-    private game: GameScene,
+    readonly game: GameScene,
     readonly owner: Player,
     readonly projectiles: Phaser.Physics.Arcade.Group,
   ) {}
@@ -391,7 +391,9 @@ export class Weapons {
     const damageScale = damageSum * p.damageMult * less;
     const durationMult = Math.max(0.1, 1 + m.duration);
     const effect = w.def.effect;
-    let cooldown = Math.max(0.05, s.cooldown * st.cooldownMult * hasteFactor(st.abilityHaste));
+    // Chronobreak gives every weapon one base cooldown; curios add Ability Haste (Lone Hero, Still Here).
+    const baseCooldown = p.curios.cooldownFor(w.def) ?? s.cooldown;
+    let cooldown = Math.max(0.05, baseCooldown * st.cooldownMult * hasteFactor(st.abilityHaste + p.curios.haste(w.def)));
     // Aegis is an effect on the owner: duration modifications make it come back sooner or later.
     if (w.def.targeting === 'shield') cooldown /= durationMult;
     // The splash of a weapon that is not AoE itself gets the AoE modifications' damage bonus on top of the hit.
@@ -494,7 +496,10 @@ export class Weapons {
     }
   }
 
-  /** Projectiles of every player: lifetime, boomerang and bomb steering, and the arena wall. Bombs explode instead of vanishing. */
+  /**
+   * Projectiles of every player: lifetime, boomerang and bomb steering, and the arena wall. Bombs explode instead of
+   * vanishing; with Resonance Dynamo, projectiles fly back to their owner instead (also from the edge of their screen).
+   */
   static updateProjectiles(group: Phaser.Physics.Arcade.Group, dt: number): void {
     const children = group.getChildren() as Projectile[];
     for (let i = 0; i < children.length; i++) {
@@ -507,8 +512,10 @@ export class Weapons {
         if (pr.arrived || !alive || hitWall) o.weapons.explode(pr);
         continue;
       }
-      if (!alive || hitWall) {
-        Weapons.release(pr);
+      const edge = !pr.recalled && o.curios.recalls(pr.weapon.def) && !o.weapons.game.onScreen(o, pr.x, pr.y);
+      if (!alive || hitWall || edge) {
+        if (!pr.recalled && o.curios.recalls(pr.weapon.def)) pr.recall();
+        else Weapons.release(pr);
         continue;
       }
       const dome = o.ultimate?.dome();
@@ -548,7 +555,10 @@ export class Weapons {
     const fired = !locked && this.perform(w, e, true);
     // Hold fire with no target (or while locked): stay ready and attack the moment it can.
     w.timer = fired ? Math.max(w.timer + e.cooldown, e.cooldown * 0.5) : 0;
-    if (fired) w.refundable = this.refundShare() * e.cooldown;
+    if (fired) {
+      w.refundable = this.refundShare() * e.cooldown;
+      this.owner.curios.used();
+    }
   }
 
   /**
@@ -811,6 +821,7 @@ export class Weapons {
     if (w.timer <= 0 && target) {
       w.timer = e.cooldown;
       w.refundable = this.refundShare() * e.cooldown;
+      this.owner.curios.used();
       this.queueStrike(w, 'cooldown');
     }
     if (shadow && w.checkTimer <= 0) {
@@ -1105,6 +1116,7 @@ export class Weapons {
           if (first) {
             w.timer = e.cooldown;
             w.refundable = this.refundShare() * e.cooldown;
+            this.owner.curios.used();
           } else w.repeatsLeft--;
         }
       }
@@ -1295,6 +1307,7 @@ export class Weapons {
     const p = this.owner;
     p.aegis = 1;
     if (e.reiterate > 0 && this.game.rng.float() < e.reiterate) p.aegis++;
+    p.curios.used();
     w.pulse = 1;
     this.game.fx.ring(p.x, p.y, w.def.color ?? 0x5ab0ff, e.size + 6, 250);
   }
@@ -1620,6 +1633,7 @@ export class Weapons {
       if (w.timer <= 0) {
         w.timer += e.cooldown;
         w.refundable = this.refundShare() * e.cooldown;
+        this.owner.curios.used();
         w.pulse = 1;
         w.serial++;
         this.game.relay(['a', p.slot, this.list.indexOf(w)]);
@@ -1680,12 +1694,13 @@ export class Weapons {
     }
     pr.pierceLeft--;
     if (pr.pierceLeft > 0) return;
-    if (pr.boomerang) {
+    if (pr.boomerang && !pr.recalled) {
       if (pr.returning) Weapons.release(pr);
       else pr.turnAround();
       return;
     }
     if (pr.bouncesLeft > 0) this.chain(pr);
+    else if (this.owner.curios.recalls(w.def) && !pr.recalled) pr.recall();
     else Weapons.release(pr);
   }
 
@@ -1791,6 +1806,8 @@ export class Weapons {
     }
     if (e.impact > 0) this.splash(w, e, en, x, y, amount * e.impact);
     this.afterHit(w, serial, killed);
+    p.curios.weaponHit(w, en, serial);
+    p.curios.flush();
     return true;
   }
 
@@ -1999,9 +2016,9 @@ export class Weapons {
 
   /**
    * Duration weapons: a hit applies the weapon's effect (refreshing the stack it applied before, unless the effect
-   * stacks) and may reiterate. Hexproof enemies take none.
+   * stacks) and may reiterate. Hexproof enemies take none. Frostfire Brand burns through here too.
    */
-  private applyEffect(w: WeaponInstance, e: Effective, en: Enemy): void {
+  applyEffect(w: WeaponInstance, e: Effective, en: Enemy): void {
     const def = w.def.effect;
     if (!def || e.effectDuration <= 0 || !en.active || !this.game.enemyMods.debuffable(en)) return;
     let stack = def.stacks ? undefined : en.effects.find((st) => st.weapon === w && !st.copy);

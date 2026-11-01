@@ -120,6 +120,26 @@
    "crystalbud_3": [36, 0, 250]
   }
  },
+ "curio": {
+  "w": 16,
+  "h": 16,
+  "frames": {
+   "icon_curio_t0": [0, 0, 100],
+   "icon_curio_t1": [16, 0, 100],
+   "icon_curio_t2": [32, 0, 100],
+   "icon_curio_t3": [48, 0, 100]
+  }
+ },
+ "cyclone": {
+  "w": 32,
+  "h": 32,
+  "frames": {
+   "cyclone_0": [0, 0, 80],
+   "cyclone_1": [32, 0, 80],
+   "cyclone_2": [64, 0, 80],
+   "cyclone_3": [96, 0, 80]
+  }
+ },
  "cyclops": {
   "w": 40,
   "h": 40,
@@ -405,6 +425,14 @@
   "h": 12,
   "frames": {
    "shadow_xl": [0, 0, 100]
+  }
+ },
+ "spear": {
+  "w": 16,
+  "h": 8,
+  "frames": {
+   "spear_0": [0, 0, 150],
+   "spear_1": [16, 0, 150]
   }
  },
  "spell": {

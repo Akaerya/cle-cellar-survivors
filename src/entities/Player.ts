@@ -2,14 +2,22 @@ import Phaser from 'phaser';
 import { ATLAS } from '../art/textures';
 import { COLOR, DEPTH, ENEMY_HIT_COOLDOWN, INVULN_SECONDS, ARENA_SIZE, PLAYER_COLORS, PLAYER_TINTS } from '../constants';
 import { emptyRunStats, type PlayerRunStats } from '../core/events';
-import { computeStats, type OwnedItem, type OwnedMod } from '../core/progression';
+import { computeStats, type OwnedPowerup, type OwnedMod } from '../core/progression';
 import { BASE_STATS, PLAYER_RADIUS, REROLLS_PER_RUN } from '../data/player';
 import type { ChainsDef, ChargeKind, ChargesDef, CharacterDef, PlayerStats } from '../data/types';
 import { text } from '../ui/widgets';
+import type { Curios } from '../systems/Curios';
 import type { Passive } from '../systems/Passive';
 import type { Pets } from '../systems/Pets';
 import type { Ultimate } from '../systems/Ultimate';
 import type { Weapons } from '../systems/Weapons';
+
+/** A pick still to make: a level-up card, or a curio (every CURIO_EVERY levels, right after that level's card). */
+export interface PendingPick {
+  kind: 'card' | 'curio';
+  /** The level it is for. */
+  level: number;
+}
 
 export const CHARGE_KINDS: readonly ChargeKind[] = ['brutal', 'siphon', 'vicissitude'];
 /** Past this many hit timers, the ones that ran out are cleared away. */
@@ -31,6 +39,18 @@ export interface PlayerStatus {
   /** Seconds until the passive can trigger again, and its stacks (Dragonborn). */
   passiveCd: number;
   stacks: number;
+  /** Move speed right now, curios included (joiners steer with it). */
+  moveSpeed: number;
+  /** Curios: Fleeting Fantasy and its max (Suffering Mass), Aegis Aurora shield points, Rampage, Static and Dumb Luck stacks. */
+  ff: number;
+  ffMax: number;
+  shield: number;
+  rampage: number;
+  static: number;
+  luck: number;
+  /** Stolen rare modifiers (bit mask, see modifierBit) and seconds the longest has left. */
+  stolen: number;
+  stolenLeft: number;
 }
 
 /** A playable character. The player only steers it (and casts the ultimate); weapons fire on their own. */
@@ -62,6 +82,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   passive!: Passive;
   /** Pets (Warren passive, Giant Bunny ultimate); empty for characters without them. */
   pets!: Pets;
+  curios!: Curios;
   /** Aegis stacks (Storm Shield): each blocks one hit completely. */
   aegis = 0;
   /** Unstable Infusion charges: seconds left on each, oldest first, by kind. */
@@ -76,13 +97,12 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   teleports = 0;
   /** Joiners: the host's numbers for the HUD (null on the host and in solo, where the live values are used). */
   synced: PlayerStatus | null = null;
-  items: OwnedItem[] = [];
-  /** Generic powerups (stat boosts up to level 20, no slots). Stats come from items and powerups together. */
-  powerups: OwnedItem[] = [];
+  /** Generic powerups (stat boosts up to level 20, no slots). Stats come from powerups, curios and the passive together. */
+  powerups: OwnedPowerup[] = [];
   /** Modifications: change every weapon that shares one of their tags. */
   mods: OwnedMod[] = [];
-  /** Level-up picks this player still has to make (fallen players keep collecting them). */
-  pendingLevelUps = 0;
+  /** Picks this player still has to make, in order (fallen players keep collecting them). */
+  readonly pending: PendingPick[] = [];
   /** Level-up rerolls left this run. */
   rerolls = REROLLS_PER_RUN;
   /** Multiplies move speed this frame (boss webs and void fields slow it); set by the scene before steering. */
@@ -139,7 +159,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return !this.dead && !this.gone;
   }
 
-  /** Applies new stats; extra max HP from items and powerups is added to current HP too. */
+  /** Applies new stats; extra max HP from powerups and curios is added to current HP too. */
   setStats(stats: PlayerStats): void {
     const gained = stats.maxHp - this.stats.maxHp;
     this.stats = stats;
@@ -147,9 +167,29 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.hp = Math.min(this.hp, stats.maxHp);
   }
 
-  /** Stats from items, powerups and the passive's stacks (Dragonborn), added up as usual. */
+  /** Stats from powerups, curios and the passive's stacks (Dragonborn), added up as usual; Suffering Mass then locks max HP. */
   recomputeStats(): void {
-    this.setStats(computeStats([...this.items, ...this.powerups, ...(this.passive?.statSources() ?? [])]));
+    const stats = computeStats([...this.powerups, ...(this.curios?.statSources() ?? []), ...(this.passive?.statSources() ?? [])]);
+    this.curios?.adjustStats(stats);
+    this.setStats(stats);
+  }
+
+  /** Max HP, or Fleeting Fantasy's max with Suffering Mass: what heals of a share of max HP go by. */
+  get healthMax(): number {
+    return this.curios?.ffMax || this.stats.maxHp;
+  }
+
+  /** Something to heal: HP below max (Fleeting Fantasy with Suffering Mass). */
+  get needsHealing(): boolean {
+    const c = this.curios;
+    if (c && c.ffMax > 0) return c.ff < c.ffMax;
+    return this.hp < this.stats.maxHp;
+  }
+
+  /** Move speed right now: the stat with curio bonuses (the host's number on joiners). */
+  get moveSpeed(): number {
+    if (this.synced) return this.synced.moveSpeed;
+    return this.curios ? this.curios.moveSpeed(this.stats.moveSpeed) : this.stats.moveSpeed;
   }
 
   /** Mistwalker: abilities are locked, nothing can hurt it and enemies do not go after it. */
@@ -231,6 +271,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   /** What the HUD shows: the host's numbers on joiners, the live ones elsewhere. */
   status(): PlayerStatus {
     if (this.synced) return this.synced;
+    const c = this.curios;
     let amp = 0;
     let ampLeft = 0;
     for (const a of this.amps) {
@@ -247,6 +288,15 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       ampLeft,
       passiveCd: this.passive?.cooldownLeft ?? 0,
       stacks: this.passive?.stacks ?? 0,
+      moveSpeed: this.moveSpeed,
+      ff: c?.ff ?? 0,
+      ffMax: c?.ffMax ?? 0,
+      shield: c?.shield ?? 0,
+      rampage: c?.rampage ?? 0,
+      static: c?.staticStacks ?? 0,
+      luck: c?.luck ?? 0,
+      stolen: c?.stolenMask ?? 0,
+      stolenLeft: c?.stolenLeft ?? 0,
     };
   }
 
@@ -258,12 +308,24 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.spinTime = 0.12;
   }
 
-  /** Returns the HP actually restored. */
-  heal(amount: number): number {
-    const before = this.hp;
-    this.hp = Math.min(this.stats.maxHp, this.hp + amount);
-    this.runStats.healed += this.hp - before;
-    return this.hp - before;
+  /**
+   * Returns the HP actually restored. Necrotic Prism takes its share first, and with Suffering Mass it goes to Fleeting
+   * Fantasy. `counted` false (regen) leaves it off the party screen.
+   */
+  heal(amount: number, counted = true): number {
+    const c = this.curios;
+    if (amount <= 0) return 0;
+    if (c) amount = c.beforeHeal(amount);
+    let restored: number;
+    if (c && c.ffMax > 0) restored = c.restoreFantasy(amount);
+    else {
+      const before = this.hp;
+      this.hp = Math.min(this.stats.maxHp, this.hp + amount);
+      restored = this.hp - before;
+    }
+    if (counted) this.runStats.healed += restored;
+    c?.afterHeal(restored);
+    return restored;
   }
 
   /** ix, iy: raw input in -1..1. Diagonals are normalised so they are not faster. */
@@ -282,7 +344,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.moving) {
       const nx = ix / len;
       const ny = iy / len;
-      const speed = this.stats.moveSpeed * this.moveMult;
+      const speed = this.moveSpeed * this.moveMult;
       body.setVelocity(nx * speed, ny * speed);
       this.facing.set(nx, ny);
       this.speedNow = speed;
@@ -335,9 +397,9 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return this.chains.length * this.chainSlowEach;
   }
 
-  /** Chance (0..1) that one of this player's hits is a critical strike: the stat plus passive weapons. */
+  /** Chance (0..1) that one of this player's hits is a critical strike: the stat, passive weapons and Dumb Luck. */
   get critChance(): number {
-    return Math.min(1, this.stats.critChance + this.weapons.critChance());
+    return Math.min(1, this.stats.critChance + this.weapons.critChance() + (this.curios?.critBonus() ?? 0));
   }
 
   /** HP healed per second: flat regen plus the percent-of-max-HP regen. Not paused by taking damage. */
@@ -345,10 +407,10 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return this.stats.regen + this.stats.regenPercent * this.stats.maxHp;
   }
 
-  /** Server-side upkeep the host runs for every character. */
+  /** Host: regen, through `heal` (so Necrotic Prism and Suffering Mass get it too). */
   regenerate(dt: number): void {
     const rate = this.regenPerSecond;
-    if (this.alive && rate > 0 && this.hp < this.stats.maxHp) this.hp = Math.min(this.stats.maxHp, this.hp + rate * dt);
+    if (this.alive && rate > 0 && this.needsHealing) this.heal(rate * dt, false);
   }
 
   /** Facing flip, hurt flash, walk/idle animation, depth and name tag. */
@@ -422,19 +484,21 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   /**
-   * The damage `raw` would deal: armor is subtracted first, then shields absorb their share, then DAMAGE TAKEN and a
-   * Vicissitude charge (used up here) apply. Always at least 1.
+   * The damage `raw` would deal: armor and Heavy Iron are subtracted first, then shields absorb their share, then
+   * DAMAGE TAKEN, a Vicissitude charge (used up here) and `mult` (curios) apply. Always at least 1.
    */
-  damageFrom(raw: number): number {
+  damageFrom(raw: number, mult = 1): number {
     const vicissitude = Math.min(1, this.chargeValue(Math.min(1, this.charges.vicissitude.length), (d) => d.vicissitude));
     if (vicissitude > 0) this.charges.vicissitude.shift();
-    return Math.max(1, Math.round((raw - this.stats.armor) * (1 - this.weapons.reduction()) * this.stats.damageTaken * (1 - vicissitude)));
+    const flat = this.stats.armor + (this.curios?.flatReduction ?? 0);
+    return Math.max(1, Math.round((raw - flat) * (1 - this.weapons.reduction()) * this.stats.damageTaken * (1 - vicissitude) * mult));
   }
 
-  /** Takes `dmg` off HP (not in god mode). A hit (not `dot`) plays the hurt animation. */
+  /** Takes `dmg` off HP (not in god mode), after curio shields and Fleeting Fantasy. A hit (not `dot`) plays the hurt animation. */
   takeDamage(dmg: number, dot: boolean): void {
     if (!dot) this.showHurt();
     if (this.god) return;
+    if (this.curios) dmg = this.curios.absorb(dmg);
     this.runStats.taken += Math.min(this.hp, dmg);
     this.hp = Math.max(0, this.hp - dmg);
   }
@@ -469,6 +533,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.revive = 0;
     this.setAngle(0).setAlpha(1);
     this.hp = Math.max(1, Math.round(this.stats.maxHp * hpFraction));
+    this.curios?.onStoodUp(hpFraction);
     this.invuln = this.invulnTotal = invulnSeconds;
     this.hurtAnim = 0;
     this.play(this.anim('idle'), true);

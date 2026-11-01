@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
 import { ATLAS, FONT, FONT_SIZE, FONT_SMALL, FONT_SMALL_SIZE } from '../art/textures';
 import { COLOR, SCENES, VIEW_H, VIEW_W } from '../constants';
+import { CURIO_TIERS } from '../data';
 import { EV } from '../core/events';
 import { sfx } from '../core/sfx';
 import { Button, drawPanel, onKey, text } from '../ui/widgets';
-import type { Choice, GameScene } from './GameScene';
+import type { Choice, GameScene, Offer } from './GameScene';
 
 const CARD_W = 192;
 const CARD_H = 172;
@@ -35,7 +36,7 @@ const TEXT_SIZES = [FONT_SIZE, 8, 7, 6];
 const INPUT_GUARD_MS = 250;
 const KIND_LABELS: Record<Choice['kind'], string> = {
   weapon: 'WEAPON',
-  item: 'ITEM',
+  curio: 'CURIO',
   mod: 'MODIFICATION',
   powerup: 'POWERUP',
   heal: 'HEAL',
@@ -51,7 +52,8 @@ interface Card {
 }
 
 /**
- * Game paused, three upgrade cards over a dimmed playfield. Queued level-ups are shown one after another.
+ * Game paused, three upgrade cards over a dimmed playfield. Queued level-ups are shown one after another, and every
+ * CURIO_EVERY levels a pick of three curios comes after that level's cards (no rerolls there).
  * In co-op every player picks their own cards at the same time; the run is held until all are done.
  */
 export class LevelUpScene extends Phaser.Scene {
@@ -60,6 +62,7 @@ export class LevelUpScene extends Phaser.Scene {
   private selected = 0;
   private readyAt = 0;
   private busy = false;
+  private title!: Phaser.GameObjects.BitmapText;
   private subtitle!: Phaser.GameObjects.BitmapText;
   private hint!: Phaser.GameObjects.BitmapText;
   private closed = false;
@@ -78,8 +81,8 @@ export class LevelUpScene extends Phaser.Scene {
     this.shownOnce = false;
     this.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0a0610, 0.55).setOrigin(0);
     this.add.image(0, 0, 'vignette').setOrigin(0).setDisplaySize(VIEW_W, VIEW_H);
-    const title = text(this, VIEW_W / 2, 44, 'LEVEL UP!', { scale: 3, origin: [0.5, 0.5], color: COLOR.gold });
-    this.tweens.add({ targets: title, scale: { from: 1.3, to: 1 }, duration: 260, ease: 'Back.easeOut' });
+    this.title = text(this, VIEW_W / 2, 44, 'LEVEL UP!', { scale: 3, origin: [0.5, 0.5], color: COLOR.gold });
+    this.tweens.add({ targets: this.title, scale: { from: 1.3, to: 1 }, duration: 260, ease: 'Back.easeOut' });
     this.subtitle = text(this, VIEW_W / 2, 70, '', { origin: [0.5, 0.5], color: COLOR.textDim });
     this.hint = text(this, VIEW_W / 2, VIEW_H - 22, 'PRESS 1 2 3 OR CLICK A CARD', { origin: [0.5, 0.5], color: COLOR.textDim });
     this.rerollButton = new Button(this, VIEW_W / 2 - 80, 276, 160, 20, '', () => this.reroll());
@@ -127,18 +130,19 @@ export class LevelUpScene extends Phaser.Scene {
     if (!offer || this.closed) return;
     if (this.shownOnce && !reroll) sfx.play('levelup');
     this.shownOnce = true;
-    this.showChoices(offer.choices, offer.pending);
+    this.showChoices(offer);
     const left = offer.rerolls;
     this.rerollButton.label.setText(left > 0 ? `REROLL (R) · ${left} LEFT` : 'NO REROLLS LEFT');
-    this.rerollButton.setVisible(true);
-    if (left <= 0) this.rerollButton.zone.disableInteractive();
+    this.rerollButton.setVisible(!offer.curio);
+    if (left <= 0 || offer.curio) this.rerollButton.zone.disableInteractive();
+    else this.rerollButton.zone.setInteractive();
     this.rerollButton.label.setAlpha(left > 0 ? 1 : 0.5);
   }
 
   /** Replaces all three cards (5 rerolls per player per run). */
   private reroll(): void {
     const offer = this.run.offer;
-    if (this.busy || this.closed || !offer || offer.rerolls <= 0 || this.time.now < this.readyAt) return;
+    if (this.busy || this.closed || !offer || offer.curio || offer.rerolls <= 0 || this.time.now < this.readyAt) return;
     sfx.unlock();
     sfx.play('select');
     this.readyAt = this.time.now + INPUT_GUARD_MS;
@@ -161,12 +165,15 @@ export class LevelUpScene extends Phaser.Scene {
     if (!this.run.coop) this.scene.resume(SCENES.game);
   }
 
-  private showChoices(choices: Choice[], pending: number): void {
+  private showChoices(offer: Offer): void {
+    const { choices, pending } = offer;
     this.clearCards();
     this.hint.setVisible(true);
     this.selected = 0;
     this.readyAt = this.time.now + INPUT_GUARD_MS;
-    this.subtitle.setText(`LEVEL ${this.run.level - pending + 1}${pending > 1 ? `  (+${pending - 1} MORE)` : ''} · CHOOSE ONE`);
+    this.title.setText(offer.curio ? 'CURIO!' : 'LEVEL UP!');
+    const more = pending > 1 ? `  (+${pending - 1} MORE)` : '';
+    this.subtitle.setText(`LEVEL ${offer.level}${more} · ${offer.curio ? 'CHOOSE A CURIO' : 'CHOOSE ONE'}`);
 
     const total = choices.length * CARD_W + (choices.length - 1) * GAP;
     const x0 = Math.round((VIEW_W - total) / 2);
@@ -210,20 +217,25 @@ export class LevelUpScene extends Phaser.Scene {
     root.add(frame);
 
     root.add(text(this, x + 7, y + 6, String(index + 1), { color: COLOR.textDim }));
-    if (choice.kind !== 'heal') {
+    const tier = choice.kind === 'curio' ? CURIO_TIERS[choice.tier ?? 0] : null;
+    if (tier) {
+      root.add(text(this, x + CARD_W - 7, y + 6, `TIER ${tier.tier}`, { origin: [1, 0], color: tier.color }));
+    } else if (choice.kind !== 'heal') {
       const tag = choice.isNew ? 'NEW!' : `LV ${choice.level}`;
       root.add(text(this, x + CARD_W - 7, y + 6, tag, { origin: [1, 0], color: choice.isNew ? COLOR.gold : COLOR.text }));
     }
     const icon = this.add.image(x + CARD_W / 2, y + layout.iconY, ATLAS, choice.icon).setScale(layout.iconScale);
     root.add(icon);
     this.tweens.add({ targets: icon, y: y + layout.iconY - layout.iconScale, yoyo: true, repeat: -1, duration: 700, ease: 'Sine.easeInOut' });
-    root.add(this.fitText(x + CARD_W / 2, y + layout.nameY, choice.name.toUpperCase(), CARD_W - 2 * TEXT_PAD, NAME_H, COLOR.gold));
-    const kind = KIND_LABELS[choice.kind];
+    root.add(this.fitText(x + CARD_W / 2, y + layout.nameY, choice.name.toUpperCase(), CARD_W - 2 * TEXT_PAD, NAME_H, tier?.color ?? COLOR.gold));
+    const kind = tier ? `TIER ${tier.tier} ${KIND_LABELS.curio}` : KIND_LABELS[choice.kind];
     root.add(text(this, x + CARD_W / 2, y + layout.kindY, kind, { origin: [0.5, 0], color: COLOR.textDim }));
     const textH = CARD_H - TEXT_BOTTOM - layout.textY;
     root.add(this.fitText(x + CARD_W / 2, y + layout.textY, choice.text.toUpperCase(), CARD_W - 2 * TEXT_PAD, textH, COLOR.text));
 
-    if (choice.kind !== 'heal') {
+    if (choice.kind === 'curio') {
+      // Curios have no levels.
+    } else if (choice.kind !== 'heal') {
       // Level pips: owned levels white, the one this card grants in gold. Powerups (20 levels) get smaller pips.
       const max = choice.maxLevel;
       const pip = max > 5 ? 5 : 8;
@@ -261,7 +273,9 @@ export class LevelUpScene extends Phaser.Scene {
   private drawCard(card: Card, on: boolean): void {
     const g = card.frame;
     g.clear();
-    drawPanel(g, card.x, card.y, CARD_W, CARD_H, on ? COLOR.gold : COLOR.panelEdge, on ? 0x2a1f3c : COLOR.panel, 0.97);
+    // Curio cards are edged in their tier's colour.
+    const tier = card.choice.kind === 'curio' ? CURIO_TIERS[card.choice.tier ?? 0].color : null;
+    drawPanel(g, card.x, card.y, CARD_W, CARD_H, on ? COLOR.gold : (tier ?? COLOR.panelEdge), on ? 0x2a1f3c : COLOR.panel, 0.97);
     if (on) {
       g.lineStyle(1, COLOR.goldDark, 1);
       g.strokeRect(card.x + 2.5, card.y + 2.5, CARD_W - 5, CARD_H - 5);

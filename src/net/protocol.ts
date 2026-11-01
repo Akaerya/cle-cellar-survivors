@@ -7,7 +7,7 @@ import type { Choice } from '../scenes/GameScene';
 
 // ------------------------------------------------------------------ JSON messages
 
-/** [weapon, item, modification or powerup id, level] */
+/** [weapon, curio, modification or powerup id, level] (curios are always level 1) */
 export type BuildPair = [string, number];
 
 /** Each lobby member's name and character, by slot. */
@@ -18,10 +18,13 @@ export type HostMsg =
   | { t: 'reject'; reason: string }
   | { t: 'lobby'; slots: number[]; profiles: Profiles }
   | { t: 'start'; seed: string; slots: number[]; profiles: Profiles }
-  /** A player's weapons, items, modifications or powerups changed. */
-  | { t: 'build'; slot: number; weapons: BuildPair[]; items: BuildPair[]; mods: BuildPair[]; powerups: BuildPair[] }
-  /** Level-up cards for the receiving player; `pending` counts this pick, `rerolls` is what they have left. */
-  | { t: 'choices'; choices: Choice[]; pending: number; rerolls: number; reroll?: boolean }
+  /** A player's weapons, curios, modifications or powerups changed. */
+  | { t: 'build'; slot: number; weapons: BuildPair[]; curios: BuildPair[]; mods: BuildPair[]; powerups: BuildPair[] }
+  /**
+   * Cards for the receiving player: level-up cards, or curios (`curio`), for level `level`; `pending` counts this pick,
+   * `rerolls` is what they have left.
+   */
+  | { t: 'choices'; choices: Choice[]; level: number; curio: boolean; pending: number; rerolls: number; reroll?: boolean }
   /** The receiving player has picked everything; teammates are still choosing. */
   | { t: 'choicesDone' }
   /** Everyone has picked; the run continues. */
@@ -36,7 +39,7 @@ export type ClientMsg =
    */
   | { t: 'pos'; x: number; y: number; fx: number; fy: number; m: 0 | 1; v: number; k: number }
   | { t: 'pick'; index: number }
-  /** Replace the three cards on offer (the host checks the player has rerolls left). */
+  /** Replace the three cards on offer (the host checks the player has rerolls left; curios cannot be rerolled). */
   | { t: 'reroll' }
   /** Name or character changed in the lobby. */
   | { t: 'profile'; name: string; character: string }
@@ -342,6 +345,15 @@ export function decodeSnapshot(buf: ArrayBuffer): Snapshot {
       ampLeft: u16() / 10,
       passiveCd: u16() / 10,
       stacks: u8(),
+      moveSpeed: u16() / 10,
+      ff: u16(),
+      ffMax: u16(),
+      shield: u16(),
+      rampage: u16(),
+      static: u8(),
+      luck: u8(),
+      stolen: u32(),
+      stolenLeft: u8(),
     };
     players.push({ slot, flags, x, y, fx, fy, hp, maxHp, invuln, phases, revive, reviveHp, ultCd, ultActive, status });
   }
@@ -438,5 +450,11 @@ export function writeHeader(
     w.u16(Math.min(65535, Math.ceil(s.ampLeft * 10)));
     w.u16(Math.min(65535, Math.ceil(s.passiveCd * 10)));
     w.u8(Math.min(255, s.stacks));
+    w.u16(Math.min(65535, Math.round(s.moveSpeed * 10)));
+    for (const n of [s.ff, s.ffMax, s.shield, s.rampage]) w.u16(Math.min(65535, Math.ceil(n)));
+    w.u8(Math.min(255, s.static));
+    w.u8(Math.min(255, s.luck));
+    w.u32(s.stolen >>> 0);
+    w.u8(Math.min(255, Math.ceil(s.stolenLeft)));
   }
 }

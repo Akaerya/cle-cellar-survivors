@@ -5,7 +5,6 @@ import {
   DEPTH,
   FALLBACK_HEAL,
   LEVELUP_INVULN_SECONDS,
-  MAX_ITEMS,
   MAX_LEVEL,
   MAX_WEAPONS,
   MIN_MOVE_MULT,
@@ -17,19 +16,21 @@ import {
 } from '../constants';
 import { DEBUG_EV, EV, type BuildEntry, type PartyMember, type RunSummary, type WeaponReport } from '../core/events';
 import { displayName, loadProfile } from '../core/profile';
-import { expToNext, hasImpact, hasTag, itemMaxLevel, modReach, weaponLevelText } from '../core/progression';
+import { expToNext, hasImpact, hasTag, powerupMaxLevel, modReach, weaponLevelText } from '../core/progression';
 import { Rng, seedFromUrl } from '../core/rng';
 import { sfx, type SfxName } from '../core/sfx';
 import {
   ALL_ENEMIES,
   ATTACK_DEFS,
-  ITEMS,
+  CURIO_CHOICES,
+  CURIO_EVERY,
+  CURIO_TIERS,
   MODIFICATIONS,
   POWERUPS,
   REVIVE,
   SUMMON_ANIMS,
   characterDef,
-  itemDef,
+  curioText,
   modDef,
   passiveDef,
   powerupDef,
@@ -42,6 +43,7 @@ import type { Enemy } from '../entities/Enemy';
 import type { Gem } from '../entities/Gem';
 import { Player } from '../entities/Player';
 import type { Projectile } from '../entities/Projectile';
+import type { CurioDef } from '../data/types';
 import { Mirror, SNAPSHOT_HZ } from '../net/Mirror';
 import { NET_EV, netSession, type NetSession } from '../net/Net';
 import {
@@ -67,6 +69,7 @@ import {
 } from '../net/protocol';
 import { buildArena } from '../systems/Arena';
 import { Bosses, type BossBar } from '../systems/Bosses';
+import { Curios, FANTASY_COLOR } from '../systems/Curios';
 import { Enemies } from '../systems/Enemies';
 import { EnemyModifiers } from '../systems/EnemyModifiers';
 import { RareVisuals, type RareView } from '../systems/RareVisuals';
@@ -87,16 +90,18 @@ export type RunState = 'playing' | 'dying' | 'victory' | 'ended';
 export type RunMode = 'solo' | 'host' | 'client';
 
 export interface Choice {
-  kind: 'weapon' | 'item' | 'mod' | 'powerup' | 'heal';
+  kind: 'weapon' | 'curio' | 'mod' | 'powerup' | 'heal';
   id: string;
   name: string;
   icon: string;
   /** Level after taking this card (1 for new). */
   level: number;
-  /** Highest level this weapon, item, modification or powerup can reach. */
+  /** Highest level this weapon, modification or powerup can reach (0 for curios). */
   maxLevel: number;
   isNew: boolean;
   text: string;
+  /** Curios: their tier (0 rarest). */
+  tier?: number;
 }
 
 export interface HudSnapshot {
@@ -108,10 +113,19 @@ export interface HudSnapshot {
   kills: number;
   time: number;
   weapons: BuildEntry[];
-  items: BuildEntry[];
+  curios: BuildEntry[];
   mods: BuildEntry[];
   powerups: BuildEntry[];
   debug: boolean;
+}
+
+/** Cards on offer to a player (see GameScene.offer). */
+export interface Offer {
+  choices: Choice[];
+  level: number;
+  curio: boolean;
+  pending: number;
+  rerolls: number;
 }
 
 /** Where each player starts, by slot. */
@@ -175,8 +189,11 @@ export class GameScene extends Phaser.Scene {
   debug = false;
   /** Co-op: the run is held while players pick level-up cards. */
   frozen = false;
-  /** Level-up cards on offer to the local player, and the rerolls they have left. */
-  offer: { choices: Choice[]; pending: number; rerolls: number } | null = null;
+  /**
+   * Cards on offer to the local player: the level they are for, whether it is a curio pick, picks left (this one
+   * included) and rerolls left.
+   */
+  offer: Offer | null = null;
   /** Host: cards on offer to each joiner, by slot. */
   private remoteOffers = new Map<number, Choice[]>();
   private inLevelUp = false;
@@ -264,6 +281,7 @@ export class GameScene extends Phaser.Scene {
       const character = characterDef(profiles[slot]?.character);
       const name = displayName(profiles[slot]?.name, slot);
       const p = new Player(this, ARENA_SIZE / 2 + ox, ARENA_SIZE / 2 + oy, slot, this.coop, character, name);
+      p.curios = new Curios(this, p);
       p.weapons = new Weapons(this, p, this.projectiles);
       p.weapons.add(character.startingWeapon);
       p.ultimate = new Ultimate(this, p, ultimateDef(character.ultimate));
@@ -339,6 +357,7 @@ export class GameScene extends Phaser.Scene {
       [DEBUG_EV.ultReady, () => this.mode !== 'client' && this.players.forEach((p) => p && (p.ultimate.cooldownLeft = 0))],
       [DEBUG_EV.boss, () => this.mode !== 'client' && this.bosses.spawnRandom()],
       [DEBUG_EV.rare, () => this.mode !== 'client' && this.player.alive && this.spawner.spawnRare(this.player)],
+      [DEBUG_EV.curio, () => this.mode !== 'client' && this.queueCurio(this.player, this.level)],
       [DEBUG_EV.toggle, () => this.toggleDebug()],
     ];
     for (const [ev, fn] of listen) this.events.on(ev, fn);
@@ -388,9 +407,11 @@ export class GameScene extends Phaser.Scene {
     // Webs and void fields slow whoever stands in them, and void fields pile Astral Chains on top; each browser
     // slows the character it moves.
     const me = this.player;
+    // A stolen Hexproof (Headhunter) keeps the character from being slowed at all.
     const hazards = this.mirror ?? this.bosses;
-    me.updateChains(this.frozen ? 0 : dt, hazards.chainsAt(me.x, me.y));
-    me.moveMult = Math.max(MIN_MOVE_MULT, hazards.slowAt(me.x, me.y) - me.chainSlow);
+    const hexproof = Curios.hexproof(me.status().stolen);
+    me.updateChains(this.frozen ? 0 : dt, hexproof ? null : hazards.chainsAt(me.x, me.y));
+    me.moveMult = hexproof ? 1 : Math.max(MIN_MOVE_MULT, hazards.slowAt(me.x, me.y) - me.chainSlow);
     me.steer(ix, iy, dt);
 
     if (this.mode === 'client') {
@@ -424,6 +445,7 @@ export class GameScene extends Phaser.Scene {
         if (!p || p.gone) continue;
         p.updateBuffs(dt);
         p.passive.update(dt, this.runTime);
+        p.curios.update(dt, playing && p.alive);
       }
       if (playing) this.enemies.updateEffects(dt);
       for (const p of this.players) if (p && !p.gone) p.ultimate.update(dt, p.alive && this.state === 'playing');
@@ -449,7 +471,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    if (!this.inLevelUp && this.state === 'playing' && this.livePlayers().some((p) => p.pendingLevelUps > 0)) {
+    if (!this.inLevelUp && this.state === 'playing' && this.livePlayers().some((p) => p.pending.length > 0)) {
       this.beginLevelUp();
     }
   }
@@ -548,10 +570,13 @@ export class GameScene extends Phaser.Scene {
    * null when nothing living is behind it). There is no invulnerability between hits; instead `hitter` (the enemy, or
    * the hazard for boss hazards) cannot hurt `p` again for ENEMY_HIT_COOLDOWN, whatever became of its hit. Nothing
    * happens while `p` is invulnerable (after a level-up pick, a revive) or mist. Then, in order: Shroud may dodge it,
-   * Aegis may block it, armor, shields, DAMAGE TAKEN and Vicissitude reduce it, and Death Defied may refuse it. Storm
-   * Shield reflects a share of `raw` at the source whether or not it got through, and at 0 HP Ragebaiter may stand `p`
-   * right back up. `dot`: a tick of damage over time, which ignores invulnerability and hit timers, cannot be dodged or
-   * blocked and is not reflected. `floor` (Thorns): the damage is cut so it never takes `p` below that share of max HP.
+   * a stolen Blocks Attacks may ignore it, Aegis may block it, armor, Heavy Iron, shields, DAMAGE TAKEN, Vicissitude
+   * and curios reduce it, a teammate's stolen Invulnerability may keep `p` at 1 HP, and Death Defied may refuse it.
+   * What gets through is taken from Aegis Aurora's shields, then Fleeting Fantasy, then HP. Storm Shield reflects a
+   * share of `raw` at the source whether or not it got through (Mirror Shard and stolen Thorns only when it did), and at
+   * 0 HP a stolen Spirit Walker or Ragebaiter may stand `p` right back up. `dot`: a tick of damage over time, which
+   * ignores invulnerability and hit timers, cannot be dodged or blocked and is not reflected. `floor` (Thorns): the
+   * damage is cut so it never takes `p` below that share of max HP.
    */
   hurtPlayer(p: Player, raw: number, dot = false, source: Enemy | null = null, hitter: object | null = source, floor = 0): void {
     if (!p.canBeHit(dot)) return;
@@ -561,23 +586,33 @@ export class GameScene extends Phaser.Scene {
       p.markHit(hitter, now);
     }
     if (!dot && p.passive.dodge()) return;
+    if (p.curios.ignores()) return;
     let dmg = 0;
     if (!dot && p.weapons.tryBlock()) {
       p.runStats.blocks++;
     } else {
-      dmg = p.damageFrom(raw);
+      dmg = p.damageFrom(raw, p.curios.takenMult(source, dot));
       if (floor > 0) dmg = Math.max(0, Math.min(dmg, p.hp - floor * p.stats.maxHp));
-      if (p.passive.defy(dmg)) dmg = 0;
+      if (this.players.some((q) => q && q.curios.protects(p))) dmg = Math.max(0, Math.min(dmg, p.curios.effectiveHp() - 1));
+      if (p.passive.defy(p.curios.hpShare(dmg))) dmg = 0;
       else p.takeDamage(dmg, dot);
     }
     if (dmg > 0) {
       this.relay(dot ? ['h', p.slot, dmg, 1] : ['h', p.slot, dmg]);
       if (p === this.player) this.onLocalHurt(dmg);
+      if (!p.god) p.curios.onDamaged(dmg, dot);
     }
-    if (!dot && source?.active) p.weapons.reflect(source, raw);
+    if (!dot && source?.active) {
+      p.weapons.reflect(source, raw);
+      if (dmg > 0) p.curios.answer(source, raw, dmg);
+    }
     if (p.hp > 0) return;
-    if (p.passive.rebirth()) this.onPlayerHealed(p);
-    else this.die(p);
+    if (this.players.some((q) => q && q.curios.spiritFor(p))) this.onPlayerHealed(p);
+    else if (p.passive.rebirth()) {
+      const d = p.passive.def;
+      p.curios.onStoodUp(d?.kind === 'rebirth' ? d.hp : 1);
+      this.onPlayerHealed(p);
+    } else this.die(p);
   }
 
   /** Flashes every player's screen `color` for `ms` (dawn, Twilight Trill). */
@@ -611,7 +646,7 @@ export class GameScene extends Phaser.Scene {
     this.events.emit(EV.killsChanged, this.kills);
   }
 
-  /** Shared EXP: every level gained gives each player one pick. */
+  /** Shared EXP: every level gained gives each player one pick, and every CURIO_EVERY levels a curio pick after it. */
   addExp(value: number): void {
     this.exp += value;
     let leveled = false;
@@ -619,7 +654,11 @@ export class GameScene extends Phaser.Scene {
       this.exp -= this.expNeed;
       this.level++;
       // Fallen players collect their picks too and make them once revived.
-      for (const p of this.players) if (p && !p.gone) p.pendingLevelUps++;
+      for (const p of this.players) {
+        if (!p || p.gone) continue;
+        p.pending.push({ kind: 'card', level: this.level });
+        if (this.level % CURIO_EVERY === 0) this.queueCurio(p, this.level);
+      }
       this.expNeed = expToNext(this.level);
       leveled = true;
     }
@@ -628,6 +667,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------------ level-ups
+
+  /** A curio pick for `p` (level `level`), unless every curio is already owned or waiting to be picked. */
+  private queueCurio(p: Player, level: number): void {
+    const waiting = p.pending.filter((k) => k.kind === 'curio').length;
+    if (p.curios.available().length > waiting) p.pending.push({ kind: 'curio', level });
+  }
 
   private beginLevelUp(): void {
     this.inLevelUp = true;
@@ -638,28 +683,33 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.closeMenus();
       this.setFrozen(true);
-      for (const p of this.livePlayers()) if (p !== this.player && p.pendingLevelUps > 0) this.offerTo(p);
+      for (const p of this.livePlayers()) if (p !== this.player && p.pending.length > 0) this.offerTo(p);
     }
-    if (this.player.pendingLevelUps > 0) this.offerTo(this.player);
+    if (this.player.pending.length > 0) this.offerTo(this.player);
     if (!this.scene.isActive(SCENES.levelUp)) this.scene.launch(SCENES.levelUp);
   }
 
+  /** Offers `p` its next pick: level-up cards, or curios. */
   private offerTo(p: Player, avoid?: Choice[]): void {
-    const choices = this.rollChoices(p, avoid);
+    const pick = p.pending[0];
+    if (!pick) return;
+    const curio = pick.kind === 'curio';
+    const choices = curio ? this.rollCurios(p) : this.rollChoices(p, avoid);
+    const offer: Offer = { choices, level: pick.level, curio, pending: p.pending.length, rerolls: p.rerolls };
     const reroll = avoid !== undefined;
     if (p === this.player) {
-      this.offer = { choices, pending: p.pendingLevelUps, rerolls: p.rerolls };
+      this.offer = offer;
       this.events.emit(EV.levelUpOffer, reroll);
     } else {
       this.remoteOffers.set(p.slot, choices);
-      this.net?.sendTo(p.slot, { t: 'choices', choices, pending: p.pendingLevelUps, rerolls: p.rerolls, reroll });
+      this.net?.sendTo(p.slot, { t: 'choices', ...offer, reroll });
     }
   }
 
   /** The local player rerolls the cards on offer. Joiners ask the host. */
   rerollOffer(): void {
     const offer = this.offer;
-    if (!offer || offer.rerolls <= 0) return;
+    if (!offer || offer.curio || offer.rerolls <= 0) return;
     if (this.mode === 'client') {
       this.net?.sendHost({ t: 'reroll' });
       return;
@@ -667,9 +717,9 @@ export class GameScene extends Phaser.Scene {
     this.reroll(this.player, offer.choices);
   }
 
-  /** Host and solo: spends one reroll and offers three new cards (different ones where the pool allows). */
+  /** Host and solo: spends one reroll and offers three new cards (different ones where the pool allows). Curios cannot be rerolled. */
   private reroll(p: Player, current: Choice[]): void {
-    if (p.rerolls <= 0 || !p.alive) return;
+    if (p.rerolls <= 0 || !p.alive || p.pending[0]?.kind !== 'card') return;
     p.rerolls--;
     p.runStats.rerolls++;
     this.offerTo(p, current);
@@ -691,7 +741,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private afterPick(p: Player): void {
-    if (p.pendingLevelUps > 0 && p.alive) {
+    if (p.pending.length > 0 && p.alive) {
       this.offerTo(p);
       return;
     }
@@ -702,7 +752,7 @@ export class GameScene extends Phaser.Scene {
 
   private checkLevelUpOver(): void {
     if (!this.inLevelUp) return;
-    if (this.livePlayers().some((p) => p.pendingLevelUps > 0)) return;
+    if (this.livePlayers().some((p) => p.pending.length > 0)) return;
     this.inLevelUp = false;
     // A short grace period so a crowd standing on you does not hit the moment the run resumes.
     if (this.mode !== 'client') for (const p of this.livePlayers()) p.grantInvuln(LEVELUP_INVULN_SECONDS);
@@ -724,18 +774,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Up to 3 random cards from the character's weapons, the shared items, modifications, generic powerups
-   * and upgrades of owned ones, respecting slot limits. A modification is only offered new while the player
-   * owns a weapon (or has an ultimate) it actually changes: sharing a tag is not enough when the weapon has no use
-   * for it, and with Impact, AoE modifications change melee weapons' splash. Items and powerups with `requiresTag`
-   * are only offered new while the player owns a weapon with that tag.
+   * Up to 3 random cards from the character's weapons, modifications, generic powerups and upgrades of owned ones,
+   * respecting weapon slots. A modification is only offered new while the player owns a weapon (or has an ultimate)
+   * it actually changes: sharing a tag is not enough when the weapon has no use for it, and with Impact, AoE
+   * modifications change melee weapons' splash. Powerups with `requiresTag` are only offered new while the player
+   * owns a weapon with that tag.
    * A reroll passes the cards it replaces in `avoid`: those are only offered again when the pool runs short.
    */
   rollChoices(p: Player, avoid?: Choice[]): Choice[] {
     const pool: Choice[] = [];
     const weaponSlotsFull = p.weapons.list.length >= MAX_WEAPONS;
-    const itemSlotsFull = p.items.length >= MAX_ITEMS;
-    const allowed = (def: (typeof ITEMS)[number]) => !def.requiresTag || p.weapons.list.some((w) => hasTag(w.def, def.requiresTag!));
+    const allowed = (def: (typeof POWERUPS)[number]) => !def.requiresTag || p.weapons.list.some((w) => hasTag(w.def, def.requiresTag!));
     for (const def of p.character.weapons.map(weaponDef)) {
       const owned = p.weapons.get(def.id);
       if (owned) {
@@ -755,20 +804,6 @@ export class GameScene extends Phaser.Scene {
         pool.push({ kind: 'weapon', id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: MAX_LEVEL, isNew: true, text: weaponLevelText(def, 1) });
       }
     }
-    const stat = (kind: 'item' | 'powerup', list: typeof ITEMS, owned: typeof p.items, slotsFull: boolean) => {
-      for (const def of list) {
-        const max = itemMaxLevel(def);
-        const have = owned.find((i) => i.def.id === def.id);
-        if (have) {
-          if (have.level < max) {
-            pool.push({ kind, id: def.id, name: def.name, icon: def.icon, level: have.level + 1, maxLevel: max, isNew: false, text: def.levelText });
-          }
-        } else if (!slotsFull && allowed(def)) {
-          pool.push({ kind, id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
-        }
-      }
-    };
-    stat('item', ITEMS, p.items, itemSlotsFull);
     const impact = hasImpact(p.mods);
     const attacks = [...p.weapons.list.map((w) => w.def), p.ultimate.def.attack, ...(p.passive.ailment ? [p.passive.ailment.def] : [])];
     for (const def of MODIFICATIONS) {
@@ -782,7 +817,17 @@ export class GameScene extends Phaser.Scene {
         pool.push({ kind: 'mod', id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
       }
     }
-    stat('powerup', POWERUPS, p.powerups, false);
+    for (const def of POWERUPS) {
+      const max = powerupMaxLevel(def);
+      const have = p.powerups.find((i) => i.def.id === def.id);
+      if (have) {
+        if (have.level < max) {
+          pool.push({ kind: 'powerup', id: def.id, name: def.name, icon: def.icon, level: have.level + 1, maxLevel: max, isNew: false, text: def.levelText });
+        }
+      } else if (allowed(def)) {
+        pool.push({ kind: 'powerup', id: def.id, name: def.name, icon: def.icon, level: 1, maxLevel: max, isNew: true, text: def.description });
+      }
+    }
     if (pool.length === 0) {
       return [
         {
@@ -805,15 +850,48 @@ export class GameScene extends Phaser.Scene {
     return shuffled.slice(0, 3);
   }
 
+  /**
+   * CURIO_CHOICES curios `p` does not own, all different. Each card rolls its tier by CURIO_TIERS; a tier with nothing
+   * left to offer passes its chance on to the others.
+   */
+  rollCurios(p: Player): Choice[] {
+    const left = p.curios.available();
+    const out: Choice[] = [];
+    const rng = this.rng;
+    while (out.length < CURIO_CHOICES && left.length > 0) {
+      const tiers = CURIO_TIERS.filter((t) => left.some((c) => c.tier === t.tier));
+      let r = rng.float() * tiers.reduce((s, t) => s + t.chance, 0);
+      let tier = tiers[tiers.length - 1];
+      for (const t of tiers) {
+        r -= t.chance;
+        if (r < 0) {
+          tier = t;
+          break;
+        }
+      }
+      const pool = left.filter((c) => c.tier === tier.tier);
+      const def = rng.pick(pool);
+      left.splice(left.indexOf(def), 1);
+      out.push(this.curioChoice(def));
+    }
+    return out;
+  }
+
+  private curioChoice(def: CurioDef): Choice {
+    const tier = CURIO_TIERS[def.tier];
+    return { kind: 'curio', id: def.id, name: def.name, icon: def.icon ?? tier.icon, level: 1, maxLevel: 0, isNew: true, text: curioText(def, true), tier: def.tier };
+  }
+
   applyChoice(p: Player, c: Choice): void {
     if (c.kind === 'weapon') {
       if (p.weapons.get(c.id)) p.weapons.levelUp(c.id);
       else p.weapons.add(c.id);
-    } else if (c.kind === 'item' || c.kind === 'powerup') {
-      const list = c.kind === 'item' ? p.items : p.powerups;
-      const owned = list.find((i) => i.def.id === c.id);
+    } else if (c.kind === 'curio') {
+      p.curios.add(c.id);
+    } else if (c.kind === 'powerup') {
+      const owned = p.powerups.find((i) => i.def.id === c.id);
       if (owned) owned.level++;
-      else list.push({ def: c.kind === 'item' ? itemDef(c.id) : powerupDef(c.id), level: 1 });
+      else p.powerups.push({ def: powerupDef(c.id), level: 1 });
       p.recomputeStats();
     } else if (c.kind === 'mod') {
       const owned = p.mods.find((m) => m.def.id === c.id);
@@ -823,7 +901,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       p.heal(FALLBACK_HEAL);
     }
-    p.pendingLevelUps = Math.max(0, p.pendingLevelUps - 1);
+    p.pending.shift();
     if (this.mode === 'host') this.net?.broadcast(this.buildMsg(p));
     if (p === this.player) {
       this.emitBuild();
@@ -833,15 +911,16 @@ export class GameScene extends Phaser.Scene {
 
   private emitBuild(): void {
     const p = this.player;
-    this.events.emit(EV.buildChanged, this.buildWeapons(p), this.buildItems(p), this.buildMods(p), this.buildPowerups(p));
+    this.events.emit(EV.buildChanged, this.buildWeapons(p), this.buildCurios(p), this.buildMods(p), this.buildPowerups(p));
   }
 
   buildWeapons(p: Player = this.player): BuildEntry[] {
     return p.weapons.list.map((w) => ({ id: w.def.id, name: w.def.name, icon: w.def.icon, level: w.level, max: MAX_LEVEL, damage: this.weaponReport(p, w).damage }));
   }
 
-  buildItems(p: Player = this.player): BuildEntry[] {
-    return p.items.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level, max: itemMaxLevel(i.def) }));
+  /** Curios have no level: `level` is their tier and `max` 0. */
+  buildCurios(p: Player = this.player): BuildEntry[] {
+    return p.curios.list.map((c) => ({ id: c.id, name: c.name, icon: c.icon ?? CURIO_TIERS[c.tier].icon, level: c.tier, max: 0 }));
   }
 
   buildMods(p: Player = this.player): BuildEntry[] {
@@ -849,7 +928,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   buildPowerups(p: Player = this.player): BuildEntry[] {
-    return p.powerups.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level, max: itemMaxLevel(i.def) }));
+    return p.powerups.map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, level: i.level, max: powerupMaxLevel(i.def) }));
   }
 
   hudSnapshot(): HudSnapshot {
@@ -862,7 +941,7 @@ export class GameScene extends Phaser.Scene {
       kills: this.kills,
       time: this.runTime,
       weapons: this.buildWeapons(),
-      items: this.buildItems(),
+      curios: this.buildCurios(),
       mods: this.buildMods(),
       powerups: this.buildPowerups(),
       debug: this.debug,
@@ -895,6 +974,7 @@ export class GameScene extends Phaser.Scene {
     p.ultimate.stop();
     p.passive.stop();
     p.pets.clear();
+    p.curios.stop();
     p.clearBuffs();
     p.runStats.deaths++;
     this.playSfx('death', p.x, p.y);
@@ -957,6 +1037,7 @@ export class GameScene extends Phaser.Scene {
       p.ultimate.stop();
       p.passive.stop();
       p.pets.clear();
+      p.curios.stop();
     }
   }
 
@@ -1001,8 +1082,8 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(2200, () => this.endRun(true));
   }
 
-  /** One weapon (or the ultimate, or a passive's pets) for the party screen. Bunny Armory counts its pets' gear. */
-  private weaponReport(p: Player, w: WeaponInstance, kind: 'weapon' | 'ultimate' | 'passive' = 'weapon'): WeaponReport {
+  /** One weapon (or the ultimate, a passive's pets, a curio's damage) for the party screen. Bunny Armory counts its pets' gear. */
+  private weaponReport(p: Player, w: WeaponInstance, kind: 'weapon' | 'ultimate' | 'passive' | 'curio' = 'weapon'): WeaponReport {
     const gear = w.def.gear ? p.pets.gearInstances() : [];
     const damage = gear.reduce((sum, g) => sum + g.damage, w.damage);
     return {
@@ -1015,6 +1096,7 @@ export class GameScene extends Phaser.Scene {
       dps: damage / Math.max(1, this.runTime - w.acquiredAt),
       ultimate: kind === 'ultimate' || undefined,
       passive: kind === 'passive' || undefined,
+      curio: kind === 'curio' || undefined,
     };
   }
 
@@ -1034,8 +1116,9 @@ export class GameScene extends Phaser.Scene {
           this.weaponReport(p, p.ultimate.attack, 'ultimate'),
           ...(p.pets.headbutt ? [this.weaponReport(p, p.pets.headbutt, 'passive')] : []),
           ...(p.passive.ailment ? [this.weaponReport(p, p.passive.ailment, 'passive')] : []),
+          ...[...p.curios.attacks.values()].filter((w) => w.damage > 0).map((w) => this.weaponReport(p, w, 'curio')),
         ],
-        items: this.buildItems(p),
+        curios: this.buildCurios(p),
         mods: this.buildMods(p),
         powerups: this.buildPowerups(p),
       }));
@@ -1109,7 +1192,7 @@ export class GameScene extends Phaser.Scene {
     p.weapons.destroy();
     p.ultimate.destroy();
     p.pets.clear();
-    p.pendingLevelUps = 0;
+    p.pending.length = 0;
     this.remoteOffers.delete(slot);
     if (this.state === 'ended') return;
     this.banner(`${p.displayName} LEFT THE GAME`, COLOR.textDim);
@@ -1121,7 +1204,7 @@ export class GameScene extends Phaser.Scene {
       t: 'build',
       slot: p.slot,
       weapons: p.weapons.list.map((w): BuildPair => [w.def.id, w.level]),
-      items: p.items.map((i): BuildPair => [i.def.id, i.level]),
+      curios: p.curios.list.map((c): BuildPair => [c.id, 1]),
       mods: p.mods.map((m): BuildPair => [m.def.id, m.level]),
       powerups: p.powerups.map((i): BuildPair => [i.def.id, i.level]),
     };
@@ -1172,6 +1255,7 @@ export class GameScene extends Phaser.Scene {
       if (!p || !p.alive) continue;
       p.pets.summonViews(summons);
       p.weapons.summonViews(summons);
+      p.curios.summonViews(summons);
     }
 
     for (const slot of net.remoteSlots) {
@@ -1481,7 +1565,7 @@ export class GameScene extends Phaser.Scene {
       case 'build': {
         const p = this.players[msg.slot];
         if (!p || p.gone) break;
-        p.items = msg.items.map(([id, level]) => ({ def: itemDef(id), level }));
+        p.curios.sync((msg.curios ?? []).map(([id]) => id));
         p.powerups = (msg.powerups ?? []).map(([id, level]) => ({ def: powerupDef(id), level }));
         p.mods = (msg.mods ?? []).map(([id, level]) => ({ def: modDef(id), level }));
         p.weapons.sync(msg.weapons);
@@ -1493,7 +1577,7 @@ export class GameScene extends Phaser.Scene {
         break;
       }
       case 'choices':
-        this.offer = { choices: msg.choices, pending: msg.pending, rerolls: msg.rerolls ?? 0 };
+        this.offer = { choices: msg.choices, level: msg.level, curio: msg.curio, pending: msg.pending, rerolls: msg.rerolls ?? 0 };
         this.inLevelUp = true;
         if (!this.scene.isActive(SCENES.levelUp)) {
           this.closeMenus();
@@ -1560,13 +1644,16 @@ export class GameScene extends Phaser.Scene {
       const w = 18;
       const x = Math.round(p.x - w / 2);
       const y = Math.round(p.y + 12);
-      const frac = Phaser.Math.Clamp(p.hp / p.stats.maxHp, 0, 1);
+      // Suffering Mass: the bar shows Fleeting Fantasy (HP is always 1).
+      const s = p.status();
+      const fantasy = s.ffMax > 0;
+      const frac = Phaser.Math.Clamp(fantasy ? s.ff / s.ffMax : p.hp / p.stats.maxHp, 0, 1);
       const low = frac < 0.3 && Math.floor(this.time.now / 180) % 2 === 0;
       g.fillStyle(COLOR.ink, 1);
       g.fillRect(x - 1, y - 1, w + 2, 4);
       g.fillStyle(COLOR.hpDark, 1);
       g.fillRect(x, y, w, 2);
-      g.fillStyle(low ? 0xffffff : COLOR.hp, 1);
+      g.fillStyle(low ? 0xffffff : fantasy ? FANTASY_COLOR : COLOR.hp, 1);
       g.fillRect(x, y, Math.ceil(w * frac), 2);
     }
   }

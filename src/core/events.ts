@@ -5,7 +5,7 @@ export const EV = {
   levelUp: 'level-up', // (level)
   killsChanged: 'kills-changed', // (kills)
   timeChanged: 'time-changed', // (seconds)
-  buildChanged: 'build-changed', // (weapons, items, mods, powerups: BuildEntry[])
+  buildChanged: 'build-changed', // (weapons, curios, mods, powerups: BuildEntry[])
   playerHurt: 'player-hurt', // (amount)
   banner: 'banner', // (text, color)
   debugStats: 'debug-stats', // (stats object)
@@ -26,6 +26,7 @@ export const DEBUG_EV = {
   ultReady: 'debug-ult-ready',
   boss: 'debug-boss',
   rare: 'debug-rare',
+  curio: 'debug-curio',
 } as const;
 
 export interface BuildEntry {
@@ -45,7 +46,7 @@ export interface PlayerRunStats {
   kills: number;
   /** HP lost to enemies (after armor and shields). */
   taken: number;
-  /** HP restored by potions and heal cards. */
+  /** HP restored by potions, heal cards, life steal and curios (not regen). */
   healed: number;
   deaths: number;
   /** Teammates this player helped revive. */
@@ -74,6 +75,8 @@ export interface WeaponReport extends BuildEntry {
   ultimate?: boolean;
   /** A passive's own attack (Warren's bunnies). */
   passive?: boolean;
+  /** Damage a curio dealt. */
+  curio?: boolean;
 }
 
 export interface PartyMember {
@@ -86,7 +89,7 @@ export interface PartyMember {
   /** Damage per second over the whole run. */
   dps: number;
   weapons: WeaponReport[];
-  items: BuildEntry[];
+  curios: BuildEntry[];
   mods: BuildEntry[];
   powerups: BuildEntry[];
 }

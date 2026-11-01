@@ -4,7 +4,7 @@ import { COLOR, MAX_LEVEL, PLAYER_COLORS, SCENES, VIEW_H, VIEW_W } from '../cons
 import type { BuildEntry, PartyMember, RunSummary, WeaponReport } from '../core/events';
 import { formatTime } from '../core/progression';
 import { sfx } from '../core/sfx';
-import { characterDef } from '../data';
+import { CURIO_TIERS, characterDef } from '../data';
 import { hostStartRun, hostToLobby, leaveSession } from '../net/flow';
 import { netSession } from '../net/Net';
 import { Button, Menu, drawPanel, onKey, text } from '../ui/widgets';
@@ -47,7 +47,7 @@ const PARTY_COLS: { label: string; w: number; value: (m: PartyMember) => string 
 
 /** LEVEL column of a weapon row: ULT, PASSIVE (a passive's pets) or the weapon's level. */
 function levelLabel(w: WeaponReport): string {
-  return w.ultimate ? 'ULT' : w.passive ? 'PASSIVE' : `LV ${w.level}`;
+  return w.ultimate ? 'ULT' : w.passive ? 'PASSIVE' : w.curio ? 'CURIO' : `LV ${w.level}`;
 }
 
 /** 1234 -> 1234, 12345 -> 12.3K, 1234567 -> 1.2M. Decimals only below 100. */
@@ -60,7 +60,8 @@ function short(v: number): string {
 /**
  * End of the run: time, level and kills, then the party screen. One row per player with their
  * damage, DPS, kills and survival numbers; below it, the selected player's weapons (and ultimate)
- * with level, damage, DPS, kills and share of their damage, then their items, modifications and powerups.
+ * with level, damage, DPS, kills and share of their damage (curios that dealt damage too), then their curios,
+ * modifications and powerups.
  */
 export class GameOverScene extends Phaser.Scene {
   private summary!: RunSummary;
@@ -194,7 +195,7 @@ export class GameOverScene extends Phaser.Scene {
     this.drawDetail(this.summary.party[next]);
   }
 
-  /** The selected player's weapons, ultimate, items, modifications and powerups. */
+  /** The selected player's weapons, ultimate, curios, modifications and powerups. */
   private drawDetail(m: PartyMember): void {
     const d = this.detail;
     d.removeAll(true);
@@ -240,12 +241,14 @@ export class GameOverScene extends Phaser.Scene {
       }
     }
     y += 2;
-    add(text(this, LEFT, y + 4, 'ITEMS', { color: COLOR.textDim }));
-    if (m.items.length === 0) add(text(this, LEFT + 44, y + 4, 'NONE', { color: COLOR.textDim }));
-    m.items.forEach((it, i) => {
-      const x = LEFT + 44 + i * 86;
-      add(this.add.image(x, y, ATLAS, it.icon).setOrigin(0));
-      add(text(this, x + 20, y + 4, `${it.name.toUpperCase()} ${it.level}`, { color: it.level >= (it.max ?? MAX_LEVEL) ? COLOR.gold : COLOR.text }));
+    // Curios: icons only, in their tier's colour (there can be many).
+    add(text(this, LEFT, y + 4, 'CURIOS', { color: COLOR.textDim }));
+    const curios = m.curios ?? [];
+    if (curios.length === 0) add(text(this, LEFT + 44, y + 4, 'NONE', { color: COLOR.textDim }));
+    curios.forEach((c, i) => {
+      const x = LEFT + 44 + i * 30;
+      add(this.add.image(x, y, ATLAS, c.icon).setOrigin(0));
+      add(text(this, x + 17, y + 4, String(c.level), { color: CURIO_TIERS[c.level]?.color ?? COLOR.text }));
     });
     add(text(this, PX + PW - 14, y + 4, `EXP ${short(m.stats.exp)} · REROLLS ${m.stats.rerolls ?? 0}`, { origin: [1, 0], color: COLOR.textDim }));
 

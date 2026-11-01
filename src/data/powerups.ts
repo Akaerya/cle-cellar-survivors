@@ -1,13 +1,13 @@
-import type { ItemDef } from './types';
+import type { PowerupDef } from './types';
 
-/** Generic powerups go up to this level (items and modifications stop at MAX_LEVEL). */
+/** Generic powerups go up to this level (weapons and modifications stop at MAX_LEVEL). */
 export const POWERUP_MAX_LEVEL = 20;
 
 /**
  * Generic powerups: plain stat boosts for the character. They take no slots and are offered until they
- * reach POWERUP_MAX_LEVEL. Modifiers work like items: (base + flat) x (1 + percent), summed over levels.
+ * reach POWERUP_MAX_LEVEL. Final stat = (base + flat) x (1 + percent), summed over levels.
  */
-export const POWERUPS: ItemDef[] = [
+export const POWERUPS: PowerupDef[] = [
   {
     id: 'damage',
     name: 'Damage',

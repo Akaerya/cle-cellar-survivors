@@ -35,7 +35,6 @@ export const STUN_TINT = 0xffe27a;
 /** However many slows pile up (webs, void fields, Astral Chains), a character keeps at least this share of its move speed. */
 export const MIN_MOVE_MULT = 0.1;
 export const MAX_WEAPONS = 4;
-export const MAX_ITEMS = 4;
 export const MAX_LEVEL = 5;
 /** Invulnerability after taking a hit: none, so every enemy in a crowd can hurt you (see ENEMY_HIT_COOLDOWN). */
 export const INVULN_SECONDS = 0;
@@ -49,6 +48,13 @@ export const FALLBACK_HEAL = 30;
 export const STAB_LEAD = 12;
 /** Shields never absorb more than this fraction of a hit, however many levels are stacked. */
 export const MAX_SHIELD_REDUCTION = 0.9;
+
+/** Curios: most fields (caustic ground, void fields) one player keeps on the ground; a new one replaces the oldest. */
+export const MAX_CURIO_FIELDS = 16;
+/** Curios: most follow-up damage instances (chains, explosions, zaps) one hit can set off, all its chains included. */
+export const MAX_CURIO_JOBS = 600;
+/** Curios and stolen modifiers never take more than this share off damage taken, however many stack. */
+export const MAX_CURIO_MITIGATION = 0.9;
 
 /** Co-op: players per run, and how each player is told apart (P1..P8). */
 export const MAX_PLAYERS = 8;

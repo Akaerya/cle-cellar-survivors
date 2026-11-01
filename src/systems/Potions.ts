@@ -16,6 +16,11 @@ export class Potions {
   /** Rolls the enemy's drop chance; drops a potion on success. */
   roll(x: number, y: number, chance: number): void {
     if (chance <= 0 || this.game.rng.float() >= chance) return;
+    this.drop(x, y);
+  }
+
+  /** Drops a potion at (x, y) (Glutton's Pouch drops them without a roll). */
+  drop(x: number, y: number): void {
     const p = this.group.get(x, y) as Potion | null;
     if (!p) return; // the ground is full
     p.spawn(x, y, POTION.lifetime);
@@ -34,7 +39,7 @@ export class Potions {
       p.setAlpha(p.blinking ? 0.3 : 1);
       // Only a player that is hurt drinks it, so a full-HP teammate does not waste it.
       for (const pl of players) {
-        if (pl.hp >= pl.stats.maxHp) continue;
+        if (!pl.needsHealing) continue;
         if ((pl.x - p.x) ** 2 + (pl.y - p.y) ** 2 > R2) continue;
         this.drink(p, pl);
         break;
@@ -44,9 +49,7 @@ export class Potions {
 
   private drink(p: Potion, pl: Player): void {
     p.disableBody(true, true);
-    const before = pl.hp;
-    pl.heal(pl.stats.maxHp * POTION.healPercent);
-    const healed = pl.hp - before;
+    const healed = pl.heal(pl.healthMax * POTION.healPercent);
     this.game.fx.healNumber(pl.x, pl.y - 12, healed);
     this.game.fx.puff(pl.x, pl.y, COLOR.good, 8);
     this.game.playSfx('heal', pl.x, pl.y);
