@@ -7,7 +7,7 @@ import type { CharacterDef } from './types';
 export const CHARACTERS: CharacterDef[] = [
   {
     id: 'rsncle',
-    name: 'cle',
+    name: 'Cle',
     title: 'THE BANANA MONKEY',
     description: 'Throws bananas, lashes its tail and howls at the night.',
     anim: 'monkey',
@@ -19,7 +19,7 @@ export const CHARACTERS: CharacterDef[] = [
   },
   {
     id: 'yookers',
-    name: 'yookers',
+    name: 'Yookers',
     title: 'THE STORM KNIGHT',
     description: 'A paladin of the storm. Stabs with a sword and calls lightning down on the horde.',
     anim: 'knight',
@@ -31,7 +31,7 @@ export const CHARACTERS: CharacterDef[] = [
   },
   {
     id: 'elysia',
-    name: 'yuko',
+    name: 'Yuko',
     title: 'ARROW OF NOVAE',
     description: "'I'm a girl as gorgeous as dancing petals!'",
     anim: 'elysia',
@@ -43,7 +43,7 @@ export const CHARACTERS: CharacterDef[] = [
   },
   {
     id: 'zorus',
-    name: 'zorus',
+    name: 'Zorus',
     title: 'WEEBLORD',
     description: "'Nothing personal, Cle.'",
     anim: 'zorus',
@@ -55,7 +55,7 @@ export const CHARACTERS: CharacterDef[] = [
   },
   {
     id: 'rabbit',
-    name: 'rabbit',
+    name: 'Rabbit',
     title: 'THE BUNNY CONJURER',
     description: 'Never fights alone: a warren of hardhat bunnies does the heavy lifting.',
     anim: 'rabbit',
